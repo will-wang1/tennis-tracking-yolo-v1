@@ -60,6 +60,28 @@ class BallTrackerTest(unittest.TestCase):
         self.assertAlmostEqual(by_frame[1].x, 5.0)
         self.assertTrue(by_frame[1].interpolated)
 
+    def test_rejects_persistent_static_lockon(self):
+        # simulates YOLO locking onto something fixed on screen (a graphic,
+        # a line, the net cord) and re-detecting it at ~the same spot every
+        # frame - unlike outlier rejection, nothing here looks like a big
+        # jump, so only the "hasn't moved in N frames" check catches it.
+        detections = [Detection(x=500.0, y=500.0, confidence=0.9) for _ in range(25)]
+        positions = self.tracker.track(detections)
+
+        frame_indices = [p.frame_idx for p in positions]
+        # accepted up to the point the lock-on window fills, then rejected
+        # for the rest of the (still-static) sequence
+        self.assertEqual(frame_indices, list(range(19)))
+
+    def test_does_not_reject_a_brief_pause(self):
+        # a short run of near-identical positions (shorter than
+        # static_lockon_frames) is plausible ball behavior (e.g. near the
+        # apex of a lob) and should be trusted, not treated as a lock-on
+        detections = [Detection(x=500.0, y=500.0, confidence=0.9) for _ in range(10)]
+        positions = self.tracker.track(detections)
+
+        self.assertEqual([p.frame_idx for p in positions], list(range(10)))
+
     def test_empty_input(self):
         self.assertEqual(self.tracker.track([]), [])
 
