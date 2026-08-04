@@ -1,0 +1,16 @@
+# YOLO dataset config for the tennis-ball detector.
+# Populate data/raw/ (see data/README.md) before training - paths below
+# assume the standard Roboflow YOLOv8 export layout.
+#
+# NOTE: ultralytics resolves a relative `path` against the current working
+# directory of the process that loads this file, not against this yaml's
+# own location - so scripts/train.py must be run from the repo root
+# (e.g. `python scripts/train.py`), which is what its default --data value
+# and the README assume.
+path: data/raw
+train: train/images
+val: valid/images
+test: test/images
+
+nc: 1
+names: ["ball"]

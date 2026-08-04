@@ -1,0 +1,24 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# datasets (large, fetched separately)
+data/raw/
+data/*.zip
+data/*.cache
+
+# trained weights & training runs
+weights/*.pt
+weights/*.onnx
+runs/
+*.pt
+.pytest_cache/
+
+# outputs
+outputs/
+*.mp4
+*.avi
+!tests/fixtures/**
+
+.DS_Store
