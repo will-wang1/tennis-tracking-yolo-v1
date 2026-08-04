@@ -62,25 +62,29 @@ class BallTrackerTest(unittest.TestCase):
 
     def test_rejects_persistent_static_lockon(self):
         # simulates YOLO locking onto something fixed on screen (a graphic,
-        # a line, the net cord) and re-detecting it at ~the same spot every
+        # a line, the net cord) and re-detecting it near the same spot every
         # frame - unlike outlier rejection, nothing here looks like a big
-        # jump, so only the "hasn't moved in N frames" check catches it.
+        # jump, so only the "hasn't gone anywhere in N frames" check
+        # catches it. Default: static_lockon_frames=10, radius=20px.
         detections = [Detection(x=500.0, y=500.0, confidence=0.9) for _ in range(25)]
         positions = self.tracker.track(detections)
 
         frame_indices = [p.frame_idx for p in positions]
         # accepted up to the point the lock-on window fills, then rejected
         # for the rest of the (still-static) sequence
-        self.assertEqual(frame_indices, list(range(19)))
+        self.assertEqual(frame_indices, list(range(9)))
 
-    def test_does_not_reject_a_brief_pause(self):
-        # a short run of near-identical positions (shorter than
-        # static_lockon_frames) is plausible ball behavior (e.g. near the
+    def test_does_not_reject_jitter_within_a_brief_pause(self):
+        # a short run of positions that wander a little (sub-pixel/
+        # localization noise) but stay confined - shorter than
+        # static_lockon_frames - is plausible ball behavior (e.g. near the
         # apex of a lob) and should be trusted, not treated as a lock-on
-        detections = [Detection(x=500.0, y=500.0, confidence=0.9) for _ in range(10)]
+        detections = [
+            Detection(x=500.0 + (i % 2) * 3, y=500.0, confidence=0.9) for i in range(8)
+        ]
         positions = self.tracker.track(detections)
 
-        self.assertEqual([p.frame_idx for p in positions], list(range(10)))
+        self.assertEqual([p.frame_idx for p in positions], list(range(8)))
 
     def test_empty_input(self):
         self.assertEqual(self.tracker.track([]), [])

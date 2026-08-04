@@ -10,11 +10,12 @@ the model:
    than physically possible since the last accepted point is almost always
    a false positive, so it's discarded rather than trusted.
 2. Static lock-on rejection - a false positive on something fixed on screen
-   (a graphic, a line, the net cord) tends to re-detect at nearly the same
-   spot frame after frame, which outlier rejection alone can't catch since
-   each individual step is small. A ball in play is essentially never
-   stationary for long, so a run of accepted detections that barely moves
-   is treated as a lock-on and discarded rather than tracked.
+   (a graphic, a line, the net cord) tends to re-detect at roughly the same
+   spot frame after frame - not pixel-identical, but confined to a small
+   area, which outlier rejection alone can't catch since each individual
+   step is small. A ball in play is essentially never confined like that
+   for long, so a run of accepted detections that wanders within a tight
+   radius is treated as a lock-on and discarded rather than tracked.
 3. Interpolation - short gaps (a few missed frames) are filled in by linear
    interpolation between the surrounding accepted points, which is what the
    real trajectory would have looked like anyway. Gaps longer than
@@ -45,8 +46,8 @@ class BallTracker:
         self,
         max_pixels_per_frame: float = 150.0,
         max_interpolation_gap: int = 8,
-        static_lockon_frames: int = 20,
-        static_lockon_radius: float = 4.0,
+        static_lockon_frames: int = 10,
+        static_lockon_radius: float = 20.0,
     ):
         self.max_pixels_per_frame = max_pixels_per_frame
         self.max_interpolation_gap = max_interpolation_gap

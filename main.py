@@ -29,12 +29,41 @@ def main() -> None:
     parser.add_argument("--imgsz", type=int, default=1280)
     parser.add_argument("--device", default=None)
     parser.add_argument("--trail-length", type=int, default=15)
+    parser.add_argument(
+        "--max-jump",
+        type=float,
+        default=150.0,
+        help="Max plausible ball movement per frame, in pixels - larger detector jumps are rejected as outliers",
+    )
+    parser.add_argument(
+        "--interp-gap",
+        type=int,
+        default=8,
+        help="Longest run of missed frames that gets filled by interpolation",
+    )
+    parser.add_argument(
+        "--lockon-frames",
+        type=int,
+        default=10,
+        help="How many consecutive frames confined to --lockon-radius before it's treated as a false lock-on rather than the ball",
+    )
+    parser.add_argument(
+        "--lockon-radius",
+        type=float,
+        default=20.0,
+        help="Pixel radius that counts as 'hasn't moved' for --lockon-frames",
+    )
     args = parser.parse_args()
 
     detector = BallDetector(
         args.weights, confidence=args.confidence, imgsz=args.imgsz, device=args.device
     )
-    tracker = BallTracker()
+    tracker = BallTracker(
+        max_pixels_per_frame=args.max_jump,
+        max_interpolation_gap=args.interp_gap,
+        static_lockon_frames=args.lockon_frames,
+        static_lockon_radius=args.lockon_radius,
+    )
 
     reader = VideoReader(args.input)
     frames = list(reader.frames())

@@ -23,12 +23,17 @@ without restructuring what's here.
    the detector never even flagged as a low-confidence candidate can't be
    recovered later, so recall is favored over precision here.
 2. **Tracking** (`src/tracking/ball_tracker.py`) - raw per-frame detections
-   are cleaned up in two passes: detections implying a physically
+   are cleaned up in three passes: detections implying a physically
    implausible jump since the last accepted point are discarded as false
-   positives, then short gaps (a handful of missed frames) are filled by
-   linear interpolation between the surrounding accepted points. Gaps
-   longer than `max_interpolation_gap` are left unfilled rather than
-   guessed at.
+   positives; a run of detections confined to a small area for many
+   consecutive frames is discarded as a lock-on onto something fixed on
+   screen (a line, the net cord, a broadcast graphic) rather than trusted as
+   a stationary ball; then short gaps (a handful of missed frames) are
+   filled by linear interpolation between the surrounding accepted points.
+   Gaps longer than `max_interpolation_gap` are left unfilled rather than
+   guessed at. All four thresholds are exposed as `main.py` flags
+   (`--max-jump`, `--interp-gap`, `--lockon-frames`, `--lockon-radius`) so
+   they can be tuned to your footage without touching code.
 3. **Visualization** (`src/visualize/draw.py`) - the tracked position and a
    fading trail are drawn back onto the video.
 
@@ -72,6 +77,22 @@ python main.py --input path/to/match.mp4 --output outputs/tracked.mp4
 Prints raw detection rate and how much of the trajectory got recovered by
 interpolation, so you can see how well the fine-tuned model is doing before
 even watching the output video.
+
+**If you're seeing false-positive dots that cluster in the same screen
+region across multiple runs** (e.g. always near the net), that's not random
+noise - it means something fixed in that spot (net cord/tape, a sponsor
+logo, court hardware) consistently looks like the ball to the model. Two
+levers, cheapest first:
+
+- Tune the tracker without retraining: raise `--confidence` (fewer weak
+  detections to begin with), or tighten `--lockon-frames`/`--lockon-radius`
+  so a shorter/tighter false lock-on gets discarded sooner.
+- Fix it at the source: pull frames from right where the false positives
+  keep appearing (`scripts/extract_frames.py` on that clip), label them
+  (bounding box on the real ball if present, otherwise no label - a true
+  negative example), add them to `data/raw`, and retrain. This teaches the
+  model what that specific distractor looks like, which tracker tuning
+  alone can't fully substitute for.
 
 ## Tests
 
