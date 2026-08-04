@@ -108,10 +108,22 @@ python scripts/analyze_detections.py --input path/to/match.mp4
 A diffuse spread following the court is real ball detections. A bright,
 tight hotspot sitting in one fixed screen location means something specific
 there (net cord/tape, a sponsor logo, court hardware) is consistently
-fooling the model. Pull frames from that spot (`scripts/extract_frames.py`),
-label them (box on the ball if present, otherwise leave unlabeled as a true
-negative), add them to `data/raw`, and retrain - that fixes it at the
-source, which no amount of tracker tuning fully replaces.
+fooling the model.
+
+Once you've confirmed a hotspot is a real false positive (spot-check a few
+of its frames - if the actual ball isn't there, it's confirmed), stage those
+exact frames as training negatives in one step:
+
+```
+python scripts/add_hard_negatives.py --input match.mp4 --csv outputs/detections.csv \
+    --x-min 870 --x-max 900 --y-min 210 --y-max 240 --out data/raw/train --prefix net_marker
+```
+
+This writes the flagged frames plus an empty label file each - YOLO's
+convention for "no ball in this image" - straight into your training split.
+Retrain afterward and re-run `analyze_detections.py` on the same clip; the
+hotspot should shrink or disappear. That fixes it at the source, which no
+amount of tracker tuning fully replaces.
 
 ## Tests
 
