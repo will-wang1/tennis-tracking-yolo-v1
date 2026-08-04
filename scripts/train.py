@@ -41,6 +41,15 @@ def main() -> None:
     parser.add_argument("--device", default=None, help="e.g. 0 or cpu; auto-detected if omitted")
     parser.add_argument("--project", default=str(REPO_ROOT / "runs"))
     parser.add_argument("--name", default="ball_detector")
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=4,
+        help="Dataloader worker processes. Ultralytics' default of 8 crashes on "
+        "Windows (multiprocessing tensor sharing exhausts the page file) - lower "
+        "this, or use 0 to disable multiprocessing entirely, if training dies with "
+        "'Couldn't open shared file mapping' or 'DataLoader worker exited unexpectedly'.",
+    )
     args = parser.parse_args()
 
     model = YOLO(args.model)
@@ -53,6 +62,7 @@ def main() -> None:
         device=args.device,
         project=args.project,
         name=args.name,
+        workers=args.workers,
         mosaic=0.0,
         scale=0.5,
         translate=0.2,
