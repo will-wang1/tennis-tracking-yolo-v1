@@ -40,13 +40,16 @@ shot speed in real-world units needs a one-time manual court calibration
 4. **Match analysis** (`src/analysis/`, `src/detection/pose_detector.py`,
    opt-in) - `--bounce` finds landing spots directly from the tracked
    trajectory (a local maximum in screen-y with the ball's motion flipping
-   from falling to rising - no model needed); `--pose` runs YOLOv8-pose and
-   picks whichever player is nearest the ball each frame as the striker;
-   `--stroke-classifier` classifies their stroke from a short window of pose
-   keypoints; `--speed` reports peak ball speed per shot (segmented at
-   bounce points), in real-world km/h if `--calibration` is given, otherwise
-   px/s; `--sidebar` composites a panel showing the current stroke and
-   speed. See "Match analysis" below for the full setup.
+   from falling to rising, cross-referenced against the nearest player's
+   ankle height when `--pose` is also given, to tell a real landing apart
+   from a racket contact); `--pose` runs YOLOv8-pose and picks whichever
+   player is nearest the ball each frame as the striker; `--stroke-classifier`
+   classifies their stroke from a short window of pose keypoints; `--speed`
+   reports peak ball speed per shot (segmented at any trajectory
+   direction-change, bounce or contact), in real-world km/h if
+   `--calibration` is given, otherwise px/s; `--sidebar` composites a panel
+   showing the current stroke and a stable per-shot speed reading. See
+   "Match analysis" below for the full setup.
 
 ## Setup
 
@@ -129,9 +132,13 @@ court-crossing action is. **Add `--pose` alongside `--bounce`** for the
 strong signal instead: it cross-references each candidate against the
 nearest player's ankle height that frame (a standing player's feet are at
 court level), and rejects anything more than `--bounce-max-height` (default
-60px) above it as too high to be a real landing - almost certainly a
-contact. Without `--pose`, bounce detection still runs, but only has the
-weaker trajectory-only signals to go on.
+160px) above it as too high to be a real landing - almost certainly a
+contact. That threshold is deliberately generous: telling a low bounce from
+a contact from pixels alone is inherently approximate (monocular depth
+ambiguity, not a bug to fully solve here), and a stricter threshold in
+testing rejected every candidate in some clips outright. Without `--pose`,
+bounce detection still runs, but only has the weaker trajectory-only
+signals to go on.
 
 `--bounce-min-prominence` (default 15px) is sensitive to camera framing -
 how many pixels the ball's y-position needs to swing to count as a real
@@ -178,8 +185,12 @@ accuracy. More labeled clips directly improve it, the same way more training
 footage improves the ball detector itself.
 
 **Real-world shot speed** needs a one-time court calibration per camera
-angle, since there's no automatic court-line detection:
+angle, since there's no automatic court-line detection built into the main
+pipeline (though see "Training an automatic court-keypoint detector" below
+for a trainable alternative to reading pixels by hand). Two ways to build
+one:
 
+Manual - read four corners off a still frame by eye:
 ```
 python scripts/extract_calibration_frame.py --input match.mp4 --out outputs/calibration_frame.jpg
 # open outputs/calibration_frame.jpg in an image viewer, read off the pixel
@@ -189,9 +200,20 @@ python scripts/calibrate_court.py --frame outputs/calibration_frame.jpg \
     --baseline-left 340,980 --baseline-right 1580,980 \
     --service-left 520,650 --service-right 1400,650 \
     --out configs/court_calibration.json
+```
 
+Automatic - once you've trained a court-keypoint detector (see below):
+```
+python scripts/calibrate_court_auto.py --input match.mp4 \
+    --keypoint-weights runs/court_keypoint_detector/weights/best.pt \
+    --out configs/court_calibration.json
+```
+
+Then, either way:
+```
 python main.py --input match.mp4 --output outputs/tracked.mp4 \
-    --bounce --speed --calibration configs/court_calibration.json --sidebar
+    --bounce --speed --sidebar --calibration configs/court_calibration.json \
+    --speed-window 5
 ```
 
 Without `--calibration`, `--speed` still works but reports px/s instead of
@@ -199,14 +221,56 @@ km/h. Speed is computed by mapping the ball's pixel position through a
 **ground-plane** homography - exact at a bounce, increasingly approximate
 the higher the ball is above the court (e.g. a serve toss or smash), since
 there's no calibrated depth/height model. That's an accepted limitation, not
-a bug.
+a bug. Readings above 300 km/h (faster than any tennis shot ever recorded)
+are excluded from peak-speed selection outright - almost always a single
+noisy pixel jump, not a real shot.
+
+`--speed-window` (default 1, i.e. raw frame-to-frame displacement) trades
+responsiveness for robustness to detector jitter: a coarser/more zoomed-out
+camera calibration maps the same few pixels of jitter to more real-world
+meters, which can otherwise swing the reported speed by 100+ km/h frame to
+frame. If a clip's speed readings look noisy, raise this - there's no
+single value that's right for every camera's zoom level, same as
+`--bounce-min-prominence`.
 
 `--speed` prints each shot's peak speed to the console once processing
-finishes (shots are segmented at bounce points, so this needs `--bounce`
-too). The **sidebar** shows something different: `--sidebar` alone displays
-the ball's *live* instantaneous speed on every tracked frame, continuously -
-it doesn't need `--speed` or `--bounce` at all, since gating it to
-bounce-segmented shots would leave most frames blank.
+finishes. `--sidebar` shows a **stable per-shot** speed reading (not a raw
+per-frame instant) - held constant for each shot's whole duration, only
+updating when the trajectory changes direction. Shots are segmented at
+*any* trajectory direction-change (bounce or contact - see
+`find_trajectory_breakpoints`), not just confirmed bounces, since those are
+often sparse; the sidebar works even with `--bounce` omitted.
+
+### Training an automatic court-keypoint detector
+
+`scripts/calibrate_court.py`'s manual pixel-reading works but is tedious
+and only as precise as the human doing it. `src/detection/court_keypoint_detector.py`
+detects the 14 standard tennis court keypoints (both baselines, both
+singles and doubles sidelines, both service lines, and the two center
+marks - see `src.analysis.court_calibration.FULL_COURT_REFERENCE_POINTS`
+for their exact real-world layout) directly, the same way `pose_detector.py`
+detects player joints.
+
+No pretrained checkpoint ships with this repo - train one:
+
+```
+python scripts/download_court_dataset.py
+python scripts/prepare_court_keypoint_dataset.py
+python scripts/train_court_keypoints.py --epochs 60
+```
+
+The dataset is [yastrebksv/TennisCourtDetector](https://github.com/yastrebksv/TennisCourtDetector)
+(free Google Drive download, no API key) rather than one of the smaller
+Roboflow tennis-court-keypoint datasets (500-2.5k images, usually a single
+court surface) - it has 8,841 images spanning hard, clay, *and* grass
+courts, which matters here since this repo's own test clips are hard court
+and grass. `scripts/prepare_court_keypoint_dataset.py` converts its raw
+JSON keypoint format into YOLO-pose format.
+
+This needs a real GPU - the ball/pose detectors in this repo are small
+enough to fine-tune on CPU in a pinch, but 8.8k images at `imgsz=1280` is
+not.  Once trained, `scripts/calibrate_court_auto.py` replaces the manual
+calibration workflow above.
 
 ## Diagnosing false positives
 

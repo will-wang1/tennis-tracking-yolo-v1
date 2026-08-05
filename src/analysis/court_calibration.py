@@ -1,9 +1,17 @@
 """Map pixel coordinates to real-world court coordinates (meters).
 
-There's no automatic court-line detection in this repo yet, so calibration
-is a one-time manual step per camera angle: a human reads off the pixel
-coordinates of four known court corners (see `scripts/calibrate_court.py`)
-and this module turns that into a homography.
+Two ways to build a calibration:
+
+- Manual (`scripts/calibrate_court.py`): a human reads off the pixel
+  coordinates of four known near-court corners from a still frame. Quick,
+  needs no trained model, but per-video and only as precise as the human
+  reading the pixels.
+- Automatic (`scripts/calibrate_court_auto.py`, needs a trained
+  `src.detection.court_keypoint_detector.CourtKeypointDetector`): the model
+  detects up to all 14 standard court keypoints in one frame and
+  `from_keypoints` fits a homography from however many it's confident
+  about (more points than the minimum 4 makes the fit more robust to any
+  single point's detection error, via `cv2.findHomography`'s RANSAC).
 
 The homography is a ground-plane mapping - exact for points on the court
 surface (like a bounce location), increasingly approximate the higher above
@@ -37,6 +45,39 @@ DOUBLES_COURT_REFERENCE_POINTS = {
 
 CORNER_ORDER = ("baseline_left", "baseline_right", "service_right", "service_left")
 
+# The standard 14-keypoint tennis court layout used by
+# src.detection.court_keypoint_detector (matching the well-established
+# yastrebksv/TennisCourtDetector reference dataset's annotation order/
+# semantics). Origin at the FAR baseline-left DOUBLES corner (keypoint 0),
+# x increasing toward the right doubles sideline, y increasing toward the
+# NEAR baseline (i.e. down the length of the court, toward the camera for
+# a typical behind-baseline broadcast angle). Doubles court 10.97m wide,
+# singles 8.23m (inset 1.37m from each doubles sideline), full length
+# 23.77m, service line 5.485m from each baseline.
+_DOUBLES_WIDTH = 10.97
+_SINGLES_WIDTH = 8.23
+_SINGLES_INSET = (_DOUBLES_WIDTH - _SINGLES_WIDTH) / 2  # 1.37
+_COURT_LENGTH = 23.77
+_SERVICE_LINE_FROM_BASELINE = 5.485
+_CENTER_X = _SINGLES_INSET + _SINGLES_WIDTH / 2  # 5.485, by construction symmetric
+
+FULL_COURT_REFERENCE_POINTS = {
+    "baseline_far_left": (0.0, 0.0),
+    "baseline_far_right": (_DOUBLES_WIDTH, 0.0),
+    "baseline_near_left": (0.0, _COURT_LENGTH),
+    "baseline_near_right": (_DOUBLES_WIDTH, _COURT_LENGTH),
+    "singles_far_left": (_SINGLES_INSET, 0.0),
+    "singles_near_left": (_SINGLES_INSET, _COURT_LENGTH),
+    "singles_far_right": (_SINGLES_INSET + _SINGLES_WIDTH, 0.0),
+    "singles_near_right": (_SINGLES_INSET + _SINGLES_WIDTH, _COURT_LENGTH),
+    "service_far_left": (_SINGLES_INSET, _SERVICE_LINE_FROM_BASELINE),
+    "service_far_right": (_SINGLES_INSET + _SINGLES_WIDTH, _SERVICE_LINE_FROM_BASELINE),
+    "service_near_left": (_SINGLES_INSET, _COURT_LENGTH - _SERVICE_LINE_FROM_BASELINE),
+    "service_near_right": (_SINGLES_INSET + _SINGLES_WIDTH, _COURT_LENGTH - _SERVICE_LINE_FROM_BASELINE),
+    "center_service_far": (_CENTER_X, _SERVICE_LINE_FROM_BASELINE),
+    "center_service_near": (_CENTER_X, _COURT_LENGTH - _SERVICE_LINE_FROM_BASELINE),
+}
+
 
 @dataclass
 class CourtCalibration:
@@ -67,6 +108,36 @@ class CourtCalibration:
         src = np.array(pixel_points, dtype=np.float32)
         dst = np.array(world_points, dtype=np.float32)
         homography = cv2.getPerspectiveTransform(src, dst)
+        return cls(homography=homography.astype(np.float64))
+
+    @classmethod
+    def from_keypoints(
+        cls,
+        detected_pixel_points: dict[str, tuple[float, float]],
+        world_points: dict[str, tuple[float, float]] = FULL_COURT_REFERENCE_POINTS,
+        min_points: int = 4,
+    ) -> "CourtCalibration":
+        """Build a calibration from however many named keypoints were
+        confidently detected (see
+        `src.detection.court_keypoint_detector.CourtKeypointDetector`) -
+        `detected_pixel_points` need not include all 14. With exactly 4
+        points this is equivalent to `from_points`; with more, fits via
+        `cv2.findHomography`'s RANSAC, which is more robust to any single
+        point's detection error than an exact 4-point transform.
+        """
+        common_names = [name for name in world_points if name in detected_pixel_points]
+        if len(common_names) < min_points:
+            raise ValueError(
+                f"Need at least {min_points} matched keypoints, got {len(common_names)}"
+            )
+
+        src = np.array([detected_pixel_points[name] for name in common_names], dtype=np.float32)
+        dst = np.array([world_points[name] for name in common_names], dtype=np.float32)
+
+        if len(common_names) == 4:
+            homography = cv2.getPerspectiveTransform(src, dst)
+        else:
+            homography, _ = cv2.findHomography(src, dst, cv2.RANSAC, ransacReprojThreshold=3.0)
         return cls(homography=homography.astype(np.float64))
 
     def save(self, path: str | Path) -> None:
