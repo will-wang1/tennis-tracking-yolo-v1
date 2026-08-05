@@ -21,4 +21,7 @@ outputs/
 *.avi
 !tests/fixtures/**
 
+# one-off data transfer staging (dataset/weights copied in manually, not project source)
+tennis_tracking_transfer/
+
 .DS_Store

@@ -8,12 +8,13 @@ harder-but-simpler path of pushing a fine-tuned YOLO far enough on its own to
 track it reliably, using tracking-side post-processing (outlier rejection +
 gap interpolation) to smooth over the frames it misses.
 
-This currently covers ball detection and tracking only. Player detection,
-court-line detection, and bounce detection are the natural next pieces if
-this gets extended into a full match-analysis pipeline, and the code is
-structured (`src/detection/`, `src/tracking/`, `src/video/`,
-`src/visualize/`) so they can be added as siblings to the ball modules
-without restructuring what's here.
+Beyond ball tracking, the pipeline optionally adds match analysis: player
+pose + stroke classification, real-world shot speed, and bounce/landing
+detection (`src/analysis/`, `src/detection/pose_detector.py`). Each is
+opt-in via a `main.py` flag and off by default, so ball-only tracking is
+unaffected. Court-line detection is still the one piece not automated -
+shot speed in real-world units needs a one-time manual court calibration
+(see "Shot speed and bounce detection" below).
 
 ## How it works
 
@@ -36,6 +37,16 @@ without restructuring what's here.
    they can be tuned to your footage without touching code.
 3. **Visualization** (`src/visualize/draw.py`) - the tracked position and a
    fading trail are drawn back onto the video.
+4. **Match analysis** (`src/analysis/`, `src/detection/pose_detector.py`,
+   opt-in) - `--bounce` finds landing spots directly from the tracked
+   trajectory (a local maximum in screen-y with the ball's motion flipping
+   from falling to rising - no model needed); `--pose` runs YOLOv8-pose and
+   picks whichever player is nearest the ball each frame as the striker;
+   `--stroke-classifier` classifies their stroke from a short window of pose
+   keypoints; `--speed` reports peak ball speed per shot (segmented at
+   bounce points), in real-world km/h if `--calibration` is given, otherwise
+   px/s; `--sidebar` composites a panel showing the current stroke and
+   speed. See "Match analysis" below for the full setup.
 
 ## Setup
 
@@ -94,6 +105,109 @@ levers, cheapest first:
   model what that specific distractor looks like, which tracker tuning
   alone can't fully substitute for.
 
+## Match analysis: pose, stroke, speed, bounce
+
+All of this is opt-in - omit these flags and `main.py` behaves exactly as
+before (ball tracking only).
+
+**Bounce detection** needs nothing extra on its own - it's post-processing
+on the already-tracked trajectory (a local maximum in screen-y):
+
+```
+python main.py --input match.mp4 --output outputs/tracked.mp4 --bounce
+```
+
+A local max in y is necessary but not sufficient: for a broadcast camera
+looking down the court from behind a baseline, the ball's height off the
+ground and its depth (near/far court position) are both encoded in the same
+2D y-pixel, so a racket **contact** that redirects the ball back across the
+court reverses y almost the same way a real **bounce** does - they can look
+identical in trajectory alone. Two filters help distinguish them:
+horizontal direction (`--bounce-min-x-reversal`) is a weak signal for this
+camera angle specifically, since lateral motion isn't where the primary
+court-crossing action is. **Add `--pose` alongside `--bounce`** for the
+strong signal instead: it cross-references each candidate against the
+nearest player's ankle height that frame (a standing player's feet are at
+court level), and rejects anything more than `--bounce-max-height` (default
+60px) above it as too high to be a real landing - almost certainly a
+contact. Without `--pose`, bounce detection still runs, but only has the
+weaker trajectory-only signals to go on.
+
+`--bounce-min-prominence` (default 15px) is sensitive to camera framing -
+how many pixels the ball's y-position needs to swing to count as a real
+bounce depends on how zoomed in/far the broadcast camera is. If you're
+seeing zero bounces on a clip, try lowering it; if you're seeing bounces
+that are obviously just noise, raise it. There's no single default that
+fits every camera angle.
+
+**Pose + stroke skeleton overlay** uses YOLOv8-pose (`yolov8n-pose.pt`,
+auto-downloaded by `ultralytics` on first use - unlike `weights/ball_detector.pt`
+this isn't a fine-tuned repo artifact) to draw the striker's skeleton:
+
+```
+python main.py --input match.mp4 --output outputs/tracked.mp4 --pose
+```
+
+**Stroke classification** needs a trained classifier, which needs labeled
+data first - there's no pre-existing labeled stroke dataset, so this is a
+three-step workflow:
+
+1. Find candidate stroke-contact frames (crude, high-recall - a human
+   filters next):
+   ```
+   python scripts/extract_stroke_candidates.py --input match.mp4 \
+       --out outputs/stroke_candidates.csv --thumbnails-out outputs/stroke_candidates/
+   ```
+2. Open the thumbnails, fill in the `label` column of the CSV for every
+   candidate you can confidently identify
+   (`forehand`/`backhand`/`serve`/`volley`/`other`; see
+   `src/analysis/stroke_classifier.py:STROKE_LABELS`), leave ambiguous rows
+   blank, save as `outputs/stroke_candidates_labeled.csv`.
+3. Train and use it:
+   ```
+   python scripts/train_stroke_classifier.py --labels outputs/stroke_candidates_labeled.csv \
+       --out weights/stroke_classifier.pkl
+   python main.py --input match.mp4 --output outputs/tracked.mp4 \
+       --pose --stroke-classifier weights/stroke_classifier.pkl
+   ```
+
+With only a couple of short clips to label, expect a few dozen examples at
+most - `train_stroke_classifier.py` prints cross-validation scores so you
+can see how limited that makes it, rather than asserting a confident
+accuracy. More labeled clips directly improve it, the same way more training
+footage improves the ball detector itself.
+
+**Real-world shot speed** needs a one-time court calibration per camera
+angle, since there's no automatic court-line detection:
+
+```
+python scripts/extract_calibration_frame.py --input match.mp4 --out outputs/calibration_frame.jpg
+# open outputs/calibration_frame.jpg in an image viewer, read off the pixel
+# (x, y) of the baseline-left/right and service-line-left/right corners
+# nearest the camera, then:
+python scripts/calibrate_court.py --frame outputs/calibration_frame.jpg \
+    --baseline-left 340,980 --baseline-right 1580,980 \
+    --service-left 520,650 --service-right 1400,650 \
+    --out configs/court_calibration.json
+
+python main.py --input match.mp4 --output outputs/tracked.mp4 \
+    --bounce --speed --calibration configs/court_calibration.json --sidebar
+```
+
+Without `--calibration`, `--speed` still works but reports px/s instead of
+km/h. Speed is computed by mapping the ball's pixel position through a
+**ground-plane** homography - exact at a bounce, increasingly approximate
+the higher the ball is above the court (e.g. a serve toss or smash), since
+there's no calibrated depth/height model. That's an accepted limitation, not
+a bug.
+
+`--speed` prints each shot's peak speed to the console once processing
+finishes (shots are segmented at bounce points, so this needs `--bounce`
+too). The **sidebar** shows something different: `--sidebar` alone displays
+the ball's *live* instantaneous speed on every tracked frame, continuously -
+it doesn't need `--speed` or `--bounce` at all, since gating it to
+bounce-segmented shots would leave most frames blank.
+
 ## Diagnosing false positives
 
 If you're seeing dots that don't belong, don't guess from screenshots -
@@ -131,5 +245,7 @@ amount of tracker tuning fully replaces.
 pytest tests/
 ```
 
-Covers the tracker's interpolation and outlier-rejection logic directly
-(no trained model needed to run these).
+Covers the tracker's interpolation/outlier-rejection logic, bounce
+detection, court calibration geometry, speed estimation, striker selection,
+and stroke feature engineering directly with hand-built data - no trained
+model or video file needed to run any of these.
