@@ -27,6 +27,18 @@ def select_striker(poses: list[PersonPose], ball: Optional[TrackedPosition]) -> 
     return poses[nearest_idx]
 
 
+def select_players(poses: list[PersonPose], frame_width: float, count: int = 2) -> list[PersonPose]:
+    """Filter pose detections down to the `count` most likely players.
+
+    A standard behind-baseline broadcast shot centers the court in frame,
+    with the chair umpire, ball kids, and camera crew off to the sides -
+    so the `count` poses horizontally nearest the frame center are taken
+    as the players. No temporal smoothing, same documented limitation as
+    `select_striker`.
+    """
+    return sorted(poses, key=lambda p: abs(p.center_x - frame_width / 2))[:count]
+
+
 def estimate_ground_y(poses: list[PersonPose], ball: Optional[TrackedPosition]) -> Optional[float]:
     """Estimate the court's ground level near the ball, for cross-checking
     bounce candidates (see `src.analysis.bounce_detector`). Uses whichever

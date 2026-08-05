@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from src.analysis.striker import estimate_ground_y, select_striker
+from src.analysis.striker import estimate_ground_y, select_players, select_striker
 from src.detection.pose_detector import PersonPose
 from src.tracking.ball_tracker import TrackedPosition
 
@@ -39,6 +39,34 @@ class StrikerTest(unittest.TestCase):
         ball = TrackedPosition(frame_idx=0, x=0, y=0, interpolated=False)
 
         self.assertIs(select_striker([first, second], ball), first)
+
+
+class SelectPlayersTest(unittest.TestCase):
+    def test_keeps_two_nearest_frame_center(self):
+        near_player = make_pose(900, 400)
+        far_player = make_pose(1000, 200)
+        umpire = make_pose(1550, 300)
+        ball_kid = make_pose(100, 500)
+
+        result = select_players([umpire, near_player, ball_kid, far_player], frame_width=1920)
+
+        self.assertEqual(len(result), 2)
+        self.assertTrue(any(p is near_player for p in result))
+        self.assertTrue(any(p is far_player for p in result))
+
+    def test_fewer_poses_than_count_returns_all(self):
+        pose = make_pose(950, 400)
+        result = select_players([pose], frame_width=1920)
+        self.assertEqual(len(result), 1)
+        self.assertIs(result[0], pose)
+
+    def test_no_poses_returns_empty(self):
+        self.assertEqual(select_players([], frame_width=1920), [])
+
+    def test_respects_custom_count(self):
+        poses = [make_pose(x, 400) for x in (960, 900, 1020, 500, 1400)]
+        result = select_players(poses, frame_width=1920, count=3)
+        self.assertEqual(len(result), 3)
 
 
 class EstimateGroundYTest(unittest.TestCase):

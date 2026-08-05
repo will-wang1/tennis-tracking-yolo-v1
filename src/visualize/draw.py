@@ -53,27 +53,26 @@ class TrailDrawer:
 
 
 class PoseDrawer:
-    """Skeleton lines/joints for the current striker only, plus a stroke
-    label above their head when a classifier prediction is available."""
+    """Skeleton lines/joints for every detected player, plus a stroke label
+    above the striker's head when a classifier prediction is available."""
 
     def draw(
         self,
         frame: np.ndarray,
-        pose: Optional[PersonPose],
-        stroke: Optional[StrokePrediction],
+        poses: list[PersonPose],
+        striker: Optional[PersonPose] = None,
+        stroke: Optional[StrokePrediction] = None,
     ) -> np.ndarray:
-        if pose is None:
-            return frame
+        for pose in poses:
+            for a, b in POSE_SKELETON_EDGES:
+                xa, ya = pose.keypoints[a]
+                xb, yb = pose.keypoints[b]
+                cv2.line(frame, (int(xa), int(ya)), (int(xb), int(yb)), POSE_SKELETON_COLOR, 2)
+            for x, y in pose.keypoints:
+                cv2.circle(frame, (int(x), int(y)), 4, POSE_KEYPOINT_COLOR, -1)
 
-        for a, b in POSE_SKELETON_EDGES:
-            xa, ya = pose.keypoints[a]
-            xb, yb = pose.keypoints[b]
-            cv2.line(frame, (int(xa), int(ya)), (int(xb), int(yb)), POSE_SKELETON_COLOR, 2)
-        for x, y in pose.keypoints:
-            cv2.circle(frame, (int(x), int(y)), 4, POSE_KEYPOINT_COLOR, -1)
-
-        if stroke is not None:
-            head_x, head_y = pose.keypoints[0]  # nose
+        if stroke is not None and striker is not None:
+            head_x, head_y = striker.keypoints[0]  # nose
             label = f"{stroke.label.upper()} ({stroke.confidence:.0%})"
             cv2.putText(
                 frame,

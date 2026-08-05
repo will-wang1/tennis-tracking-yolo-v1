@@ -11,7 +11,7 @@ from tqdm import tqdm
 from src.analysis.bounce_detector import detect_bounces, find_trajectory_breakpoints
 from src.analysis.court_calibration import CourtCalibration
 from src.analysis.speed_estimator import estimate_shot_speeds
-from src.analysis.striker import estimate_ground_y, select_striker
+from src.analysis.striker import estimate_ground_y, select_players, select_striker
 from src.analysis.stroke_classifier import StrokeClassifier
 from src.detection.ball_detector import BallDetector
 from src.detection.pose_detector import PoseDetector
@@ -140,7 +140,7 @@ def main() -> None:
     for frame in tqdm(frames):
         detections.append(detector.detect(frame))
         if args.pose:
-            poses_by_frame.append(pose_detector.detect(frame))
+            poses_by_frame.append(select_players(pose_detector.detect(frame), reader.width))
 
     positions = tracker.track(detections)
     positions_by_frame = {p.frame_idx: p for p in positions}
@@ -223,7 +223,7 @@ def main() -> None:
     for i, frame in enumerate(frames):
         annotated = trail.draw(frame, positions_by_frame.get(i))
         if args.pose:
-            annotated = pose_drawer.draw(annotated, striker_by_frame[i], strokes_by_frame.get(i))
+            annotated = pose_drawer.draw(annotated, poses_by_frame[i], striker_by_frame[i], strokes_by_frame.get(i))
         if args.bounce:
             annotated = bounce_drawer.draw(annotated, bounces_by_frame.get(i))
         if args.sidebar:
