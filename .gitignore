@@ -5,6 +5,7 @@ venv/
 
 # datasets (large, fetched separately)
 data/raw/
+data/raw_*/
 data/*.zip
 data/*.cache
 
