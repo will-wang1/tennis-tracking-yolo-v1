@@ -26,10 +26,11 @@ class StrokePrediction:
 
 
 class StrokeClassifier:
-    def __init__(self, model_path: str | Path, window: int = 7):
-        self.model = joblib.load(model_path)
-        self.window_size = window
-        self.window: deque[PersonPose] = deque(maxlen=window)
+    def __init__(self, model_path: str | Path):
+        bundle = joblib.load(model_path)
+        self.model = bundle["pipeline"]
+        self.window_size = bundle["window"]
+        self.window: deque[PersonPose] = deque(maxlen=self.window_size)
 
     def predict(self, frame_idx: int, striker_pose: Optional[PersonPose]) -> Optional[StrokePrediction]:
         """Call once per frame. A None pose resets the window - velocity

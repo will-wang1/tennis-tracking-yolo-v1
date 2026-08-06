@@ -150,8 +150,8 @@ def main() -> None:
     pipeline.fit(X, y)
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    joblib.dump(pipeline, out_path)
-    print(f"Wrote {out_path}")
+    joblib.dump({"pipeline": pipeline, "window": args.window}, out_path)
+    print(f"Wrote {out_path} (window={args.window})")
 
 
 if __name__ == "__main__":

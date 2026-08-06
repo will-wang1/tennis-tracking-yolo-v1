@@ -30,10 +30,13 @@ class FakeModel:
 
 class StrokeClassifierTest(unittest.TestCase):
     def setUp(self):
-        patcher = patch("src.analysis.stroke_classifier.joblib.load", return_value=FakeModel())
+        patcher = patch(
+            "src.analysis.stroke_classifier.joblib.load",
+            return_value={"pipeline": FakeModel(), "window": 3},
+        )
         self.addCleanup(patcher.stop)
         patcher.start()
-        self.classifier = StrokeClassifier("unused_path.pkl", window=3)
+        self.classifier = StrokeClassifier("unused_path.pkl")
 
     def test_returns_none_until_window_is_full(self):
         self.assertIsNone(self.classifier.predict(0, make_pose()))
