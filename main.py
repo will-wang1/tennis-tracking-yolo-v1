@@ -10,14 +10,15 @@ from tqdm import tqdm
 
 from src.analysis.bounce_detector import detect_bounces, find_trajectory_breakpoints
 from src.analysis.court_calibration import CourtCalibration
-from src.analysis.speed_estimator import estimate_shot_speeds
+from src.analysis.speed_estimator import estimate_net_crossing_speeds, estimate_shot_speeds
 from src.analysis.striker import estimate_ground_y, select_players, select_striker
 from src.analysis.stroke_classifier import StrokeClassifier
 from src.detection.ball_detector import BallDetector
+from src.detection.court_keypoint_detector import CourtKeypointDetector
 from src.detection.pose_detector import PoseDetector
 from src.tracking.ball_tracker import BallTracker
 from src.video.io import VideoReader, VideoWriter
-from src.visualize.draw import BounceMarkerDrawer, PoseDrawer, SidebarDrawer, TrailDrawer
+from src.visualize.draw import BounceMarkerDrawer, CourtOverlayDrawer, PoseDrawer, SidebarDrawer, TrailDrawer
 
 REPO_ROOT = Path(__file__).resolve().parent
 
@@ -92,11 +93,31 @@ def main() -> None:
     parser.add_argument(
         "--calibration",
         default=None,
-        help="Path to a court calibration file (configs/court_calibration.json) for real-world "
-        "speed. If omitted, --speed falls back to px/s.",
+        help="Path to a static court calibration file (configs/court_calibration.json) for "
+        "real-world speed on a FIXED camera. Ignored if --show-court is given, since that "
+        "detects the court fresh every frame instead (handles a panning/zooming camera; a "
+        "static file can't). If neither --show-court nor --calibration is given, --speed "
+        "falls back to px/s.",
     )
     parser.add_argument(
         "--speed", action="store_true", help="Print peak speed per shot to the console"
+    )
+    parser.add_argument(
+        "--show-court",
+        action="store_true",
+        help="Detect the court + draw the line wireframe + 4 corner markers EVERY frame (not "
+        "just once), so the overlay tracks a moving/zooming camera. Also drives --speed/"
+        "--sidebar's real-world numbers instead of --calibration when given. Requires "
+        "--court-keypoint-weights.",
+    )
+    parser.add_argument("--court-keypoint-weights", default=str(REPO_ROOT / "weights" / "court_keypoint_detector.pt"))
+    parser.add_argument("--court-keypoint-confidence", type=float, default=0.25)
+    parser.add_argument(
+        "--court-min-keypoint-confidence",
+        type=float,
+        default=0.5,
+        help="Individual court keypoints below this are excluded from that frame's homography "
+        "fit, even if the overall court detection passed --court-keypoint-confidence.",
     )
     parser.add_argument(
         "--speed-window",
@@ -127,7 +148,19 @@ def main() -> None:
         if args.pose
         else None
     )
-    calibration = CourtCalibration.load(args.calibration) if args.calibration else None
+    court_keypoint_detector = (
+        CourtKeypointDetector(
+            args.court_keypoint_weights,
+            confidence=args.court_keypoint_confidence,
+            imgsz=args.imgsz,
+            device=args.device,
+        )
+        if args.show_court
+        else None
+    )
+    static_calibration = (
+        CourtCalibration.load(args.calibration) if args.calibration and not args.show_court else None
+    )
 
     reader = VideoReader(args.input)
     frames = list(reader.frames())
@@ -137,10 +170,32 @@ def main() -> None:
     print(f"Detecting ball in {len(frames)} frames...")
     detections = []
     poses_by_frame = [] if args.pose else None
-    for frame in tqdm(frames):
+    # A moving/zooming broadcast camera means the court's pixel position can
+    # change frame to frame, so with --show-court the court is re-detected
+    # EVERY frame rather than once (contrast a fixed-camera --calibration
+    # file, loaded once above). A frame where the detector doesn't find
+    # enough confident keypoints (motion blur, court briefly out of frame)
+    # carries forward the last good calibration rather than leaving a gap -
+    # the camera can't have moved far in one missed frame.
+    calibrations_by_frame: dict[int, CourtCalibration] = {}
+    last_good_calibration: "CourtCalibration | None" = None
+    for i, frame in enumerate(tqdm(frames)):
         detections.append(detector.detect(frame))
         if args.pose:
             poses_by_frame.append(select_players(pose_detector.detect(frame), reader.width))
+        if args.show_court:
+            court_detection = court_keypoint_detector.detect(frame)
+            named_points = (
+                court_detection.as_named_points(min_confidence=args.court_min_keypoint_confidence)
+                if court_detection is not None
+                else {}
+            )
+            if len(named_points) >= 4:
+                last_good_calibration = CourtCalibration.from_keypoints(named_points)
+            if last_good_calibration is not None:
+                calibrations_by_frame[i] = last_good_calibration
+        elif static_calibration is not None:
+            calibrations_by_frame[i] = static_calibration
 
     positions = tracker.track(detections)
     positions_by_frame = {p.frame_idx: p for p in positions}
@@ -174,37 +229,52 @@ def main() -> None:
             if ground_y is not None:
                 ground_y_by_frame[i] = ground_y
 
+    # detect_bounces takes a single calibration for its whole call (it
+    # scans the whole trajectory at once); with --show-court's per-frame
+    # calibrations, enrich each bounce's world_x/world_y afterward instead,
+    # using the calibration valid at that specific bounce's frame.
     bounces = (
         detect_bounces(
             positions,
             min_y_prominence=args.bounce_min_prominence,
             min_frame_gap=args.bounce_min_gap,
             min_x_reversal=args.bounce_min_x_reversal,
-            calibration=calibration,
+            calibration=static_calibration,
             ground_y_by_frame=ground_y_by_frame,
             max_height_above_ground=args.bounce_max_height,
         )
         if args.bounce
         else []
     )
+    if args.bounce and args.show_court:
+        for bounce in bounces:
+            bounce_calibration = calibrations_by_frame.get(bounce.frame_idx)
+            if bounce_calibration is not None:
+                bounce.world_x, bounce.world_y = bounce_calibration.pixel_to_world(bounce.x, bounce.y)
     bounces_by_frame = {b.frame_idx: b for b in bounces}
     if args.bounce:
         print(f"Detected {len(bounces)} bounces")
 
-    # Shot speed is segmented at trajectory "breakpoints" - ANY direction
-    # change (bounce OR contact), not just confirmed bounces. Confirming a
-    # bounce specifically (for the visual markers above) needs the stronger,
-    # pose-cross-referenced signal and is often sparse/absent; a stable
-    # per-shot speed reading doesn't need that distinction; see
-    # find_trajectory_breakpoints's docstring.
+    # With a court calibration (static file or --show-court's per-frame
+    # detections), speed is measured from real, moving ball detections near
+    # the net line (estimate_net_crossing_speeds) - a static false-positive
+    # lock-on doesn't move frame to frame, so it's excluded by construction,
+    # and this sidesteps needing reliable bounce/breakpoint segmentation
+    # across the whole trajectory (fragile, see find_trajectory_breakpoints's
+    # docstring). Without any calibration there's no way to locate the net
+    # in pixels, so this falls back to the old whole-trajectory,
+    # breakpoint-segmented estimate in px/s.
     shot_speed_by_frame = {}
     if args.speed or args.sidebar:
-        breakpoint_frames = find_trajectory_breakpoints(
-            positions, min_y_prominence=args.bounce_min_prominence, min_frame_gap=args.bounce_min_gap
-        )
-        shots = estimate_shot_speeds(
-            positions, breakpoint_frames, reader.fps, calibration, speed_window=args.speed_window
-        )
+        if calibrations_by_frame:
+            shots = estimate_net_crossing_speeds(positions, reader.fps, calibrations_by_frame)
+        else:
+            breakpoint_frames = find_trajectory_breakpoints(
+                positions, min_y_prominence=args.bounce_min_prominence, min_frame_gap=args.bounce_min_gap
+            )
+            shots = estimate_shot_speeds(
+                positions, breakpoint_frames, reader.fps, None, speed_window=args.speed_window
+            )
         if args.speed:
             print(f"Peak speed per shot ({len(shots)} shots):")
             for shot in shots:
@@ -219,9 +289,13 @@ def main() -> None:
     pose_drawer = PoseDrawer() if args.pose else None
     bounce_drawer = BounceMarkerDrawer() if args.bounce else None
     sidebar_drawer = SidebarDrawer(width=args.sidebar_width) if args.sidebar else None
+    court_drawer = CourtOverlayDrawer() if args.show_court else None
 
     for i, frame in enumerate(frames):
-        annotated = trail.draw(frame, positions_by_frame.get(i))
+        annotated = frame
+        if args.show_court:
+            annotated = court_drawer.draw(annotated, calibrations_by_frame.get(i))
+        annotated = trail.draw(annotated, positions_by_frame.get(i))
         if args.pose:
             annotated = pose_drawer.draw(annotated, poses_by_frame[i], striker_by_frame[i], strokes_by_frame.get(i))
         if args.bounce:

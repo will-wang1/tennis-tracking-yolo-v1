@@ -14,6 +14,7 @@ import cv2
 import numpy as np
 
 from src.analysis.bounce_detector import BounceEvent
+from src.analysis.court_calibration import CourtCalibration, FULL_COURT_REFERENCE_POINTS
 from src.analysis.stroke_classifier import StrokePrediction
 from src.detection.pose_detector import PersonPose
 from src.tracking.ball_tracker import TrackedPosition
@@ -33,6 +34,23 @@ BOUNCE_MARKER_COLOR = (255, 0, 255)  # magenta
 
 SIDEBAR_BACKGROUND = (30, 30, 30)
 SIDEBAR_TEXT_COLOR = (255, 255, 255)
+
+COURT_LINE_COLOR = (0, 200, 255)  # orange
+COURT_CORNER_COLOR = (0, 255, 255)  # yellow
+COURT_LINE_EDGES = [
+    ("baseline_far_left", "baseline_far_right"),
+    ("baseline_near_left", "baseline_near_right"),
+    ("baseline_far_left", "baseline_near_left"),
+    ("baseline_far_right", "baseline_near_right"),
+    ("singles_far_left", "singles_near_left"),
+    ("singles_far_right", "singles_near_right"),
+    ("service_far_left", "service_far_right"),
+    ("service_near_left", "service_near_right"),
+    ("center_service_far", "center_service_near"),
+]
+# The 4 doubles-court corners, as opposed to the 14 full keypoints - what a
+# viewer would point to as "the corners of the court".
+COURT_CORNER_NAMES = ("baseline_far_left", "baseline_far_right", "baseline_near_left", "baseline_near_right")
 
 
 class TrailDrawer:
@@ -101,6 +119,37 @@ class BounceMarkerDrawer:
         for marker in self.markers:
             x, y = int(marker.x), int(marker.y)
             cv2.drawMarker(frame, (x, y), BOUNCE_MARKER_COLOR, cv2.MARKER_TILTED_CROSS, 16, 2)
+
+        return frame
+
+
+class CourtOverlayDrawer:
+    """Court-line wireframe + corner markers, reprojected fresh from
+    whichever `CourtCalibration` is passed to `draw()` each call - a panning/
+    zooming broadcast camera changes the pixel<->world mapping frame to
+    frame, so the reprojection can't be cached once like a fixed-camera
+    assumption would allow. `calibration=None` (the court detector lost the
+    court that frame) just skips drawing for that frame."""
+
+    def draw(self, frame: np.ndarray, calibration: Optional[CourtCalibration]) -> np.ndarray:
+        if calibration is None:
+            return frame
+
+        inverse_homography = np.linalg.inv(calibration.homography)
+        points_px: dict[str, tuple[float, float]] = {}
+        for name, (world_x, world_y) in FULL_COURT_REFERENCE_POINTS.items():
+            point = np.array([[[world_x, world_y]]], dtype=np.float64)
+            px, py = cv2.perspectiveTransform(point, inverse_homography)[0, 0]
+            points_px[name] = (float(px), float(py))
+
+        for a, b in COURT_LINE_EDGES:
+            xa, ya = points_px[a]
+            xb, yb = points_px[b]
+            cv2.line(frame, (int(xa), int(ya)), (int(xb), int(yb)), COURT_LINE_COLOR, 2)
+
+        for name in COURT_CORNER_NAMES:
+            x, y = points_px[name]
+            cv2.circle(frame, (int(x), int(y)), 8, COURT_CORNER_COLOR, -1)
 
         return frame
 

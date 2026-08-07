@@ -1,12 +1,31 @@
 import unittest
 
-from src.analysis.court_calibration import CourtCalibration
-from src.analysis.speed_estimator import estimate_shot_speeds, instantaneous_speeds, segment_shots
+from src.analysis.court_calibration import FULL_COURT_REFERENCE_POINTS, CourtCalibration
+from src.analysis.speed_estimator import (
+    estimate_net_crossing_speeds,
+    estimate_shot_speeds,
+    instantaneous_speeds,
+    net_pixel_y_range,
+    segment_shots,
+)
 from src.tracking.ball_tracker import TrackedPosition
 
 
-def pos(frame_idx, x, y):
-    return TrackedPosition(frame_idx=frame_idx, x=x, y=y, interpolated=False)
+def pos(frame_idx, x, y, interpolated=False):
+    return TrackedPosition(frame_idx=frame_idx, x=x, y=y, interpolated=interpolated)
+
+
+def scaled_calibration(scale=100.0):
+    # pixel = world * scale for the 4 doubles-baseline corners - a pure
+    # uniform scale with no perspective distortion, so reprojected pixel
+    # positions are exactly predictable in tests.
+    names = ["baseline_far_left", "baseline_far_right", "baseline_near_left", "baseline_near_right"]
+    pixel_points = {
+        name: (wx * scale, wy * scale)
+        for name, (wx, wy) in FULL_COURT_REFERENCE_POINTS.items()
+        if name in names
+    }
+    return CourtCalibration.from_keypoints(pixel_points)
 
 
 class SpeedEstimatorTest(unittest.TestCase):
@@ -125,6 +144,115 @@ class SpeedEstimatorTest(unittest.TestCase):
 
         self.assertEqual(len(shots), 1)
         self.assertEqual(shots[0].unit, "px/s")
+
+
+    def test_net_pixel_y_range_matches_known_scale(self):
+        calibration = scaled_calibration(scale=100.0)
+        # net world-y is the court length's midpoint (23.77 / 2 = 11.885);
+        # a pure uniform scale means both sideline edges reproject to the
+        # same pixel y, with no perspective spread
+        min_y, max_y = net_pixel_y_range(calibration)
+
+        self.assertAlmostEqual(min_y, 1188.5, places=1)
+        self.assertAlmostEqual(max_y, 1188.5, places=1)
+
+    def test_net_crossing_speed_ignores_static_lockon_near_net(self):
+        calibration = scaled_calibration(scale=100.0)
+        net_y = 1188.5
+
+        positions = [
+            # a real, moving ball crossing near the net
+            pos(0, 500.0, net_y - 10),
+            pos(1, 550.0, net_y + 5),
+            # a static false-positive lock-on sitting right at the net -
+            # barely moves frame to frame, must NOT be read as a real shot
+            pos(10, 700.0, net_y),
+            pos(11, 701.0, net_y + 1),
+            pos(12, 700.5, net_y - 1),
+        ]
+        calibrations = {p.frame_idx: calibration for p in positions}
+        shots = estimate_net_crossing_speeds(positions, fps=30.0, calibrations_by_frame=calibrations)
+
+        # the pair (frame 0 -> frame 1) is recorded at frame 1, matching
+        # instantaneous_speeds' convention of keying by the later frame
+        self.assertEqual(len(shots), 1)
+        self.assertEqual(shots[0].start_frame, 1)
+        self.assertEqual(shots[0].end_frame, 1)
+        self.assertEqual(shots[0].unit, "km/h")
+
+    def test_net_crossing_speed_ignores_positions_away_from_net(self):
+        calibration = scaled_calibration(scale=100.0)
+        # far from the net line (net_y ~= 1188.5), even with real motion
+        positions = [pos(0, 0.0, 50.0), pos(1, 100.0, 50.0)]
+        calibrations = {p.frame_idx: calibration for p in positions}
+
+        shots = estimate_net_crossing_speeds(positions, fps=30.0, calibrations_by_frame=calibrations)
+
+        self.assertEqual(shots, [])
+
+    def test_net_crossing_speed_ignores_interpolated_positions(self):
+        calibration = scaled_calibration(scale=100.0)
+        net_y = 1188.5
+        positions = [
+            pos(0, 500.0, net_y, interpolated=True),
+            pos(1, 550.0, net_y, interpolated=True),
+        ]
+        calibrations = {p.frame_idx: calibration for p in positions}
+
+        shots = estimate_net_crossing_speeds(positions, fps=30.0, calibrations_by_frame=calibrations)
+
+        self.assertEqual(shots, [])
+
+    def test_net_crossing_speed_reports_peak_within_group(self):
+        calibration = scaled_calibration(scale=100.0)
+        net_y = 1188.5
+        positions = [
+            pos(0, 0.0, net_y),
+            pos(1, 10.0, net_y),  # small step
+            pos(2, 60.0, net_y),  # big step - the peak
+            pos(3, 70.0, net_y),  # small step
+        ]
+        calibrations = {p.frame_idx: calibration for p in positions}
+
+        shots = estimate_net_crossing_speeds(positions, fps=30.0, calibrations_by_frame=calibrations)
+
+        self.assertEqual(len(shots), 1)
+        self.assertEqual(shots[0].peak_frame, 2)
+
+    def test_net_crossing_speed_ignores_frames_missing_a_calibration(self):
+        # the court detector lost the court on this frame (e.g. motion
+        # blur) - that frame's pair must be excluded, not guessed at
+        calibration = scaled_calibration(scale=100.0)
+        net_y = 1188.5
+        positions = [pos(0, 0.0, net_y), pos(1, 50.0, net_y)]
+
+        shots = estimate_net_crossing_speeds(positions, fps=30.0, calibrations_by_frame={0: calibration})
+
+        self.assertEqual(shots, [])
+
+    def test_net_crossing_speed_uses_each_frames_own_calibration(self):
+        # a panning camera: two calibrations at different scales, each with
+        # its OWN correctly-located net line in pixel space (a larger scale
+        # reprojects the net line further down the frame too) - the same
+        # pixel displacement must map to a different real-world distance
+        # depending on which frame's calibration is picked, proving the
+        # per-frame lookup is actually used and not just a shared one
+        calib_1x = scaled_calibration(scale=100.0)
+        calib_2x = scaled_calibration(scale=200.0)
+        net_y_1x, _ = net_pixel_y_range(calib_1x)
+        net_y_2x, _ = net_pixel_y_range(calib_2x)
+
+        positions_1x = [pos(0, 0.0, net_y_1x), pos(1, 50.0, net_y_1x)]
+        positions_2x = [pos(0, 0.0, net_y_2x), pos(1, 50.0, net_y_2x)]
+
+        shots_1x = estimate_net_crossing_speeds(positions_1x, fps=30.0, calibrations_by_frame={0: calib_1x, 1: calib_1x})
+        shots_2x = estimate_net_crossing_speeds(positions_2x, fps=30.0, calibrations_by_frame={0: calib_2x, 1: calib_2x})
+
+        self.assertEqual(len(shots_1x), 1)
+        self.assertEqual(len(shots_2x), 1)
+        # double the scale (pixel = world*100 vs *200) -> the same 50px
+        # displacement maps to HALF the real-world distance -> half the speed
+        self.assertAlmostEqual(shots_2x[0].peak_speed, shots_1x[0].peak_speed / 2, places=1)
 
 
 if __name__ == "__main__":

@@ -24,9 +24,10 @@ caller always gets a number and always knows which kind (`unit` field).
 from dataclasses import dataclass
 from typing import Optional
 
+import cv2
 import numpy as np
 
-from src.analysis.court_calibration import CourtCalibration
+from src.analysis.court_calibration import FULL_COURT_REFERENCE_POINTS, CourtCalibration
 from src.tracking.ball_tracker import TrackedPosition
 
 # The fastest tennis serve ever recorded is ~263 km/h. A reading above this
@@ -48,6 +49,119 @@ class ShotSpeed:
     peak_frame: int
     peak_speed: float
     unit: str  # "km/h" if a calibration was given, else "px/s"
+
+
+def net_pixel_y_range(calibration: CourtCalibration) -> tuple[float, float]:
+    """Reprojects the net line (the court's length-wise midpoint, by
+    construction - see `FULL_COURT_REFERENCE_POINTS`) back to pixels at
+    both sidelines, returning (min_y, max_y). Perspective means the net's
+    pixel height isn't constant across the frame's width, so this is a
+    range, not a single value."""
+    net_world_y = max(y for _, y in FULL_COURT_REFERENCE_POINTS.values()) / 2
+    doubles_width = max(x for x, _ in FULL_COURT_REFERENCE_POINTS.values())
+    inverse_homography = np.linalg.inv(calibration.homography)
+
+    pixel_ys = []
+    for world_x in (0.0, doubles_width):
+        point = np.array([[[world_x, net_world_y]]], dtype=np.float64)
+        _, pixel_y = cv2.perspectiveTransform(point, inverse_homography)[0, 0]
+        pixel_ys.append(float(pixel_y))
+    return min(pixel_ys), max(pixel_ys)
+
+
+def estimate_net_crossing_speeds(
+    positions: list[TrackedPosition],
+    fps: float,
+    calibrations_by_frame: dict[int, CourtCalibration],
+    net_band: float = 60.0,
+    min_motion_px: float = 4.0,
+    max_frame_gap: int = 2,
+) -> list[ShotSpeed]:
+    """Speed computed only where the ball is genuinely moving near the net
+    line - a narrower, more robust alternative to `estimate_shot_speeds`
+    that sidesteps needing reliable bounce/breakpoint segmentation across
+    the whole trajectory (see this module's and `bounce_detector`'s
+    docstrings for why that's fragile). A frame-to-frame pair counts only
+    if BOTH hold:
+
+    - both positions fall within `net_band` pixels of the net's
+      reprojected pixel height (`net_pixel_y_range`)
+    - the pair shows real motion (>= `min_motion_px`) - a static
+      false-positive detector lock-on (e.g. a net-post highlight) repeats
+      almost the same pixel frame to frame and is excluded by this alone,
+      no lock-on-radius tuning required
+
+    `calibrations_by_frame` maps frame index -> the `CourtCalibration` valid
+    at that frame - one entry per frame for a moving/panning camera, or the
+    same `CourtCalibration` repeated for every frame for a static one; a
+    missing frame index (e.g. the court detector lost the court that frame)
+    excludes that frame's pairs rather than guessing. The later frame
+    (`cur_pos`) in each pair picks which calibration to use, since a camera
+    move between prev and cur is exactly what that frame's fresh detection
+    captures.
+
+    Only DETECTED (non-interpolated) positions are considered - an
+    interpolated point is a synthetic straight-line guess, not evidence of
+    real motion. Consecutive qualifying frames (frame gap <= `max_frame_gap`)
+    are grouped into one `ShotSpeed` each (peak speed within the group) -
+    same shape `estimate_shot_speeds` returns, so callers don't need to
+    know which method produced it.
+    """
+    detected = sorted((p for p in positions if not p.interpolated), key=lambda p: p.frame_idx)
+    net_range_cache: dict[int, tuple[float, float]] = {}
+
+    def net_range_for(calibration: CourtCalibration) -> tuple[float, float]:
+        key = id(calibration)
+        if key not in net_range_cache:
+            min_y, max_y = net_pixel_y_range(calibration)
+            net_range_cache[key] = (min_y - net_band, max_y + net_band)
+        return net_range_cache[key]
+
+    crossings: list[tuple[int, float]] = []
+    for prev_pos, cur_pos in zip(detected, detected[1:]):
+        gap = cur_pos.frame_idx - prev_pos.frame_idx
+        if gap <= 0 or gap > max_frame_gap:
+            continue
+
+        calibration = calibrations_by_frame.get(cur_pos.frame_idx)
+        if calibration is None:
+            continue
+
+        min_y, max_y = net_range_for(calibration)
+        if not (min_y <= prev_pos.y <= max_y and min_y <= cur_pos.y <= max_y):
+            continue
+
+        pixel_distance = float(np.hypot(cur_pos.x - prev_pos.x, cur_pos.y - prev_pos.y))
+        if pixel_distance < min_motion_px:
+            continue  # too little motion to be a real, moving ball
+
+        elapsed_seconds = gap / fps
+        distance_m = calibration.pixel_distance_to_meters(prev_pos.x, prev_pos.y, cur_pos.x, cur_pos.y)
+        speed_kmh = (distance_m / elapsed_seconds) * 3.6
+        if speed_kmh <= MAX_PLAUSIBLE_KMH:
+            crossings.append((cur_pos.frame_idx, speed_kmh))
+
+    shots = []
+    group: list[tuple[int, float]] = []
+    for frame_idx, speed in crossings:
+        if group and frame_idx - group[-1][0] > max_frame_gap:
+            shots.append(_shot_from_group(group))
+            group = []
+        group.append((frame_idx, speed))
+    if group:
+        shots.append(_shot_from_group(group))
+    return shots
+
+
+def _shot_from_group(group: list[tuple[int, float]]) -> ShotSpeed:
+    peak_frame, peak_speed = max(group, key=lambda item: item[1])
+    return ShotSpeed(
+        start_frame=group[0][0],
+        end_frame=group[-1][0],
+        peak_frame=peak_frame,
+        peak_speed=peak_speed,
+        unit="km/h",
+    )
 
 
 def instantaneous_speeds(
