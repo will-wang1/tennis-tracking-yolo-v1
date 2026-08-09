@@ -1,11 +1,25 @@
 import unittest
 
-from src.analysis.bounce_detector import detect_bounces, find_trajectory_breakpoints
+from src.analysis.bounce_detector import detect_bounces, detect_bounces_ml, find_trajectory_breakpoints
 from src.tracking.ball_tracker import TrackedPosition
 
 
 def pos(frame_idx, x, y):
     return TrackedPosition(frame_idx=frame_idx, x=x, y=y, interpolated=False)
+
+
+class _StubClassifier:
+    """Accepts whatever candidate frame(s) - keyed by the CENTER TrackedPosition's
+    frame_idx - are listed in `accept_frames`, regardless of the window's contents."""
+
+    def __init__(self, accept_frames: set[int]):
+        self.accept_frames = accept_frames
+        self.calls: list[int] = []
+
+    def is_bounce(self, window, center_idx, threshold=0.5):
+        center_frame = window[center_idx].frame_idx
+        self.calls.append(center_frame)
+        return center_frame in self.accept_frames
 
 
 class FindTrajectoryBreakpointsTest(unittest.TestCase):
@@ -176,6 +190,72 @@ class BounceDetectorTest(unittest.TestCase):
         self.assertEqual(len(bounces), 1)
         self.assertIsNotNone(bounces[0].world_x)
         self.assertIsNotNone(bounces[0].world_y)
+        self.assertAlmostEqual(bounces[0].world_x, 5.0, places=3)
+        self.assertAlmostEqual(bounces[0].world_y, 10.0, places=3)
+
+
+class DetectBouncesMlTest(unittest.TestCase):
+    def test_accepts_only_classifier_approved_candidates(self):
+        # two local-max candidates (frames 2 and 6, both real V-shapes) -
+        # the classifier only approves frame 2
+        positions = [
+            pos(0, 0, 0), pos(1, 0, 50), pos(2, 0, 100), pos(3, 0, 50), pos(4, 0, 0),
+            pos(5, 0, 50), pos(6, 0, 100), pos(7, 0, 50), pos(8, 0, 0),
+        ]
+        classifier = _StubClassifier(accept_frames={2})
+
+        bounces = detect_bounces_ml(positions, classifier, min_y_prominence=5.0, min_frame_gap=1)
+
+        self.assertEqual([b.frame_idx for b in bounces], [2])
+
+    def test_rejects_everything_when_classifier_accepts_nothing(self):
+        positions = [pos(0, 0, 0), pos(1, 0, 50), pos(2, 0, 100), pos(3, 0, 50), pos(4, 0, 0)]
+        classifier = _StubClassifier(accept_frames=set())
+
+        bounces = detect_bounces_ml(positions, classifier, min_y_prominence=5.0, min_frame_gap=1)
+
+        self.assertEqual(bounces, [])
+
+    def test_uses_low_prominence_default_to_surface_more_candidates(self):
+        # a 6px wiggle - detect_bounces' default (15.0) would filter this
+        # out before the classifier ever sees it; detect_bounces_ml's much
+        # lower default should still pass it through as a candidate
+        positions = [pos(0, 0, 0), pos(1, 0, 6), pos(2, 0, 0)]
+        classifier = _StubClassifier(accept_frames={1})
+
+        bounces = detect_bounces_ml(positions, classifier, min_frame_gap=1)  # default min_y_prominence
+
+        self.assertEqual([b.frame_idx for b in bounces], [1])
+
+    def test_skips_candidate_at_trajectory_edge(self):
+        # only 1 frame of context on the left of frame 1 - window can't be
+        # built with a real frame on both sides once clipped further left,
+        # but this one still has frame 0 - the real edge case is frame 0
+        # itself, which can never be a local max (no left neighbor)
+        positions = [pos(0, 0, 0), pos(1, 0, 100), pos(2, 0, 0)]
+        classifier = _StubClassifier(accept_frames={0, 1, 2})
+
+        bounces = detect_bounces_ml(positions, classifier, min_y_prominence=5.0, min_frame_gap=1, window=9)
+
+        # frame 1 is the only possible local max here and has a real
+        # neighbor on each side, so it's still evaluated despite the short window
+        self.assertEqual([b.frame_idx for b in bounces], [1])
+
+    def test_populates_world_coordinates_when_calibration_given(self):
+        from src.analysis.court_calibration import CourtCalibration
+
+        pixel_points = [(0.0, 0.0), (100.0, 0.0), (100.0, 100.0), (0.0, 100.0)]
+        world_points = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]
+        calibration = CourtCalibration.from_points(pixel_points, world_points)
+
+        positions = [pos(0, 50, 0), pos(1, 50, 100), pos(2, 50, 0)]
+        classifier = _StubClassifier(accept_frames={1})
+
+        bounces = detect_bounces_ml(
+            positions, classifier, min_y_prominence=5.0, min_frame_gap=1, calibration=calibration
+        )
+
+        self.assertEqual(len(bounces), 1)
         self.assertAlmostEqual(bounces[0].world_x, 5.0, places=3)
         self.assertAlmostEqual(bounces[0].world_y, 10.0, places=3)
 

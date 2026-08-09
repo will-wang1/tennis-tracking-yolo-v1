@@ -8,9 +8,14 @@ from pathlib import Path
 
 from tqdm import tqdm
 
-from src.analysis.bounce_detector import detect_bounces, find_trajectory_breakpoints
+from src.analysis.bounce_classifier import BounceClassifier
+from src.analysis.bounce_detector import detect_bounces, detect_bounces_ml, find_trajectory_breakpoints
 from src.analysis.court_calibration import CourtCalibration
-from src.analysis.speed_estimator import estimate_net_crossing_speeds, estimate_shot_speeds
+from src.analysis.speed_estimator import (
+    estimate_net_crossing_speeds,
+    estimate_shot_speeds,
+    merge_with_net_crossing_speeds,
+)
 from src.analysis.striker import estimate_ground_y, select_players, select_striker
 from src.analysis.stroke_classifier import StrokeClassifier
 from src.detection.ball_detector import BallDetector
@@ -88,7 +93,22 @@ def main() -> None:
         "applied when --pose is also given, which is what makes this cross-check possible) "
         "before it's rejected as too high off the court to be a real bounce. Telling a low "
         "bounce from a contact from pixels alone is inherently approximate - see "
-        "src.analysis.bounce_detector's module docstring.",
+        "src.analysis.bounce_detector's module docstring. Ignored if --bounce-classifier is given.",
+    )
+    parser.add_argument(
+        "--bounce-classifier",
+        default=None,
+        help="Path to a trained bounce classifier (weights/bounce_classifier.pkl, see "
+        "scripts/train_bounce_classifier.py) - replaces detect_bounces' fixed thresholds "
+        "(--bounce-min-x-reversal, --bounce-max-height) with a learned classifier scored over "
+        "a broader candidate scan. Requires --bounce.",
+    )
+    parser.add_argument(
+        "--bounce-classifier-threshold",
+        type=float,
+        default=0.5,
+        help="Minimum bounce probability from --bounce-classifier to accept a candidate. Lower "
+        "to catch more real bounces at the cost of more false positives, raise for the opposite.",
     )
     parser.add_argument(
         "--calibration",
@@ -125,7 +145,20 @@ def main() -> None:
         default=1,
         help="Frames spanned per speed sample - 1 uses raw frame-to-frame displacement. Raise "
         "this on a more zoomed-out camera, where real-world-per-pixel is coarser and a few "
-        "pixels of detector jitter can otherwise swing the reported speed by 100+ km/h.",
+        "pixels of detector jitter can otherwise swing the reported speed by 100+ km/h. Only "
+        "affects the whole-trajectory fallback reading, not the net-crossing one (see "
+        "--net-speed-min-frames).",
+    )
+    parser.add_argument(
+        "--net-speed-min-frames",
+        type=int,
+        default=4,
+        help="Minimum consecutive detected frames the ball must stay within the net band "
+        "before estimate_net_crossing_speeds reports a reading - the reading is the AVERAGE "
+        "speed over that whole window (net displacement / elapsed time), not a peak "
+        "instantaneous reading, so more frames means more jitter-robust but less responsive "
+        "to genuine sub-window acceleration. Raise this if speed readings still look noisy/too "
+        "high, lower it if legitimate net crossings are being dropped for lack of frames.",
     )
     parser.add_argument("--sidebar", action="store_true", help="Composite a stroke/speed sidebar panel")
     parser.add_argument("--sidebar-width", type=int, default=250)
@@ -229,12 +262,20 @@ def main() -> None:
             if ground_y is not None:
                 ground_y_by_frame[i] = ground_y
 
-    # detect_bounces takes a single calibration for its whole call (it
-    # scans the whole trajectory at once); with --show-court's per-frame
-    # calibrations, enrich each bounce's world_x/world_y afterward instead,
-    # using the calibration valid at that specific bounce's frame.
-    bounces = (
-        detect_bounces(
+    # Both paths take a single calibration for the whole call (they scan the
+    # whole trajectory at once); with --show-court's per-frame calibrations,
+    # enrich each bounce's world_x/world_y afterward instead, using the
+    # calibration valid at that specific bounce's frame.
+    if args.bounce and args.bounce_classifier:
+        bounces = detect_bounces_ml(
+            positions,
+            BounceClassifier(args.bounce_classifier),
+            min_frame_gap=args.bounce_min_gap,
+            threshold=args.bounce_classifier_threshold,
+            calibration=static_calibration,
+        )
+    elif args.bounce:
+        bounces = detect_bounces(
             positions,
             min_y_prominence=args.bounce_min_prominence,
             min_frame_gap=args.bounce_min_gap,
@@ -243,9 +284,8 @@ def main() -> None:
             ground_y_by_frame=ground_y_by_frame,
             max_height_above_ground=args.bounce_max_height,
         )
-        if args.bounce
-        else []
-    )
+    else:
+        bounces = []
     if args.bounce and args.show_court:
         for bounce in bounces:
             bounce_calibration = calibrations_by_frame.get(bounce.frame_idx)
@@ -255,26 +295,52 @@ def main() -> None:
     if args.bounce:
         print(f"Detected {len(bounces)} bounces")
 
-    # With a court calibration (static file or --show-court's per-frame
-    # detections), speed is measured from real, moving ball detections near
-    # the net line (estimate_net_crossing_speeds) - a static false-positive
-    # lock-on doesn't move frame to frame, so it's excluded by construction,
-    # and this sidesteps needing reliable bounce/breakpoint segmentation
-    # across the whole trajectory (fragile, see find_trajectory_breakpoints's
-    # docstring). Without any calibration there's no way to locate the net
-    # in pixels, so this falls back to the old whole-trajectory,
-    # breakpoint-segmented estimate in px/s.
+    # estimate_net_crossing_speeds is the most accurate reading (near the
+    # ground plane the calibration homography is exact for) but only fires
+    # for shots actually seen crossing the net band with two consecutive
+    # DETECTED positions - many shots (occlusion right at the net, a rally
+    # ball that stays high, etc.) never qualify and would otherwise get no
+    # speed at all. estimate_shot_speeds' breakpoint segmentation covers
+    # every shot in the trajectory instead (in km/h when a calibration
+    # exists, else px/s), so merge_with_net_crossing_speeds uses that for
+    # full coverage and swaps in the sharper net-crossing number wherever
+    # one overlaps.
     shot_speed_by_frame = {}
     if args.speed or args.sidebar:
-        if calibrations_by_frame:
-            shots = estimate_net_crossing_speeds(positions, reader.fps, calibrations_by_frame)
-        else:
-            breakpoint_frames = find_trajectory_breakpoints(
+        # Segmenting at every direction-reversal (find_trajectory_breakpoints)
+        # over-splits a single real shot whenever detector jitter or a
+        # mid-flight wobble looks like a local max - especially at a lower
+        # --bounce-min-prominence - and each spurious split then reports its
+        # own (often much lower/noisier) speed for what's actually one
+        # continuous shot. detect_bounces is far more selective (rejects
+        # x-direction reversals, i.e. contacts rather than landings, and -
+        # with --pose - anything too far above the nearest player's feet to
+        # be a real landing), so when --bounce is on, its output IS the shot
+        # boundary: each segment runs bounce-to-bounce, immune to the false
+        # splits a bare local-max scan produces. Without --bounce there's no
+        # bounce list to segment on, so this falls back to the old scan.
+        breakpoint_frames = (
+            [b.frame_idx for b in bounces]
+            if args.bounce
+            else find_trajectory_breakpoints(
                 positions, min_y_prominence=args.bounce_min_prominence, min_frame_gap=args.bounce_min_gap
             )
-            shots = estimate_shot_speeds(
-                positions, breakpoint_frames, reader.fps, None, speed_window=args.speed_window
+        )
+        fallback_shots = estimate_shot_speeds(
+            positions,
+            breakpoint_frames,
+            reader.fps,
+            calibration=static_calibration,
+            speed_window=args.speed_window,
+            calibrations_by_frame=calibrations_by_frame if calibrations_by_frame else None,
+        )
+        if calibrations_by_frame:
+            net_shots = estimate_net_crossing_speeds(
+                positions, reader.fps, calibrations_by_frame, min_window_frames=args.net_speed_min_frames
             )
+            shots = merge_with_net_crossing_speeds(fallback_shots, net_shots)
+        else:
+            shots = fallback_shots
         if args.speed:
             print(f"Peak speed per shot ({len(shots)} shots):")
             for shot in shots:

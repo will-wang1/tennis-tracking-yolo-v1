@@ -32,10 +32,13 @@ optionally cross-referencing already-computed pose data).
 """
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from src.analysis.court_calibration import CourtCalibration
 from src.tracking.ball_tracker import TrackedPosition
+
+if TYPE_CHECKING:
+    from src.analysis.bounce_classifier import BounceClassifier
 
 
 @dataclass
@@ -162,6 +165,61 @@ def detect_bounces(
     events = []
     for idx in merged_indices:
         pos = ordered[idx]
+        world_x = world_y = None
+        if calibration is not None:
+            world_x, world_y = calibration.pixel_to_world(pos.x, pos.y)
+        events.append(
+            BounceEvent(frame_idx=pos.frame_idx, x=pos.x, y=pos.y, world_x=world_x, world_y=world_y)
+        )
+    return events
+
+
+def detect_bounces_ml(
+    positions: list[TrackedPosition],
+    classifier: "BounceClassifier",
+    min_y_prominence: float = 1.0,
+    min_frame_gap: int = 5,
+    window: int = 9,
+    threshold: float = 0.5,
+    calibration: Optional[CourtCalibration] = None,
+) -> list[BounceEvent]:
+    """Bounce detection via a trained classifier
+    (src.analysis.bounce_classifier.BounceClassifier, see
+    scripts/train_bounce_classifier.py) instead of `detect_bounces`' fixed
+    x-reversal/ground-proximity thresholds.
+
+    Candidates come from the same broad, low-threshold local-max-in-y scan
+    scripts/extract_bounce_candidates.py uses (`find_trajectory_breakpoints`
+    - note the deliberately low `min_y_prominence` default here, NOT
+    `detect_bounces`' stricter 15.0: the classifier, not the threshold, is
+    what discriminates a real bounce from a contact or noise among them, so
+    starving it of borderline candidates up front would defeat the point).
+    A `min_y_prominence` this permissive would flag far too much as a real
+    bounce under `detect_bounces`' heuristics, but here it only decides
+    what's worth asking the classifier about.
+    """
+    ordered = sorted(positions, key=lambda p: p.frame_idx)
+    index_by_frame = {p.frame_idx: i for i, p in enumerate(ordered)}
+
+    candidate_frames = find_trajectory_breakpoints(
+        positions, min_y_prominence=min_y_prominence, min_frame_gap=min_frame_gap
+    )
+
+    half_window = window // 2
+    events = []
+    for center_frame in candidate_frames:
+        center_idx = index_by_frame[center_frame]
+        start_idx = max(0, center_idx - half_window)
+        end_idx = min(len(ordered) - 1, center_idx + half_window)
+        window_positions = ordered[start_idx : end_idx + 1]
+        local_center_idx = center_idx - start_idx
+
+        if local_center_idx <= 0 or local_center_idx >= len(window_positions) - 1:
+            continue  # candidate sits right at the tracked trajectory's edge
+        if not classifier.is_bounce(window_positions, local_center_idx, threshold=threshold):
+            continue
+
+        pos = ordered[center_idx]
         world_x = world_y = None
         if calibration is not None:
             world_x, world_y = calibration.pixel_to_world(pos.x, pos.y)

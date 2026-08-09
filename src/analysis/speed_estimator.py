@@ -19,6 +19,18 @@ approximate the higher the ball is above it (e.g. near a serve toss or
 smash) - a known, accepted limitation given there's no calibrated
 depth/height model. Without a calibration, speed falls back to px/s so the
 caller always gets a number and always knows which kind (`unit` field).
+
+`estimate_net_crossing_speeds` is the most accurate reading (ball at
+~net height, near the ground plane the homography is exact for) but only
+fires for shots actually seen crossing the net band with two consecutive
+DETECTED positions - a shot lost to occlusion/motion blur right at the net,
+or one that never got tracked that close to the net line, produces no
+reading at all. `merge_with_net_crossing_speeds` covers that gap: it takes
+the full-coverage, breakpoint-segmented `estimate_shot_speeds` output (every
+shot gets a peak reading, just a less precise one - averaged over whichever
+part of the flight was tracked, not necessarily at net height) and swaps in
+the sharper net-crossing number wherever one overlaps, so every shot gets a
+reading and the best available one.
 """
 
 from dataclasses import dataclass
@@ -76,36 +88,51 @@ def estimate_net_crossing_speeds(
     net_band: float = 60.0,
     min_motion_px: float = 4.0,
     max_frame_gap: int = 2,
+    min_window_frames: int = 4,
 ) -> list[ShotSpeed]:
-    """Speed computed only where the ball is genuinely moving near the net
-    line - a narrower, more robust alternative to `estimate_shot_speeds`
-    that sidesteps needing reliable bounce/breakpoint segmentation across
-    the whole trajectory (see this module's and `bounce_detector`'s
-    docstrings for why that's fragile). A frame-to-frame pair counts only
-    if BOTH hold:
+    """Speed averaged over a WINDOW of consecutive frames while the ball is
+    genuinely moving near the net line - a narrower, more robust
+    alternative to `estimate_shot_speeds` that sidesteps needing reliable
+    bounce/breakpoint segmentation across the whole trajectory (see this
+    module's and `bounce_detector`'s docstrings for why that's fragile).
 
-    - both positions fall within `net_band` pixels of the net's
-      reprojected pixel height (`net_pixel_y_range`)
-    - the pair shows real motion (>= `min_motion_px`) - a static
-      false-positive detector lock-on (e.g. a net-post highlight) repeats
-      almost the same pixel frame to frame and is excluded by this alone,
-      no lock-on-radius tuning required
+    Only DETECTED (non-interpolated) positions are considered - an
+    interpolated point is a synthetic straight-line guess, not evidence of
+    real motion. A position counts as "near the net" if it falls within
+    `net_band` pixels of the net's reprojected pixel height
+    (`net_pixel_y_range`, using that position's OWN frame's calibration -
+    see below). Consecutive qualifying positions (frame gap <= `max_frame_gap`)
+    are grouped into one window each; a window shorter than
+    `min_window_frames` is dropped rather than reported, since an average
+    over too few frames is just as noisy as a single frame-to-frame reading.
+
+    Each surviving window's speed is the AVERAGE over the whole window - net
+    displacement (first position to last, not the summed per-step path
+    length, so back-and-forth detector jitter along the way cancels out
+    instead of inflating the reading) divided by total elapsed time - not a
+    peak instantaneous reading. Averaging over more frames trades
+    responsiveness (a real, sharp velocity change mid-window gets smoothed
+    into the average) for robustness to detector jitter, which matters more
+    here since a single noisy pixel jump used to be able to single-handedly
+    become "the" reported speed. Widen `min_window_frames` for a shakier
+    detector, narrow it if legitimate quick net crossings are being dropped
+    for lack of frames.
+
+    A window's overall net motion must still be >= `min_motion_px`,
+    filtering out a static false-positive detector lock-on (e.g. a
+    net-post highlight) sitting near the net band without ever actually
+    moving - unlike the old per-pair check, a lock-on can't slip through
+    just by jittering a few pixels frame to frame, since it's the window's
+    NET displacement (start to end) that's checked, not any single step.
 
     `calibrations_by_frame` maps frame index -> the `CourtCalibration` valid
     at that frame - one entry per frame for a moving/panning camera, or the
     same `CourtCalibration` repeated for every frame for a static one; a
     missing frame index (e.g. the court detector lost the court that frame)
-    excludes that frame's pairs rather than guessing. The later frame
-    (`cur_pos`) in each pair picks which calibration to use, since a camera
-    move between prev and cur is exactly what that frame's fresh detection
-    captures.
-
-    Only DETECTED (non-interpolated) positions are considered - an
-    interpolated point is a synthetic straight-line guess, not evidence of
-    real motion. Consecutive qualifying frames (frame gap <= `max_frame_gap`)
-    are grouped into one `ShotSpeed` each (peak speed within the group) -
-    same shape `estimate_shot_speeds` returns, so callers don't need to
-    know which method produced it.
+    excludes that position rather than guessing. A window's own last frame
+    picks which calibration converts its net displacement to meters, since
+    a camera move during the window is exactly what that frame's fresh
+    detection captures.
     """
     detected = sorted((p for p in positions if not p.interpolated), key=lambda p: p.frame_idx)
     net_range_cache: dict[int, tuple[float, float]] = {}
@@ -117,51 +144,101 @@ def estimate_net_crossing_speeds(
             net_range_cache[key] = (min_y - net_band, max_y + net_band)
         return net_range_cache[key]
 
-    crossings: list[tuple[int, float]] = []
-    for prev_pos, cur_pos in zip(detected, detected[1:]):
-        gap = cur_pos.frame_idx - prev_pos.frame_idx
-        if gap <= 0 or gap > max_frame_gap:
+    def near_net(position: TrackedPosition) -> bool:
+        calibration = calibrations_by_frame.get(position.frame_idx)
+        if calibration is None:
+            return False
+        min_y, max_y = net_range_for(calibration)
+        return min_y <= position.y <= max_y
+
+    windows: list[list[TrackedPosition]] = []
+    current: list[TrackedPosition] = []
+    for position in detected:
+        qualifies = near_net(position)
+        if qualifies and current and position.frame_idx - current[-1].frame_idx > max_frame_gap:
+            windows.append(current)
+            current = []
+        if qualifies:
+            current.append(position)
+        elif current:
+            windows.append(current)
+            current = []
+    if current:
+        windows.append(current)
+
+    shots = []
+    for window in windows:
+        if len(window) < min_window_frames:
             continue
 
-        calibration = calibrations_by_frame.get(cur_pos.frame_idx)
+        first, last = window[0], window[-1]
+        elapsed_seconds = (last.frame_idx - first.frame_idx) / fps
+        if elapsed_seconds <= 0:
+            continue
+
+        calibration = calibrations_by_frame.get(last.frame_idx)
         if calibration is None:
             continue
 
-        min_y, max_y = net_range_for(calibration)
-        if not (min_y <= prev_pos.y <= max_y and min_y <= cur_pos.y <= max_y):
-            continue
+        net_pixel_distance = float(np.hypot(last.x - first.x, last.y - first.y))
+        if net_pixel_distance < min_motion_px:
+            continue  # too little net motion to be a real, moving ball
 
-        pixel_distance = float(np.hypot(cur_pos.x - prev_pos.x, cur_pos.y - prev_pos.y))
-        if pixel_distance < min_motion_px:
-            continue  # too little motion to be a real, moving ball
-
-        elapsed_seconds = gap / fps
-        distance_m = calibration.pixel_distance_to_meters(prev_pos.x, prev_pos.y, cur_pos.x, cur_pos.y)
+        distance_m = calibration.pixel_distance_to_meters(first.x, first.y, last.x, last.y)
         speed_kmh = (distance_m / elapsed_seconds) * 3.6
         if speed_kmh <= MAX_PLAUSIBLE_KMH:
-            crossings.append((cur_pos.frame_idx, speed_kmh))
-
-    shots = []
-    group: list[tuple[int, float]] = []
-    for frame_idx, speed in crossings:
-        if group and frame_idx - group[-1][0] > max_frame_gap:
-            shots.append(_shot_from_group(group))
-            group = []
-        group.append((frame_idx, speed))
-    if group:
-        shots.append(_shot_from_group(group))
+            shots.append(
+                ShotSpeed(
+                    start_frame=first.frame_idx,
+                    end_frame=last.frame_idx,
+                    peak_frame=last.frame_idx,
+                    peak_speed=speed_kmh,
+                    unit="km/h",
+                )
+            )
     return shots
 
 
-def _shot_from_group(group: list[tuple[int, float]]) -> ShotSpeed:
-    peak_frame, peak_speed = max(group, key=lambda item: item[1])
-    return ShotSpeed(
-        start_frame=group[0][0],
-        end_frame=group[-1][0],
-        peak_frame=peak_frame,
-        peak_speed=peak_speed,
-        unit="km/h",
-    )
+def merge_with_net_crossing_speeds(
+    fallback_shots: list[ShotSpeed], net_shots: list[ShotSpeed]
+) -> list[ShotSpeed]:
+    """Fill in every `fallback_shots` entry (typically `estimate_shot_speeds`'
+    breakpoint-segmented, full-trajectory-coverage output) with a more
+    accurate `net_shots` (`estimate_net_crossing_speeds`) reading wherever
+    one overlaps - net-crossing speed is measured near the ground plane the
+    calibration homography is exact for, so it's preferred whenever the
+    ball was actually seen crossing the net during that shot. A fallback
+    shot with no overlapping net crossing (ball not tracked that close to
+    the net that shot - occlusion, motion blur, or it just never got that
+    close in frame) keeps its own (less precise, but present) reading
+    instead of being dropped, so every shot still gets a number.
+
+    Each fallback shot's own (start_frame, end_frame) window is always kept
+    - a net_shot's window is only the narrow crossing pair, not the whole
+    shot - only peak_speed/peak_frame/unit are swapped in from whichever
+    overlapping net_shot has the highest peak_speed.
+    """
+    merged = []
+    for shot in fallback_shots:
+        overlapping = [
+            net_shot
+            for net_shot in net_shots
+            if net_shot.start_frame <= shot.end_frame and net_shot.end_frame >= shot.start_frame
+        ]
+        if overlapping:
+            best = max(overlapping, key=lambda s: s.peak_speed)
+            merged.append(
+                ShotSpeed(
+                    start_frame=shot.start_frame,
+                    end_frame=shot.end_frame,
+                    peak_frame=best.peak_frame,
+                    peak_speed=best.peak_speed,
+                    unit=best.unit,
+                )
+            )
+        else:
+            merged.append(shot)
+    return merged
 
 
 def instantaneous_speeds(
@@ -169,6 +246,7 @@ def instantaneous_speeds(
     fps: float,
     calibration: Optional[CourtCalibration] = None,
     window: int = 1,
+    calibrations_by_frame: Optional[dict[int, CourtCalibration]] = None,
 ) -> dict[int, float]:
     """Speed at each tracked frame, computed from the displacement over the
     preceding `window` tracked samples (default: the immediately preceding
@@ -184,6 +262,12 @@ def instantaneous_speeds(
     (see MAX_PLAUSIBLE_KMH). Widening the window averages that noise out at
     the cost of underestimating brief true peaks - there's no single value
     that's right for every camera's zoom level, same as `--bounce-min-prominence`.
+
+    `calibrations_by_frame`, if given, looks up `cur_pos`'s own frame for a
+    per-frame calibration (a moving/panning camera - see
+    `estimate_net_crossing_speeds`'s docstring) and takes priority over the
+    single, static `calibration`; a frame missing from it is treated as
+    having no calibration for that sample, same as `calibration=None`.
     """
     ordered = sorted(positions, key=lambda p: p.frame_idx)
     speeds: dict[int, float] = {}
@@ -195,8 +279,11 @@ def instantaneous_speeds(
             continue
         elapsed_seconds = elapsed_frames / fps
 
-        if calibration is not None:
-            distance = calibration.pixel_distance_to_meters(
+        active_calibration = (
+            calibrations_by_frame.get(cur_pos.frame_idx) if calibrations_by_frame is not None else calibration
+        )
+        if active_calibration is not None:
+            distance = active_calibration.pixel_distance_to_meters(
                 prev_pos.x, prev_pos.y, cur_pos.x, cur_pos.y
             )
             speed = (distance / elapsed_seconds) * 3.6  # m/s -> km/h
@@ -237,9 +324,12 @@ def estimate_shot_speeds(
     fps: float,
     calibration: Optional[CourtCalibration] = None,
     speed_window: int = 1,
+    calibrations_by_frame: Optional[dict[int, CourtCalibration]] = None,
 ) -> list[ShotSpeed]:
-    speeds_by_frame = instantaneous_speeds(positions, fps, calibration, window=speed_window)
-    unit = "km/h" if calibration is not None else "px/s"
+    speeds_by_frame = instantaneous_speeds(
+        positions, fps, calibration, window=speed_window, calibrations_by_frame=calibrations_by_frame
+    )
+    unit = "km/h" if (calibration is not None or calibrations_by_frame) else "px/s"
 
     shots = []
     for start_frame, end_frame in segment_shots(positions, breakpoint_frames):
