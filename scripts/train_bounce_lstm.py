@@ -44,6 +44,7 @@ runtime makes iterating on window size / architecture much faster.
 import argparse
 import json
 import sys
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
@@ -64,15 +65,30 @@ def load_dataset(label_paths: list[str]) -> tuple[np.ndarray, np.ndarray, int]:
             "script(s) that produced these CSVs (older CSVs predate the window_xy column)."
         )
 
-    sequences = [np.array(json.loads(raw), dtype=np.float64) for raw in df["window_xy"]]
-    lengths = {len(seq) for seq in sequences}
-    if len(lengths) > 1:
-        raise SystemExit(
-            f"window_xy sequences have inconsistent lengths {sorted(lengths)} across the given "
-            "CSVs - they must all have been extracted with the same --window value. Re-run "
-            "extraction with a consistent --window and regenerate any mismatched CSVs."
+    raw_sequences = [np.array(json.loads(raw), dtype=np.float64) for raw in df["window_xy"]]
+    lengths = Counter(len(seq) for seq in raw_sequences)
+    window_length = lengths.most_common(1)[0][0]
+
+    # _window_around (src.analysis.bounce_detector) only includes REAL
+    # (non-interpolated) detections, so it truncates - not necessarily
+    # symmetrically - whenever there aren't enough real neighbors nearby.
+    # That's most common right at a genuine bounce (impact motion blur
+    # often causes a brief missed detection), so it's expected, not a
+    # --window mismatch between CSVs. A truncated window's center frame
+    # isn't recorded, so its position within the shorter array can't be
+    # trusted enough to pad/align - drop those rows rather than guess.
+    keep_mask = [len(seq) == window_length for seq in raw_sequences]
+    dropped = len(keep_mask) - sum(keep_mask)
+    if dropped:
+        other_lengths = sorted(l for l in lengths if l != window_length)
+        print(
+            f"Dropping {dropped} row(s) with a truncated window_xy (lengths {other_lengths}, "
+            f"keeping window_length={window_length}) - truncation happens when a candidate's real "
+            "neighbors run out, most often right at a genuine bounce, so this is expected rather "
+            "than a labeling error."
         )
-    window_length = lengths.pop()
+    sequences = [seq for seq, keep in zip(raw_sequences, keep_mask) if keep]
+    df = df[keep_mask]
 
     X = np.stack(sequences)
     y = (df["label"].astype(str).str.strip() == "bounce").to_numpy(dtype=np.float64)
