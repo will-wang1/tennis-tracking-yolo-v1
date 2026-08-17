@@ -120,6 +120,15 @@ def main() -> None:
     parser.add_argument("--epochs", type=int, default=150)
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument(
+        "--patience",
+        type=int,
+        default=15,
+        help="Early-stopping patience on val_auc, with best weights restored - this model "
+        "overfits fast (train AUC saturates near 1.0 within ~20-60 epochs while val_loss keeps "
+        "climbing), so training the full --epochs unconditionally saves whatever the LAST epoch "
+        "happened to land on rather than the best one seen.",
+    )
+    parser.add_argument(
         "--cv-folds",
         type=int,
         default=5,
@@ -127,6 +136,8 @@ def main() -> None:
         "fit-on-everything - set to 0 to skip (faster iteration once you trust the setup)",
     )
     args = parser.parse_args()
+
+    import tensorflow as tf
 
     X, y, window_length = load_dataset(args.labels)
     bounce_count = int(y.sum())
@@ -150,12 +161,21 @@ def main() -> None:
             splitter = StratifiedKFold(n_splits=args.cv_folds, shuffle=True, random_state=0)
             for fold, (train_idx, val_idx) in enumerate(splitter.split(X, y)):
                 model = build_model(window_length)
+                stopper = tf.keras.callbacks.EarlyStopping(
+                    monitor="val_auc", mode="max", patience=args.patience, restore_best_weights=True
+                )
                 model.fit(
-                    X[train_idx], y[train_idx], epochs=args.epochs, batch_size=args.batch_size, verbose=0
+                    X[train_idx],
+                    y[train_idx],
+                    epochs=args.epochs,
+                    batch_size=args.batch_size,
+                    validation_data=(X[val_idx], y[val_idx]),
+                    callbacks=[stopper],
+                    verbose=0,
                 )
                 _, auc = model.evaluate(X[val_idx], y[val_idx], verbose=0)
                 aucs.append(auc)
-                print(f"  fold {fold + 1}/{args.cv_folds}: val AUC = {auc:.3f}")
+                print(f"  fold {fold + 1}/{args.cv_folds}: val AUC = {auc:.3f} (stopped epoch {stopper.stopped_epoch or args.epochs})")
             print(
                 f"StratifiedKFold({args.cv_folds}) AUC: {np.mean(aucs):.3f} +/- {np.std(aucs):.3f} - "
                 "treat as directional, not a certified accuracy estimate, same caveat as "
@@ -164,7 +184,19 @@ def main() -> None:
 
     print("Fitting final model on all data...")
     model = build_model(window_length)
-    model.fit(X, y, epochs=args.epochs, batch_size=args.batch_size, verbose=2, validation_split=0.2)
+    stopper = tf.keras.callbacks.EarlyStopping(
+        monitor="val_auc", mode="max", patience=args.patience, restore_best_weights=True
+    )
+    model.fit(
+        X,
+        y,
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        verbose=2,
+        validation_split=0.2,
+        callbacks=[stopper],
+    )
+    print(f"Restored best weights from epoch {stopper.best_epoch + 1 if hasattr(stopper, 'best_epoch') else '?'} (val_auc={stopper.best:.4f})")
 
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
