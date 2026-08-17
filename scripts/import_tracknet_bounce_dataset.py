@@ -23,13 +23,15 @@ concatenate this with our other labeled CSVs.
 
 import argparse
 import csv
+import json
 import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from src.analysis.bounce_features import FEATURE_NAMES, extract_features  # noqa: E402
+from src.analysis.bounce_detector import _window_around  # noqa: E402
+from src.analysis.bounce_features import FEATURE_NAMES, extract_features, extract_window_sequence  # noqa: E402
 from src.tracking.ball_tracker import TrackedPosition  # noqa: E402
 
 STATUS_BOUNCE = "2"
@@ -86,6 +88,7 @@ def main() -> None:
         "ball_x",
         "ball_y",
         *FEATURE_NAMES,
+        "window_xy",
         "label",
     ]
     out_rows = []
@@ -127,6 +130,16 @@ def main() -> None:
 
             features = extract_features(window, local_center_idx)
             ball_pos = positions[center_idx]
+
+            real_windowed = _window_around(positions, center_idx, args.window)
+            if real_windowed is not None and (
+                real_windowed[0][-1].frame_idx - real_windowed[0][0].frame_idx > max_frame_span
+            ):
+                real_windowed = None  # same invisible-ball-gap guard as `window` above
+            window_xy = (
+                json.dumps(extract_window_sequence(*real_windowed).tolist()) if real_windowed is not None else ""
+            )
+
             out_rows.append(
                 {
                     "candidate_id": len(out_rows),
@@ -137,6 +150,7 @@ def main() -> None:
                     "ball_x": ball_pos.x,
                     "ball_y": ball_pos.y,
                     **dict(zip(FEATURE_NAMES, features)),
+                    "window_xy": window_xy,
                     "label": label,
                 }
             )

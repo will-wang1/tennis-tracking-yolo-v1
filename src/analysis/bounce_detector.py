@@ -19,16 +19,42 @@ identical in y alone. Two supplementary signals help:
   This is a real but weaker signal for this camera angle specifically,
   since lateral (x) motion isn't where the primary court-crossing action
   is - see `min_x_reversal`.
-- Ground proximity (`ground_y_by_frame`, optional): the far stronger signal.
-  A real bounce happens at court level, so if a nearby player's foot/ankle
-  position is available for that frame, a genuine bounce should land close
-  to it - not up near racket/torso height. Pass this whenever pose data is
-  available; without it, this check is skipped and only the weaker
-  trajectory-only signals apply.
+- Ground proximity (`ground_y_by_frame`, optional): a real bounce happens at
+  court level, so if a nearby player's foot/ankle position is available for
+  that frame, a genuine bounce should land close to it - not up near
+  racket/torso height. Pass this whenever pose data is available; without
+  it, this check is skipped and only the weaker trajectory-only signal
+  applies. In practice this is weaker than it sounds: the player has to be
+  near the ball to hit it too, so a contact often sits within the same fixed
+  pixel margin of that player's feet as a real bounce would, especially on a
+  zoomed-out camera where 1-1.5m of real racket height is only a handful of
+  pixels - it catches a contact only when the player is reaching well above
+  their own ground level (a high volley, an overhead), not a routine
+  groundstroke taken near their feet.
+- A trained classifier (`classifier`, optional - see
+  src.analysis.bounce_classifier.BounceClassifier), scored on the same kind
+  of engineered features (relative y-prominence, dx before/after, speed
+  ratio - src.analysis.bounce_features) that make contact-vs-bounce
+  discrimination possible in the first place. Used here as a VETO on top of
+  the geometric candidates above, not as the primary candidate source: on
+  its own the classifier's recall varies a lot with how close the training
+  data's camera framing is to the video being scored (see
+  scripts/train_bounce_classifier.py's docstring), so starting from
+  `detect_bounces_ml`'s broad classifier-only scan can silently miss real
+  bounces on an out-of-distribution camera. Layering it as a veto on top of
+  the geometric candidates keeps their recall while using the classifier to
+  catch exactly the case the geometric checks above miss: an ordinary
+  groundstroke contact taken close to the striking player's own feet, which
+  passes both `_is_horizontal_reversal` (rally shots often don't reverse x)
+  and the ground-proximity check (contact height near feet is `<
+  max_height_above_ground` on a zoomed-out camera) but still reads as an
+  obvious contact to the classifier, which sees the actual pre/post speed
+  and direction changes: a real bounce mostly preserves horizontal speed
+  through the impact while a racket swing imparts a big new one.
 
 This is a pure post-processing pass over `BallTracker.track()`'s output -
-no model, no new detections, just geometry on the existing trajectory (plus
-optionally cross-referencing already-computed pose data).
+no new detections, just geometry (and, optionally, cross-referencing
+already-computed pose data and/or a pre-trained classifier).
 """
 
 from dataclasses import dataclass
@@ -105,6 +131,34 @@ def _is_horizontal_reversal(
     return (dx_before > 0) != (dx_after > 0)
 
 
+def _window_around(
+    ordered: list[TrackedPosition], center_idx: int, window: int
+) -> Optional[tuple[list[TrackedPosition], int]]:
+    """Up to `window // 2` REAL (non-interpolated) detections on each side
+    of `ordered[center_idx]`, plus that center's index within the returned
+    slice - or None if there isn't at least one real neighbor on each side
+    (including if the center itself is interpolated).
+
+    Built from real detections only, skipping past any interpolated ones in
+    between, rather than a fixed frame-count slice: an interpolated position
+    is a synthetic straight line drawn across a detection gap, not real
+    trajectory evidence, and gaps often sit right at a candidate bounce (the
+    impact's motion blur is a common cause of a brief missed detection) - a
+    fixed-width slice would frequently hand the classifier a fabricated
+    segment for exactly the frames that matter most.
+    """
+    if ordered[center_idx].interpolated:
+        return None
+    half_window = window // 2
+    before = [i for i in range(center_idx - 1, -1, -1) if not ordered[i].interpolated][:half_window]
+    after = [i for i in range(center_idx + 1, len(ordered)) if not ordered[i].interpolated][:half_window]
+    if not before or not after:
+        return None
+    before.reverse()
+    window_positions = [ordered[i] for i in before] + [ordered[center_idx]] + [ordered[i] for i in after]
+    return window_positions, len(before)
+
+
 def detect_bounces(
     positions: list[TrackedPosition],
     min_y_prominence: float = 15.0,
@@ -113,6 +167,9 @@ def detect_bounces(
     calibration: Optional[CourtCalibration] = None,
     ground_y_by_frame: Optional[dict[int, float]] = None,
     max_height_above_ground: float = 160.0,
+    classifier: Optional["BounceClassifier"] = None,
+    classifier_veto_threshold: float = 0.3,
+    classifier_window: int = 9,
 ) -> list[BounceEvent]:
     """Find bounce points in `positions` (need not be pre-sorted).
 
@@ -127,12 +184,28 @@ def detect_bounces(
     the most prominent.
 
     `ground_y_by_frame` (optional, frame_idx -> a nearby player's foot/ankle
-    y for that frame - see `src.analysis.striker.estimate_ground_y`) is the
-    strongest available signal: a candidate more than
-    `max_height_above_ground` pixels above the given ground reference is
-    rejected as too high off the court to be a real bounce - almost
-    certainly a contact instead. Frames with no ground reference available
-    fall back to the trajectory-only signals above.
+    y for that frame - see `src.analysis.striker.estimate_ground_y`) rejects
+    a candidate more than `max_height_above_ground` pixels above the given
+    ground reference - see module docstring for why this alone still misses
+    an ordinary groundstroke contact taken near the striking player's feet.
+    SKIPPED entirely when `classifier` is given: the "nearest" player is
+    often at a very different court depth than a bounce that happens away
+    from both players (mid-court, or near the net), and comparing screen-y
+    across that depth mismatch is closer to noise than signal - rejecting
+    on it costs real bounces without reliably catching contacts the
+    classifier wouldn't already catch better. Pass a classifier and this
+    stops being consulted; without one, it's still the best available
+    signal and stays in effect.
+
+    `classifier` (optional, see src.analysis.bounce_classifier.BounceClassifier)
+    is an additional VETO applied after the checks above: a candidate that
+    survives them is still dropped if the classifier's bounce probability
+    for its local window falls below `classifier_veto_threshold`. This
+    threshold is deliberately low (0.3, not the usual 0.5 decision boundary)
+    since the goal here is only to catch candidates the classifier is
+    confident are contacts, not to make the classifier the primary decision
+    maker (see module docstring for why - this preserves the geometric
+    checks' recall across cameras the classifier wasn't trained on).
     """
     ordered = sorted(positions, key=lambda p: p.frame_idx)
 
@@ -144,12 +217,20 @@ def detect_bounces(
         if cur_pos.y > prev_pos.y and cur_pos.y > next_pos.y:
             if _is_horizontal_reversal(prev_pos, cur_pos, next_pos, min_x_reversal):
                 continue  # the ball was redirected by a racket, not the court
-            ground_y = ground_y_by_frame.get(cur_pos.frame_idx) if ground_y_by_frame else None
+            ground_y = ground_y_by_frame.get(cur_pos.frame_idx) if ground_y_by_frame and classifier is None else None
             if ground_y is not None and cur_pos.y < ground_y - max_height_above_ground:
                 continue  # too far above the court to be a landing - likely a contact
             prominence = min(cur_pos.y - prev_pos.y, cur_pos.y - next_pos.y)
-            if prominence >= min_y_prominence:
-                candidate_indices.append(i)
+            if prominence < min_y_prominence:
+                continue
+            if classifier is not None:
+                windowed = _window_around(ordered, i, classifier_window)
+                if windowed is not None:
+                    window_positions, local_center_idx = windowed
+                    probability = classifier.bounce_probability(window_positions, local_center_idx)
+                    if probability < classifier_veto_threshold:
+                        continue  # classifier is confident this is a contact, not a bounce
+            candidate_indices.append(i)
 
     merged_indices: list[int] = []
     for idx in candidate_indices:
@@ -205,17 +286,13 @@ def detect_bounces_ml(
         positions, min_y_prominence=min_y_prominence, min_frame_gap=min_frame_gap
     )
 
-    half_window = window // 2
     events = []
     for center_frame in candidate_frames:
         center_idx = index_by_frame[center_frame]
-        start_idx = max(0, center_idx - half_window)
-        end_idx = min(len(ordered) - 1, center_idx + half_window)
-        window_positions = ordered[start_idx : end_idx + 1]
-        local_center_idx = center_idx - start_idx
-
-        if local_center_idx <= 0 or local_center_idx >= len(window_positions) - 1:
+        windowed = _window_around(ordered, center_idx, window)
+        if windowed is None:
             continue  # candidate sits right at the tracked trajectory's edge
+        window_positions, local_center_idx = windowed
         if not classifier.is_bounce(window_positions, local_center_idx, threshold=threshold):
             continue
 

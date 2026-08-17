@@ -15,15 +15,23 @@ thresholds have the hardest time telling apart from a real bounce.
 
 Writes one CSV row per candidate (feature columns already computed via
 src.analysis.bounce_features.extract_features, so
-scripts/train_bounce_classifier.py doesn't need to re-run ball detection)
-with an empty `label` column - open the thumbnails in --thumbnails-out,
-fill in `label` with "bounce" or "not_bounce" for each row you can
-confidently identify, leave ambiguous rows blank, and save as e.g.
-outputs/bounce_candidates_labeled.csv.
+scripts/train_bounce_classifier.py doesn't need to re-run ball detection;
+also includes a `window_xy` column - see extract_window_sequence - for
+scripts/train_bounce_lstm.py) with an empty `label` column - open the
+thumbnails in --thumbnails-out, fill in `label` with "bounce" or
+"not_bounce" for each row you can confidently identify, leave ambiguous
+rows blank, and save as e.g. outputs/bounce_candidates_labeled.csv.
+
+When labeling, deliberately favor far-court candidates over near-court ones
+where you can - see notebooks/train_bounce_lstm_colab.ipynb's docstring for
+why (short version: a fixed-pixel bounce dip is much smaller far from the
+camera, and the LSTM needs real examples at that scale to recognize it as
+a bounce rather than noise).
 """
 
 import argparse
 import csv
+import json
 import sys
 from pathlib import Path
 
@@ -32,8 +40,8 @@ import cv2
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from src.analysis.bounce_detector import find_trajectory_breakpoints  # noqa: E402
-from src.analysis.bounce_features import FEATURE_NAMES, extract_features  # noqa: E402
+from src.analysis.bounce_detector import _window_around, find_trajectory_breakpoints  # noqa: E402
+from src.analysis.bounce_features import FEATURE_NAMES, extract_features, extract_window_sequence  # noqa: E402
 from src.detection.ball_detector import BallDetector  # noqa: E402
 from src.tracking.ball_tracker import BallTracker  # noqa: E402
 from src.video.io import VideoReader  # noqa: E402
@@ -100,6 +108,7 @@ def main() -> None:
         "ball_x",
         "ball_y",
         *FEATURE_NAMES,
+        "window_xy",
         "label",
     ]
     rows = []
@@ -118,6 +127,15 @@ def main() -> None:
         features = extract_features(window, local_center_idx)
         ball_pos = ordered[center_idx]
 
+        # window_xy uses REAL detections only (see _window_around), unlike
+        # `window` above - a fixed-width slice would hand the LSTM a
+        # fabricated straight-line segment across any detection gap, and
+        # gaps often sit right at a real bounce (impact motion blur).
+        real_windowed = _window_around(ordered, center_idx, args.window)
+        window_xy = (
+            json.dumps(extract_window_sequence(*real_windowed).tolist()) if real_windowed is not None else ""
+        )
+
         thumb_path = thumbnails_dir / f"candidate_{candidate_id:03d}_frame{center_frame}.jpg"
         cv2.imwrite(str(thumb_path), frames[center_frame])
 
@@ -131,6 +149,7 @@ def main() -> None:
                 "ball_x": ball_pos.x,
                 "ball_y": ball_pos.y,
                 **dict(zip(FEATURE_NAMES, features)),
+                "window_xy": window_xy,
                 "label": "",
             }
         )

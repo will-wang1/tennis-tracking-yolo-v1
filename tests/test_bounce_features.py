@@ -1,6 +1,8 @@
 import unittest
 
-from src.analysis.bounce_features import FEATURE_NAMES, extract_features
+import numpy as np
+
+from src.analysis.bounce_features import FEATURE_NAMES, extract_features, extract_window_sequence
 from src.tracking.ball_tracker import TrackedPosition
 
 
@@ -53,6 +55,36 @@ class ExtractFeaturesTest(unittest.TestCase):
 
         self.assertGreater(by_name["dx_before"], 0)
         self.assertLess(by_name["dx_after"], 0)
+
+
+class ExtractWindowSequenceTest(unittest.TestCase):
+    def test_returns_one_xy_pair_per_window_position(self):
+        window = [pos(0, 0, 0), pos(1, 10, 50), pos(2, 20, 100), pos(3, 30, 50), pos(4, 40, 0)]
+        sequence = extract_window_sequence(window, center_idx=2)
+
+        self.assertEqual(sequence.shape, (5, 2))
+
+    def test_center_is_the_origin(self):
+        window = [pos(0, 0, 0), pos(1, 10, 50), pos(2, 20, 100), pos(3, 30, 50), pos(4, 40, 0)]
+        sequence = extract_window_sequence(window, center_idx=2)
+
+        np.testing.assert_array_almost_equal(sequence[2], [0.0, 0.0])
+
+    def test_translation_invariant(self):
+        window_a = [pos(0, 0, 0), pos(1, 10, 50), pos(2, 20, 100), pos(3, 30, 50), pos(4, 40, 0)]
+        window_b = [pos(i, p.x + 500, p.y + 300) for i, p in enumerate(window_a)]
+
+        sequence_a = extract_window_sequence(window_a, center_idx=2)
+        sequence_b = extract_window_sequence(window_b, center_idx=2)
+
+        np.testing.assert_array_almost_equal(sequence_a, sequence_b)
+
+    def test_rejects_center_at_window_edge(self):
+        window = [pos(0, 0, 0), pos(1, 10, 50)]
+        with self.assertRaises(ValueError):
+            extract_window_sequence(window, center_idx=0)
+        with self.assertRaises(ValueError):
+            extract_window_sequence(window, center_idx=1)
 
 
 if __name__ == "__main__":

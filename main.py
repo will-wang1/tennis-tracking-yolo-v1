@@ -8,8 +8,7 @@ from pathlib import Path
 
 from tqdm import tqdm
 
-from src.analysis.bounce_classifier import BounceClassifier
-from src.analysis.bounce_detector import detect_bounces, detect_bounces_ml, find_trajectory_breakpoints
+from src.analysis.bounce_detector import detect_bounces, find_trajectory_breakpoints
 from src.analysis.court_calibration import CourtCalibration
 from src.analysis.speed_estimator import (
     estimate_net_crossing_speeds,
@@ -26,6 +25,24 @@ from src.video.io import VideoReader, VideoWriter
 from src.visualize.draw import BounceMarkerDrawer, CourtOverlayDrawer, PoseDrawer, SidebarDrawer, TrailDrawer
 
 REPO_ROOT = Path(__file__).resolve().parent
+
+
+def load_bounce_classifier(path: str):
+    """--bounce-classifier accepts either a scripts/train_bounce_classifier.py
+    RandomForest (.pkl) or a scripts/train_bounce_lstm.py windowed LSTM
+    (.keras/.h5) - both expose the same bounce_probability(window, idx)
+    interface (see src.analysis.bounce_detector's module docstring), so
+    detect_bounces doesn't need to know which one it got. TensorFlow is
+    only imported for the LSTM branch, so the default RandomForest path
+    never needs it installed."""
+    suffix = Path(path).suffix.lower()
+    if suffix in (".keras", ".h5"):
+        from src.analysis.bounce_lstm_classifier import BounceLstmClassifier
+
+        return BounceLstmClassifier(path)
+    from src.analysis.bounce_classifier import BounceClassifier
+
+    return BounceClassifier(path)
 
 
 def main() -> None:
@@ -93,22 +110,33 @@ def main() -> None:
         "applied when --pose is also given, which is what makes this cross-check possible) "
         "before it's rejected as too high off the court to be a real bounce. Telling a low "
         "bounce from a contact from pixels alone is inherently approximate - see "
-        "src.analysis.bounce_detector's module docstring. Ignored if --bounce-classifier is given.",
+        "src.analysis.bounce_detector's module docstring.",
     )
     parser.add_argument(
         "--bounce-classifier",
         default=None,
-        help="Path to a trained bounce classifier (weights/bounce_classifier.pkl, see "
-        "scripts/train_bounce_classifier.py) - replaces detect_bounces' fixed thresholds "
-        "(--bounce-min-x-reversal, --bounce-max-height) with a learned classifier scored over "
-        "a broader candidate scan. Requires --bounce.",
+        help="Path to a trained bounce classifier - either a RandomForest "
+        "(weights/bounce_classifier.pkl, scripts/train_bounce_classifier.py) or a windowed LSTM "
+        "(weights/bounce_lstm.keras, scripts/train_bounce_lstm.py), auto-detected by extension "
+        "(see load_bounce_classifier). Layered on TOP of detect_bounces' geometric checks as a "
+        "veto rather than replacing them - a candidate that passes "
+        "--bounce-min-x-reversal/--bounce-max-height is still dropped if the classifier is "
+        "confident it's a contact. Catches the case the geometric checks alone miss: an "
+        "ordinary groundstroke contact taken close to the striking player's own feet, which "
+        "looks like a legitimate low bounce by position alone but not by its speed/direction "
+        "signature. Requires --bounce.",
     )
     parser.add_argument(
-        "--bounce-classifier-threshold",
+        "--bounce-classifier-veto-threshold",
         type=float,
-        default=0.5,
-        help="Minimum bounce probability from --bounce-classifier to accept a candidate. Lower "
-        "to catch more real bounces at the cost of more false positives, raise for the opposite.",
+        default=0.3,
+        help="A candidate is vetoed (rejected) if --bounce-classifier's bounce probability for "
+        "it falls below this. Deliberately below the usual 0.5 decision boundary - this only "
+        "needs to catch candidates the classifier is CONFIDENT are contacts, not make the "
+        "classifier the primary decision maker (see src.analysis.bounce_detector's module "
+        "docstring for why: the classifier's recall varies with how close the training "
+        "footage's camera framing is to this video's, so leaning on it too hard risks losing "
+        "real bounces the geometric checks would have caught). Lower to veto more aggressively.",
     )
     parser.add_argument(
         "--calibration",
@@ -181,6 +209,15 @@ def main() -> None:
         if args.pose
         else None
     )
+    static_calibration = CourtCalibration.load(args.calibration) if args.calibration else None
+    # --show-court draws the overlay either way; whether it RE-DETECTS the
+    # court every frame depends on whether a static --calibration was also
+    # given. With one, that single calibration is just reused for every
+    # frame (cheap, no extra model) - the right choice for a fixed camera,
+    # and what --calibration alone always meant before per-frame detection
+    # existed. Without one, the court is detected fresh each frame instead,
+    # which is what actually tracks a panning/zooming camera.
+    use_dynamic_court = args.show_court and static_calibration is None
     court_keypoint_detector = (
         CourtKeypointDetector(
             args.court_keypoint_weights,
@@ -188,11 +225,8 @@ def main() -> None:
             imgsz=args.imgsz,
             device=args.device,
         )
-        if args.show_court
+        if use_dynamic_court
         else None
-    )
-    static_calibration = (
-        CourtCalibration.load(args.calibration) if args.calibration and not args.show_court else None
     )
 
     reader = VideoReader(args.input)
@@ -203,20 +237,17 @@ def main() -> None:
     print(f"Detecting ball in {len(frames)} frames...")
     detections = []
     poses_by_frame = [] if args.pose else None
-    # A moving/zooming broadcast camera means the court's pixel position can
-    # change frame to frame, so with --show-court the court is re-detected
-    # EVERY frame rather than once (contrast a fixed-camera --calibration
-    # file, loaded once above). A frame where the detector doesn't find
-    # enough confident keypoints (motion blur, court briefly out of frame)
-    # carries forward the last good calibration rather than leaving a gap -
-    # the camera can't have moved far in one missed frame.
     calibrations_by_frame: dict[int, CourtCalibration] = {}
     last_good_calibration: "CourtCalibration | None" = None
     for i, frame in enumerate(tqdm(frames)):
         detections.append(detector.detect(frame))
         if args.pose:
             poses_by_frame.append(select_players(pose_detector.detect(frame), reader.width))
-        if args.show_court:
+        if use_dynamic_court:
+            # A frame where the detector doesn't find enough confident
+            # keypoints (motion blur, court briefly out of frame) carries
+            # forward the last good calibration rather than leaving a gap -
+            # the camera can't have moved far in one missed frame.
             court_detection = court_keypoint_detector.detect(frame)
             named_points = (
                 court_detection.as_named_points(min_confidence=args.court_min_keypoint_confidence)
@@ -262,24 +293,18 @@ def main() -> None:
             if ground_y is not None:
                 ground_y_by_frame[i] = ground_y
 
-    # Both paths take a single calibration for the whole call (they scan the
-    # whole trajectory at once); with --show-court's per-frame calibrations,
-    # enrich each bounce's world_x/world_y afterward instead, using the
-    # calibration valid at that specific bounce's frame.
-    if args.bounce and args.bounce_classifier:
-        bounces = detect_bounces_ml(
-            positions,
-            BounceClassifier(args.bounce_classifier),
-            min_frame_gap=args.bounce_min_gap,
-            threshold=args.bounce_classifier_threshold,
-            calibration=static_calibration,
-        )
-    elif args.bounce:
+    # detect_bounces takes a single calibration for its whole call (it scans
+    # the whole trajectory at once); with --show-court's per-frame
+    # calibrations, enrich each bounce's world_x/world_y afterward instead,
+    # using the calibration valid at that specific bounce's frame.
+    if args.bounce:
         bounces = detect_bounces(
             positions,
             min_y_prominence=args.bounce_min_prominence,
             min_frame_gap=args.bounce_min_gap,
             min_x_reversal=args.bounce_min_x_reversal,
+            classifier=load_bounce_classifier(args.bounce_classifier) if args.bounce_classifier else None,
+            classifier_veto_threshold=args.bounce_classifier_veto_threshold,
             calibration=static_calibration,
             ground_y_by_frame=ground_y_by_frame,
             max_height_above_ground=args.bounce_max_height,

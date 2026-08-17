@@ -76,3 +76,31 @@ def extract_features(window: Sequence[TrackedPosition], center_idx: int) -> np.n
             float(len(window)),
         ]
     )
+
+
+def extract_window_sequence(window: Sequence[TrackedPosition], center_idx: int) -> np.ndarray:
+    """Every position in `window`, translated relative to `window[center_idx]`
+    - (x - center.x, y - center.y) per frame - so a bounce/contact's shape
+    reads the same regardless of where on court it happened. This is the
+    raw input for a windowed sequence model (scripts/train_bounce_lstm.py,
+    src.analysis.bounce_lstm_classifier), as opposed to `extract_features`'
+    hand-picked summary statistics: instead of us deciding which properties
+    of the shape matter (prominence, direction reversal, speed ratio), the
+    model learns that from many examples of the raw shape itself.
+
+    Deliberately left in raw pixel units, not further scaled by speed or
+    frame dimensions the way `extract_features` and
+    scripts/*_bounce_dataset.py's normalization does - unlike that summary
+    vector, the model here sees enough of the RAW shape that scale itself
+    is informative (how large a dip looks is part of what distinguishes a
+    clean near-court bounce from a barely-there far-court one), so
+    training data needs real examples spanning both, not a normalization
+    trick that would erase the difference.
+
+    Returns shape (len(window), 2). Requires at least one frame on each
+    side of the center, same as `extract_features`.
+    """
+    if center_idx <= 0 or center_idx >= len(window) - 1:
+        raise ValueError("center_idx needs at least one frame on each side")
+    center = window[center_idx]
+    return np.array([[p.x - center.x, p.y - center.y] for p in window], dtype=np.float64)

@@ -29,14 +29,15 @@ just concatenate this with our own labeled CSVs without any special-casing.
 
 import argparse
 import csv
+import json
 import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from src.analysis.bounce_detector import find_trajectory_breakpoints  # noqa: E402
-from src.analysis.bounce_features import FEATURE_NAMES, extract_features  # noqa: E402
+from src.analysis.bounce_detector import _window_around, find_trajectory_breakpoints  # noqa: E402
+from src.analysis.bounce_features import FEATURE_NAMES, extract_features, extract_window_sequence  # noqa: E402
 from src.tracking.ball_tracker import TrackedPosition  # noqa: E402
 
 
@@ -95,6 +96,7 @@ def main() -> None:
         "ball_x",
         "ball_y",
         *FEATURE_NAMES,
+        "window_xy",
         "label",
     ]
     out_rows = []
@@ -114,6 +116,10 @@ def main() -> None:
 
         features = extract_features(window, local_center_idx)
         ball_pos = positions[center_frame]
+        real_windowed = _window_around(positions, center_frame, args.window)
+        window_xy = (
+            json.dumps(extract_window_sequence(*real_windowed).tolist()) if real_windowed is not None else ""
+        )
         out_rows.append(
             {
                 "candidate_id": candidate_id,
@@ -124,6 +130,7 @@ def main() -> None:
                 "ball_x": ball_pos.x,
                 "ball_y": ball_pos.y,
                 **dict(zip(FEATURE_NAMES, features)),
+                "window_xy": window_xy,
                 "label": label,
             }
         )
