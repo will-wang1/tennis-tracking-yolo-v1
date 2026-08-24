@@ -22,6 +22,16 @@ the model:
    `max_interpolation_gap` are left as missing rather than papered over,
    since a straight line is a bad guess once the ball may have bounced or
    been hit in between.
+4. Smoothing - a Savitzky-Golay filter over each contiguous run of frames
+   (real + interpolated), which removes single-pixel-scale jitter while
+   still tracking the trajectory's actual curvature (unlike a moving
+   average, it doesn't lag behind or flatten a genuine direction change).
+   This matters most for a heatmap-based detector like TrackNet: its
+   reported position comes from a Hough-circle center on a 640x360
+   heatmap, then scaled back up to the source resolution - on a 1080p
+   video that's a 3x scale-up, so even 1px of heatmap-level quantization
+   noise becomes ~3px of visible on-screen jitter frame to frame, on an
+   otherwise straight-line shot.
 """
 
 from dataclasses import dataclass
@@ -29,6 +39,7 @@ from typing import Optional, Sequence
 
 import numpy as np
 import pandas as pd
+from scipy.signal import savgol_filter
 
 from src.detection.ball_detector import Detection
 
@@ -48,11 +59,17 @@ class BallTracker:
         max_interpolation_gap: int = 8,
         static_lockon_frames: int = 10,
         static_lockon_radius: float = 20.0,
+        smoothing_window: int = 9,
+        smoothing_polyorder: int = 2,
     ):
         self.max_pixels_per_frame = max_pixels_per_frame
         self.max_interpolation_gap = max_interpolation_gap
         self.static_lockon_frames = static_lockon_frames
         self.static_lockon_radius = static_lockon_radius
+        if smoothing_window >= 3 and smoothing_window % 2 == 0:
+            smoothing_window += 1  # savgol_filter requires an odd window
+        self.smoothing_window = smoothing_window
+        self.smoothing_polyorder = smoothing_polyorder
 
     def _reject_outliers(
         self, detections: Sequence[Optional[Detection]]
@@ -113,4 +130,32 @@ class BallTracker:
                     interpolated=bool(was_missing[i]),
                 )
             )
-        return positions
+        return self._smooth(positions)
+
+    def _smooth(self, positions: list[TrackedPosition]) -> list[TrackedPosition]:
+        """Savitzky-Golay filter within each contiguous (no-gap) run of
+        frames - smoothing across a gap would blend two positions that
+        aren't actually temporally adjacent trajectory samples."""
+        if self.smoothing_window < 3:
+            return positions
+
+        smoothed: list[TrackedPosition] = []
+        run: list[TrackedPosition] = []
+
+        def flush(run: list[TrackedPosition]) -> None:
+            if len(run) < self.smoothing_window:
+                smoothed.extend(run)
+                return
+            polyorder = min(self.smoothing_polyorder, self.smoothing_window - 1)
+            xs = savgol_filter([p.x for p in run], self.smoothing_window, polyorder, mode="interp")
+            ys = savgol_filter([p.y for p in run], self.smoothing_window, polyorder, mode="interp")
+            for p, x, y in zip(run, xs, ys):
+                smoothed.append(TrackedPosition(frame_idx=p.frame_idx, x=float(x), y=float(y), interpolated=p.interpolated))
+
+        for p in positions:
+            if run and p.frame_idx != run[-1].frame_idx + 1:
+                flush(run)
+                run = []
+            run.append(p)
+        flush(run)
+        return smoothed

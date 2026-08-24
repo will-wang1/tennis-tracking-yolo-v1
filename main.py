@@ -92,6 +92,22 @@ def main() -> None:
         default=20.0,
         help="Pixel radius that counts as 'hasn't moved' for --lockon-frames",
     )
+    parser.add_argument(
+        "--smoothing-window",
+        type=int,
+        default=9,
+        help="Savitzky-Golay filter window (frames) applied to the tracked trajectory to remove "
+        "detector jitter - set below 3 to disable. Matters most for the TrackNet backend, whose "
+        "heatmap-based position has more pixel-scale noise than a box detector. Larger reduces "
+        "more jitter but rounds off sharp bounce corners more too - 9 is a middle ground.",
+    )
+    parser.add_argument(
+        "--smoothing-polyorder",
+        type=int,
+        default=2,
+        help="Polynomial order for --smoothing-window's filter - 2 tracks a parabolic arc well "
+        "without following raw jitter; must be lower than --smoothing-window",
+    )
     parser.add_argument("--bounce", action="store_true", help="Detect + mark ball landing spots")
     parser.add_argument(
         "--bounce-weights",
@@ -161,6 +177,8 @@ def main() -> None:
         max_interpolation_gap=args.interp_gap,
         static_lockon_frames=args.lockon_frames,
         static_lockon_radius=args.lockon_radius,
+        smoothing_window=args.smoothing_window,
+        smoothing_polyorder=args.smoothing_polyorder,
     )
     court_detector = TennisCourtNetDetector(args.court_weights, device=args.device) if args.show_court else None
     player_detector = PlayerDetector(device=args.device) if args.minimap else None
