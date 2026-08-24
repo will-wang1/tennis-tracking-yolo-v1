@@ -12,6 +12,7 @@ data/*.cache
 # trained weights & training runs
 weights/*.pt
 weights/*.onnx
+weights/*.cbm
 runs/
 *.pt
 .pytest_cache/

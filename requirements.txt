@@ -7,3 +7,7 @@ roboflow>=1.1.0
 tqdm>=4.66.0
 scikit-learn>=1.4.0
 gdown>=5.2.0
+torchvision>=0.20.0
+catboost>=1.2.0
+scipy>=1.13.0
+sympy>=1.13.0
