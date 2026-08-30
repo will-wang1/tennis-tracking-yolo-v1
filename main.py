@@ -286,12 +286,12 @@ def main() -> None:
         "--net-speed-min-frames",
         type=int,
         default=4,
-        help="Minimum consecutive detected frames the ball must stay within the net band "
-        "before estimate_net_crossing_speeds reports a reading - the reading is the AVERAGE "
-        "speed over that whole window (net displacement / elapsed time), not a peak "
-        "instantaneous reading, so more frames means more jitter-robust but less responsive "
-        "to genuine sub-window acceleration. Raise this if speed readings still look noisy/too "
-        "high, lower it if legitimate net crossings are being dropped for lack of frames.",
+        help="Minimum consecutive DETECTED frames the ball must stay within the net band "
+        "before estimate_net_crossing_speeds reports a reading. Only used when no flight "
+        "segmentation is available: with one, the net crossing is solved on the fitted curve "
+        "instead (estimate_flight_net_speeds), which needs no detection at the crossing at all "
+        "and so does not have a window to size. More frames means more jitter-robust but less "
+        "responsive to genuine sub-window acceleration.",
     )
     parser.add_argument("--sidebar", action="store_true", help="Composite a speed sidebar panel")
     parser.add_argument("--sidebar-width", type=int, default=250)

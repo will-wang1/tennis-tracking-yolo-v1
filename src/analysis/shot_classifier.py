@@ -15,6 +15,23 @@ this by rebuilding the identical architecture fresh (verified against the
 checkpoint's own stored `model_config`) and loading the raw HDF5 weight
 arrays into it directly via h5py, bypassing Keras's own (incompatible)
 config deserialization entirely.
+
+KNOWN LIMIT - it only works on the NEAR player. Measured over 300 frames of
+the zverev clip, the far player is detected in every one, produces a pose
+the feature extractor accepts in every one, and is classified "neutral" in
+every one, at confidence 1.00; the near player over the same stretch gets 27
+forehands and 14 backhands. So this is not a detection gap or a confidence
+threshold - the model is confidently asserting that no shot is being played,
+for a player who is playing them.
+
+The cause is viewpoint. The camera sits behind the near baseline, so it sees
+the near player from behind - the view the checkpoint was trained on - and
+the far player from the front, at roughly a third the size (median box
+height 66px against 180px). Mirroring the far player's keypoints was tried,
+swapping left and right joints and flipping x, on the theory that a front
+view is a back view reflected: it changes nothing, still 272 of 272
+"neutral". Fixing this needs far-court examples in the training set, not a
+transformation of the input.
 """
 
 from collections import deque
