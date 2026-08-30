@@ -282,16 +282,59 @@ class PlayerReachGateTest(unittest.TestCase):
         self.assertEqual(result.kind, "unknown")
         self.assertEqual(result.reason, "direction reversed with no player in reach")
 
-    def test_an_impact_at_the_frame_edge_stays_unattributed_whoever_is_near(self):
+    def test_an_impact_at_the_frame_edge_with_nobody_near_is_unattributed(self):
+        # the ball leaving or re-entering view: the trajectory stops and
+        # restarts, which looks exactly like an impact
         result = classify_touchdowns(
             [_impact(y=50.0)],
             _positions(self.court_y),
             _identity_calibrations(self.court_y),
             60.0,
-            player_boxes_by_frame=self._box_at(20.0),
+            player_boxes_by_frame=self._box_at(20.0),  # box is at y=450, far below
         )[0]
 
         self.assertEqual(result.kind, "unknown")
+        self.assertIn("frame edge", result.reason)
+
+    def test_an_impact_at_the_frame_edge_with_a_player_there_is_judged(self):
+        # the far player stands behind their baseline, so the ball at their
+        # racket is high in the image too - height alone is not the artifact
+        result = classify_touchdowns(
+            [_impact(y=50.0)],
+            _positions(self.court_y),
+            _identity_calibrations(self.court_y),
+            60.0,
+            player_boxes_by_frame={30: [(860.0, 20.0, 940.0, 120.0)]},
+        )[0]
+
+        self.assertEqual(result.kind, "contact")
+
+    def test_the_frame_edge_margin_applies_alone_when_no_boxes_were_collected(self):
+        # without player boxes the "was anyone there" test cannot be made, so
+        # the older, more cautious behaviour stands
+        result = classify_touchdowns(
+            [_impact(y=50.0)],
+            _positions(self.court_y),
+            _identity_calibrations(self.court_y),
+            60.0,
+        )[0]
+
+        self.assertEqual(result.kind, "unknown")
+        self.assertIn("frame edge", result.reason)
+
+    def test_a_player_elsewhere_in_the_frame_does_not_rescue_it(self):
+        # someone at the same height in the image but 3.2 box heights away
+        # along it could not have played this ball
+        result = classify_touchdowns(
+            [_impact(y=50.0)],
+            _positions(self.court_y),
+            _identity_calibrations(self.court_y),
+            60.0,
+            player_boxes_by_frame={30: [(500.0, 20.0, 580.0, 120.0)]},
+        )[0]
+
+        self.assertEqual(result.kind, "unknown")
+        self.assertIn("frame edge", result.reason)
 
 
 class LooksLikeTouchdownReversalTest(unittest.TestCase):

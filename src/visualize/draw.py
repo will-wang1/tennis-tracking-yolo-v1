@@ -119,19 +119,26 @@ class ShotArcDrawer:
     but only across a gap of a few frames; a long unexplained hole is not
     something to draw a continuous shot through.
 
-    Each flight is drawn between the IMPACTS at its ends rather than between
-    its first and last detected samples, and that distinction is what makes a
-    shot look like one path instead of two. A segment's samples stop wherever
-    the detector last saw the ball, typically a frame or three short of the
-    bounce - so drawn raw, consecutive flights of the same shot end and begin
-    in mid-air with a gap between them, measured on the zverev clip at 2 to
-    58 pixels. Extending both to the intersection the segmenter already
-    computes (`find_segment_impacts`) closes that gap exactly: the two curves
-    meet at a point, and the shot reads as a ball that bounced rather than as
-    two unrelated arcs. It also stops the curve finishing short of the
-    ground, which looked like the arc being cut off. The extension is capped
-    at `max_extend_frames` past the real samples, so a badly conditioned
-    intersection cannot fling the curve across the frame.
+    The flights of one shot are drawn as ONE polyline rather than as separate
+    curves, and that is what makes a shot look like a path instead of two
+    arcs. A segment's samples stop wherever the detector last saw the ball,
+    typically a frame or three short of the bounce, so its curve ends in
+    mid-air; measured on the zverev clip consecutive flights of one shot end
+    and begin 2 to 58 pixels apart. Joined into a single line, that gap is
+    closed by the line itself and reads as the corner a bounce actually is.
+
+    Extending each curve to the intersection the segmenter computes
+    (`find_segment_impacts`) was the obvious fix and is worse, which is worth
+    recording. That intersection is solved in y alone, so at the meeting
+    instant the two parabolas can still sit tens of pixels apart in x - and
+    they can sit apart in the wrong DIRECTION, the later flight extrapolating
+    back to a point ahead of where the earlier one ends. The drawn path then
+    doubles back on itself. Pinning both ends to the shared meeting position
+    leaves a hook where the line jumps sideways; spreading that correction
+    along the tail turns the hook into a zigzag and makes the two arcs cross.
+    Each of those looked worse on the clip than simply connecting the flights
+    where their own samples end. The curves are measurements: bending them to
+    agree hides the disagreement rather than resolving it.
 
     Flights already completed are drawn whole. The one in progress grows to
     the current frame and no further, so the picture never shows where the
@@ -146,45 +153,26 @@ class ShotArcDrawer:
         samples_per_frame: float = 2.0,
         join_window: int = 6,
         max_join_gap: int = 4,
-        max_extend_frames: float = 8.0,
     ):
         self.segments = sorted(segments, key=lambda s: s.start_frame)
         self.samples_per_frame = samples_per_frame
         self.join_window = join_window
         self.max_join_gap = max_join_gap
-        self.max_extend_frames = max_extend_frames
         self._impact_kinds = [(impact.frame_idx, impact.kind) for impact in impacts]
-        # where consecutive flights actually meet, keyed by the LATER one
+        # when consecutive flights meet - used to decide what separated them,
+        # not to extend either curve; see the note on extension above
         index_of = {id(segment): i for i, segment in enumerate(self.segments)}
         self._meeting = {
-            index_of[id(meeting.after)]: meeting.t
+            index_of[id(meeting.after)]: meeting
             for meeting in find_segment_impacts(self.segments)
             if id(meeting.after) in index_of
         }
         self._shot_start = self._group_into_shots()
-        self._span = [self._drawn_span(i) for i in range(len(self.segments))]
-
-    def _drawn_span(self, index: int) -> tuple:
-        """The flight's extent as impact-to-impact, rather than as
-        first-sighting to last-sighting."""
-        segment = self.segments[index]
-        start = self._meeting.get(index)
-        start = (
-            float(segment.start_frame)
-            if start is None
-            else max(start, segment.start_frame - self.max_extend_frames)
-        )
-        end = self._meeting.get(index + 1)
-        end = (
-            float(segment.end_frame)
-            if end is None
-            else min(end, segment.end_frame + self.max_extend_frames)
-        )
-        return start, max(end, start)
 
     def _joins_previous(self, index: int) -> bool:
         before, after = self.segments[index - 1], self.segments[index]
-        at = self._meeting.get(index, (before.end_frame + after.start_frame) / 2)
+        meeting = self._meeting.get(index)
+        at = meeting.t if meeting is not None else (before.end_frame + after.start_frame) / 2
         near = sorted(
             (abs(frame - at), kind)
             for frame, kind in self._impact_kinds
@@ -231,16 +219,17 @@ class ShotArcDrawer:
             return frame
 
         index = self.segments.index(current)
-        head = None
+        path = []
         for i in range(self._shot_start[index], index + 1):
-            start, end = self._span[i]
-            last = min(float(frame_idx), end) if i == index else end
-            points = self._arc_points(self.segments[i], start, last)
-            if len(points) > 1:
-                cv2.polylines(
-                    frame, [np.array(points, dtype=np.int32)], False, ARC_COLOR, 2, cv2.LINE_AA
-                )
-            head = points[-1]
+            segment = self.segments[i]
+            last = min(frame_idx, segment.end_frame) if i == index else segment.end_frame
+            path.extend(self._arc_points(segment, float(segment.start_frame), float(last)))
+
+        if len(path) > 1:
+            cv2.polylines(
+                frame, [np.array(path, dtype=np.int32)], False, ARC_COLOR, 2, cv2.LINE_AA
+            )
+        head = path[-1] if path else None
 
         if current.start_frame <= frame_idx <= current.end_frame and head is not None:
             # the ball's place on its own fitted curve, not wherever the

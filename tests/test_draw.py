@@ -249,22 +249,33 @@ class ShotArcGroupingTest(unittest.TestCase):
 
         self.assertFalse(self._first_flight_shown(drawer))
 
-    def test_the_two_flights_of_a_shot_meet_at_the_bounce(self):
-        # drawn from their own samples the curves stop short of each other,
-        # which is what made one shot look like two arcs
+    def test_the_two_flights_of_a_shot_are_drawn_as_one_connected_path(self):
+        # separate polylines leave the gap between the flights visible; one
+        # line closes it, and the join reads as the corner a bounce is
         drawer = ShotArcDrawer(self.segments, [_impact(self.boundary, "bounce")])
-        first_end = drawer._span[0][1]
-        second_start = drawer._span[1][0]
+        frame = _blank(600, 1100)
+        drawer.draw(frame, 70)
 
-        self.assertAlmostEqual(first_end, second_start, places=6)
-        self.assertGreater(first_end, self.first[0].end_frame)
-        self.assertLess(second_start, self.second[0].start_frame)
+        first_end = self.first[0].position(self.first[0].end_frame)
+        second_start = self.second[0].position(self.second[0].start_frame)
+        midpoint = (
+            int(round((first_end[0] + second_start[0]) / 2)),
+            int(round((first_end[1] + second_start[1]) / 2)),
+        )
+        painted = frame[midpoint[1] - 6:midpoint[1] + 6, midpoint[0] - 6:midpoint[0] + 6]
 
-    def test_the_extension_is_capped(self):
-        drawer = ShotArcDrawer(self.segments, [_impact(self.boundary, "bounce")], max_extend_frames=0.0)
+        self.assertTrue(painted.any(), "the gap between the two flights should be bridged")
 
-        self.assertEqual(drawer._span[0][1], float(self.first[0].end_frame))
-        self.assertEqual(drawer._span[1][0], float(self.second[0].start_frame))
+    def test_a_flight_is_drawn_over_its_own_samples_only(self):
+        # extrapolating a fitted curve past its data to meet its neighbour
+        # makes the path double back on itself - see ShotArcDrawer
+        drawer = ShotArcDrawer(self.segments, [_impact(self.boundary, "bounce")])
+        points = drawer._arc_points(
+            self.first[0], float(self.first[0].start_frame), float(self.first[0].end_frame)
+        )
+
+        self.assertEqual(points[0], tuple(int(round(v)) for v in self.first[0].position(self.first[0].start_frame)))
+        self.assertEqual(points[-1], tuple(int(round(v)) for v in self.first[0].position(self.first[0].end_frame)))
 
     def test_a_split_flight_with_no_impact_between_is_rejoined(self):
         # consecutive frames, nothing detected between them: one flight the

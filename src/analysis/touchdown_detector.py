@@ -98,9 +98,25 @@ from src.tracking.ball_tracker import TrackedPosition
 
 # The ball leaving or re-entering the frame looks exactly like an impact -
 # the trajectory stops and restarts - and on this footage it leaves through
-# the TOP of the frame, heading down-court. Impacts up there are that
-# artifact rather than events: hand-labelled, the three highest impacts on
-# video_input2 (screen y of 70, 102 and 141) were all confirmed spurious.
+# the TOP of the frame, heading down-court. Hand-labelled, the three highest
+# impacts on video_input2 (screen y of 70, 102 and 141) were all confirmed
+# spurious, which is what this margin was built from.
+#
+# Height in the frame is NOT sufficient on its own, though, and taking it
+# as sufficient was costing real events. The far player stands behind their
+# baseline, so the ball at their racket is also high in the image: measured
+# across the three clips, thirteen impacts sat inside this margin with a
+# player 0.02 to 0.36 box heights away and the projected approach reversing
+# from receding to closing, which is a return being played, not a ball
+# leaving view. Suppressing those cost the US Open clip five contacts and
+# the zverev clip eight, and left every one of its far-end shots unattributed.
+#
+# So the margin only fires when nothing was in reach to have hit the ball -
+# see `classify_touchdowns`. With that condition added, dropping the margin
+# entirely changes neither clip's score, because the direction rules already
+# reject all three of the artifacts it was built for: two never reverse at
+# all, and the third has no tracked positions either side. It is kept as the
+# belt to that braces, and for footage where no player boxes were collected.
 _DEFAULT_FRAME_EDGE_MARGIN = 150.0
 
 # How far from a player's box, in units of that box's HEIGHT, still counts
@@ -335,12 +351,21 @@ def classify_touchdowns(
         # detection than a missed racket, and the gate stands down.
         reach_gate = out_of_reach and not strong_reversal
 
+        # An impact high in the frame is the ball leaving or re-entering
+        # view - but only if nobody was there to hit it. The far player
+        # stands behind their baseline, so their contacts are up there too,
+        # and reading height alone as "artifact" suppressed every one of
+        # them. Absent player boxes the test cannot be made, and the margin
+        # applies alone, which is the older and more cautious behaviour.
+        leaving_view = impact.y < frame_edge_margin and not (
+            reach is not None and reach <= max_reach_ratio
+        )
+
         # Ordered so that every verdict below is a positive finding and the
         # leftovers fall through to "unknown", rather than the other way
-        # round. The frame-edge case is first because an impact up there is
-        # an artifact of the ball leaving view, and its approach rates
-        # describe two unrelated pieces of trajectory.
-        if impact.y < frame_edge_margin:
+        # round. Leaving view is judged first because such an impact's
+        # approach rates describe two unrelated pieces of trajectory.
+        if leaving_view:
             kind, reason = "unknown", "ball at the frame edge (entering or leaving view)"
         elif looks_like_touchdown(
             before, after, min_approach, min_slowdown, reach_gate or weak_reversal
