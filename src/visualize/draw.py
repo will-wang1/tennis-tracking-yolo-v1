@@ -15,12 +15,15 @@ import numpy as np
 
 from src.analysis.bounce_detector import BounceEvent
 from src.analysis.court_calibration import CourtCalibration, FULL_COURT_REFERENCE_POINTS
+from src.analysis.flight_segmenter import FlightSegment, find_segment_impacts
 from src.analysis.stroke_classifier import StrokePrediction
 from src.detection.pose_detector import PersonPose
 from src.tracking.ball_tracker import TrackedPosition
 
 TRAIL_COLOR_DETECTED = (0, 255, 255)  # yellow
 TRAIL_COLOR_INTERPOLATED = (0, 165, 255)  # orange
+ARC_COLOR = (0, 255, 255)  # yellow, same as the trail it replaces
+ARC_BALL_COLOR = (255, 255, 255)  # white, so the ball reads against its own arc
 
 POSE_KEYPOINT_COLOR = (0, 0, 255)  # red
 POSE_SKELETON_COLOR = (0, 255, 0)  # green
@@ -69,6 +72,181 @@ class TrailDrawer:
             radius = max(2, int(6 * fade))
             cv2.circle(frame, (int(point.x), int(point.y)), radius, color, -1)
 
+        return frame
+
+
+
+class ShotArcDrawer:
+    """The whole current SHOT as fitted curves, in place of a trail of past
+    positions.
+
+    A shot is racket to racket, so it is not one parabola: the ball flies,
+    lands, and flies again, and the two arcs meet at the bounce. This joins
+    the flights of one shot and leaves the previous shot behind, so what is
+    on screen is the path the ball has taken since somebody last hit it.
+
+    A trail says where the ball has been, one dot per frame, and its shape
+    is whatever the detector happened to output - jitter and all. The arc
+    says the same thing as a curve taken from the flight the segmenter
+    already fitted (`flight_segmenter.find_flight_segments`), so it is the
+    smooth path the ball actually flew rather than a join-the-dots of noisy
+    samples.
+
+    NOTHING here is drawn from a raw detection, including the ball marker.
+    That is the point rather than a detail: a ball in free flight follows a
+    parabola, so a blob that does not sit on one was never the ball, and an
+    overlay built only from fitted flights cannot show a false positive at
+    all. RANSAC is what enforces it - a stray detection disagrees with the
+    curve the other samples agree on, so it is excluded from the segment and
+    has no say in its shape. The old trail had no such defence: every dot it
+    was handed went on the screen, which is why a bad frame showed up as the
+    ball teleporting into the crowd and back.
+
+    The flip side is that the overlay is silent where the fit is: between
+    two flights - the moment of a bounce or a strike - and through any
+    stretch too short or too sparse to fit a flight to, there is a held arc
+    but no ball marker. That is honest. Guessing a position from a curve
+    that has ended would be inventing one.
+
+    Which flights belong together is decided by what happened between them,
+    and the rule is deliberately one-sided: join across an impact only when
+    it was classified a BOUNCE, since that is the one event we can say left
+    the ball in play on the same shot. A contact ends the shot by
+    definition. So does an "unknown" - an impact nobody could attribute is
+    not evidence of continuity, and drawing through one would assert
+    something the classifier explicitly declined to. A boundary with no
+    impact at all is a flight the segmenter split in two, so those join,
+    but only across a gap of a few frames; a long unexplained hole is not
+    something to draw a continuous shot through.
+
+    Each flight is drawn between the IMPACTS at its ends rather than between
+    its first and last detected samples, and that distinction is what makes a
+    shot look like one path instead of two. A segment's samples stop wherever
+    the detector last saw the ball, typically a frame or three short of the
+    bounce - so drawn raw, consecutive flights of the same shot end and begin
+    in mid-air with a gap between them, measured on the zverev clip at 2 to
+    58 pixels. Extending both to the intersection the segmenter already
+    computes (`find_segment_impacts`) closes that gap exactly: the two curves
+    meet at a point, and the shot reads as a ball that bounced rather than as
+    two unrelated arcs. It also stops the curve finishing short of the
+    ground, which looked like the arc being cut off. The extension is capped
+    at `max_extend_frames` past the real samples, so a badly conditioned
+    intersection cannot fling the curve across the frame.
+
+    Flights already completed are drawn whole. The one in progress grows to
+    the current frame and no further, so the picture never shows where the
+    ball is about to go. When the shot ends it stays up until the next one
+    starts, which is what makes it readable in a still frame.
+    """
+
+    def __init__(
+        self,
+        segments: list[FlightSegment],
+        impacts=(),
+        samples_per_frame: float = 2.0,
+        join_window: int = 6,
+        max_join_gap: int = 4,
+        max_extend_frames: float = 8.0,
+    ):
+        self.segments = sorted(segments, key=lambda s: s.start_frame)
+        self.samples_per_frame = samples_per_frame
+        self.join_window = join_window
+        self.max_join_gap = max_join_gap
+        self.max_extend_frames = max_extend_frames
+        self._impact_kinds = [(impact.frame_idx, impact.kind) for impact in impacts]
+        # where consecutive flights actually meet, keyed by the LATER one
+        index_of = {id(segment): i for i, segment in enumerate(self.segments)}
+        self._meeting = {
+            index_of[id(meeting.after)]: meeting.t
+            for meeting in find_segment_impacts(self.segments)
+            if id(meeting.after) in index_of
+        }
+        self._shot_start = self._group_into_shots()
+        self._span = [self._drawn_span(i) for i in range(len(self.segments))]
+
+    def _drawn_span(self, index: int) -> tuple:
+        """The flight's extent as impact-to-impact, rather than as
+        first-sighting to last-sighting."""
+        segment = self.segments[index]
+        start = self._meeting.get(index)
+        start = (
+            float(segment.start_frame)
+            if start is None
+            else max(start, segment.start_frame - self.max_extend_frames)
+        )
+        end = self._meeting.get(index + 1)
+        end = (
+            float(segment.end_frame)
+            if end is None
+            else min(end, segment.end_frame + self.max_extend_frames)
+        )
+        return start, max(end, start)
+
+    def _joins_previous(self, index: int) -> bool:
+        before, after = self.segments[index - 1], self.segments[index]
+        at = self._meeting.get(index, (before.end_frame + after.start_frame) / 2)
+        near = sorted(
+            (abs(frame - at), kind)
+            for frame, kind in self._impact_kinds
+            if abs(frame - at) <= self.join_window
+        )
+        if near:
+            return near[0][1] == "bounce"
+        return after.start_frame - before.end_frame <= self.max_join_gap
+
+    def _group_into_shots(self) -> list[int]:
+        """For each flight, the index of the flight its shot began with."""
+        starts = []
+        for i, segment in enumerate(self.segments):
+            if i and self._joins_previous(i):
+                starts.append(starts[i - 1])
+            else:
+                starts.append(i)
+        return starts
+
+    def _arc_points(self, segment: FlightSegment, first: float, last: float) -> list:
+        steps = max(int((last - first) * self.samples_per_frame), 1)
+        points = []
+        for i in range(steps + 1):
+            t = first + (last - first) * i / steps
+            x, y = segment.position(t)
+            points.append((int(round(x)), int(round(y))))
+        return points
+
+    def segment_for(self, frame_idx: int) -> Optional[FlightSegment]:
+        """The flight this frame is in, or the most recent one to have
+        ended. Nothing before the first flight begins - there is no shot to
+        show yet, and extrapolating a curve backwards out of a flight that
+        has not started would draw a path the ball never took."""
+        current = None
+        for segment in self.segments:
+            if segment.start_frame > frame_idx:
+                break
+            current = segment
+        return current
+
+    def draw(self, frame: np.ndarray, frame_idx: int) -> np.ndarray:
+        current = self.segment_for(frame_idx)
+        if current is None:
+            return frame
+
+        index = self.segments.index(current)
+        head = None
+        for i in range(self._shot_start[index], index + 1):
+            start, end = self._span[i]
+            last = min(float(frame_idx), end) if i == index else end
+            points = self._arc_points(self.segments[i], start, last)
+            if len(points) > 1:
+                cv2.polylines(
+                    frame, [np.array(points, dtype=np.int32)], False, ARC_COLOR, 2, cv2.LINE_AA
+                )
+            head = points[-1]
+
+        if current.start_frame <= frame_idx <= current.end_frame and head is not None:
+            # the ball's place on its own fitted curve, not wherever the
+            # detector last pointed - so a bad frame moves nothing
+            cv2.circle(frame, head, 5, ARC_BALL_COLOR, -1)
+            cv2.circle(frame, head, 5, ARC_COLOR, 1, cv2.LINE_AA)
         return frame
 
 

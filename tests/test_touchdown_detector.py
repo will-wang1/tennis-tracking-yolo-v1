@@ -308,5 +308,108 @@ class LooksLikeTouchdownReversalTest(unittest.TestCase):
         self.assertFalse(looks_like_touchdown(1.0, -13.0, 3.0, 3.0, allow_reversal=True))
 
 
+class WeakReversalTest(unittest.TestCase):
+    """A racket that turns a ball around does it at speed. A landing can tip
+    the projected rate past zero too, but only into a crawl - so how far the
+    reversal goes is itself the evidence, and unlike the reach gate it needs
+    no player boxes."""
+
+    def _classify(self, before_rate, after_rate, boxes=None, **kwargs):
+        court_y = _approach(before_rate, after_rate)
+        return classify_touchdowns(
+            [_impact()],
+            _positions(court_y),
+            _identity_calibrations(court_y),
+            60.0,
+            player_boxes_by_frame=boxes,
+            **kwargs,
+        )[0]
+
+    def test_a_reversal_into_a_crawl_is_a_landing(self):
+        # the US Open bounce at 3.46s: comes in at 37 m/s, leaves at -6.5
+        result = self._classify(0.62, -0.11)
+
+        self.assertEqual(result.kind, "bounce")
+        self.assertIn("too weak to be a strike", result.reason)
+
+    def test_a_reversal_that_sends_the_ball_back_hard_is_a_contact(self):
+        # the US Open contacts: in at about 8 m/s, back out at about -30
+        result = self._classify(0.13, -0.55)
+
+        self.assertEqual(result.kind, "contact")
+
+    def test_the_verdict_turns_on_the_ratio_not_the_absolute_speed(self):
+        # same -0.11 outgoing rate, arriving four times slower: now the
+        # reversal is most of what the ball had, which a landing cannot do
+        self.assertEqual(self._classify(0.62, -0.11).kind, "bounce")
+        self.assertEqual(self._classify(0.15, -0.11).kind, "contact")
+
+    def test_a_player_standing_over_it_does_not_change_the_verdict(self):
+        # 3.46s lands at a player's feet (reach 0.00), which is ordinary
+        # tennis - proximity was never sufficient evidence for a contact
+        result = self._classify(0.62, -0.11, boxes={30: [(880.0, 480.0, 920.0, 580.0)]})
+
+        self.assertEqual(result.kind, "bounce")
+        self.assertEqual(result.player_reach, 0.0)
+
+    def test_the_threshold_is_configurable(self):
+        self.assertEqual(self._classify(0.62, -0.11, max_reversal_fraction=0.05).kind, "contact")
+
+    def test_needs_no_player_boxes_at_all(self):
+        self.assertEqual(self._classify(0.62, -0.11, boxes=None).kind, "bounce")
+
+    def test_a_weak_reversal_that_is_not_a_landing_either_is_unattributed(self):
+        # A receding ball that starts closing cannot be a landing - touchdown
+        # drives the signed rate DOWN, never up. But ruling out the court
+        # does not make it a racket: 3 m/s back down the court is no evidence
+        # of a strike, so neither claim is supported and neither is made.
+        result = self._classify(-0.5, 0.05)
+
+        self.assertEqual(result.kind, "unknown")
+        self.assertEqual(result.reason, "direction barely reversed - too weak to attribute")
+
+
+class StrongReversalBeatsTheReachGateTest(unittest.TestCase):
+    """The reach gate's evidence is a negative - no player box near enough -
+    and a missed person detection destroys exactly that. A reversal too hard
+    for the projection to have produced is positive evidence, and positive
+    evidence wins when the two conflict."""
+
+    def _classify(self, before_rate, after_rate, gap_px, **kwargs):
+        court_y = _approach(before_rate, after_rate)
+        right = 900.0 - gap_px
+        return classify_touchdowns(
+            [_impact()],
+            _positions(court_y),
+            _identity_calibrations(court_y),
+            60.0,
+            player_boxes_by_frame={30: [(right - 40.0, 450.0, right, 550.0)]},
+            **kwargs,
+        )[0]
+
+    def test_a_gentle_reversal_out_of_reach_is_still_a_bounce(self):
+        # the dropshot: 1.5x, which a landing can produce on its own
+        result = self._classify(0.15, -0.22, gap_px=200.0)
+
+        self.assertEqual(result.kind, "bounce")
+
+    def test_a_violent_reversal_out_of_reach_is_a_contact_anyway(self):
+        # video_input2 at 9.92s: 11x, with the striking player undetected
+        result = self._classify(0.08, -0.90, gap_px=200.0)
+
+        self.assertEqual(result.kind, "contact")
+
+    def test_the_cap_is_configurable(self):
+        self.assertEqual(
+            self._classify(0.15, -0.22, gap_px=200.0, strong_reversal_ratio=1.2).kind,
+            "contact",
+        )
+
+    def test_a_violent_reversal_within_reach_is_a_contact_as_before(self):
+        result = self._classify(0.08, -0.90, gap_px=20.0)
+
+        self.assertEqual(result.kind, "contact")
+
+
 if __name__ == "__main__":
     unittest.main()

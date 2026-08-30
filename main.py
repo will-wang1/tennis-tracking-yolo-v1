@@ -15,7 +15,6 @@ pretrained models, which needed its own training data.
 """
 
 import argparse
-from dataclasses import replace
 from pathlib import Path
 
 from tqdm import tqdm
@@ -23,9 +22,9 @@ from tqdm import tqdm
 from src.analysis.bounce_ensemble import detect_bounces_ensemble
 from src.analysis.catboost_bounce_detector import CatBoostBounceDetector
 from src.analysis.geometric_bounce_detector import detect_bounces_geometric
-from src.analysis.flight_segmenter import segment_impacts_as_candidates
-from src.analysis.parabolic_bounce_detector import detect_bounces_parabolic, find_impacts
-from src.analysis.touchdown_detector import classify_touchdowns
+from src.analysis.flight_segmenter import find_flight_segments
+from src.analysis.impact_pipeline import analyze_impacts
+from src.analysis.parabolic_bounce_detector import detect_bounces_parabolic
 from src.analysis.velocity_bounce_detector import detect_bounces_by_velocity
 from src.analysis.bounce_detector import BounceEvent, find_trajectory_breakpoints
 from src.analysis.court_calibration import CourtCalibration
@@ -48,6 +47,7 @@ from src.visualize.draw import (
     BounceMarkerDrawer,
     CourtOverlayDrawer,
     ImpactMarkerDrawer,
+    ShotArcDrawer,
     ShotLabelDrawer,
     SidebarDrawer,
     TrailDrawer,
@@ -61,24 +61,6 @@ REPO_ROOT = Path(__file__).resolve().parent
 # for when --bounce is off and there's no bounce list to segment shots on.
 _FALLBACK_BREAKPOINT_MIN_Y_PROMINENCE = 15.0
 _FALLBACK_BREAKPOINT_MIN_FRAME_GAP = 5
-
-
-def _merge_impacts(scanned, from_segments, min_frame_gap):
-    """One impact list from the two searches, keeping the better-fitting of
-    any pair that describe the same event.
-
-    The frame-by-frame scan is precise when it has data either side of the
-    impact; the segment intersection still finds the impact when it doesn't.
-    They agree on most events, so the union is deduplicated by proximity.
-    """
-    merged = []
-    for impact in sorted(list(scanned) + list(from_segments), key=lambda c: c.t):
-        if merged and impact.t - merged[-1].t <= min_frame_gap:
-            if impact.rmse < merged[-1].rmse:
-                merged[-1] = impact
-        else:
-            merged.append(impact)
-    return merged
 
 
 def main() -> None:
@@ -113,7 +95,19 @@ def main() -> None:
     parser.add_argument("--confidence", type=float, default=0.15, help="YOLO backend only")
     parser.add_argument("--imgsz", type=int, default=1280, help="YOLO backend only")
     parser.add_argument("--device", default=None)
-    parser.add_argument("--trail-length", type=int, default=8)
+    parser.add_argument(
+        "--ball-overlay",
+        choices=["arc", "trail"],
+        default="arc",
+        help="How the ball's path is drawn. 'arc' (default) draws the current shot as the "
+        "single fitted parabola the ball actually flew (see ShotArcDrawer), growing as it "
+        "travels and holding after it lands until the next shot starts. 'trail' draws the old "
+        "row of dots, one per tracked frame - which shows the detector's jitter as well as the "
+        "ball's path, since it joins raw samples rather than a fitted curve.",
+    )
+    parser.add_argument(
+        "--trail-length", type=int, default=8, help="Dots to keep, for --ball-overlay trail"
+    )
     parser.add_argument(
         "--max-jump",
         type=float,
@@ -444,47 +438,34 @@ def main() -> None:
     )
 
     impacts = []
+    analysis = None
     if args.bounce and args.bounce_method == "parabolic":
-        # Fitted arcs are their own noise filter, so this one wants the raw
-        # samples - smoothing first would flatten the very corner being
-        # measured and make the fit-quality check meaningless (see
-        # parabolic_bounce_detector.py).
-        bounce_tracker = BallTracker(
+        # Judging bounce-vs-contact needs the ball's PROJECTED court
+        # position, which measures the height effect directly, rather than
+        # screen y, which confuses height with court depth - so the
+        # calibration is what upgrades this from "something hit the ball"
+        # to "the court hit the ball". Scored against the hand labels in
+        # data/labels/ (scripts/replay_impacts.py), that gets all 13 of the
+        # US Open clip's labelled events and 12 of video_input2's 17, where
+        # the screen-space checks alone found two of video_input2's bounces.
+        # Player boxes are passed only to WITHHOLD the contact verdict
+        # from impacts nobody could have reached - see
+        # touchdown_detector.classify_touchdowns. They are only collected
+        # under --minimap, and the classifier degrades to the direction
+        # rule alone without them.
+        analysis = analyze_impacts(
+            detections,
+            reader.fps,
+            calibrations_by_frame=calibrations_by_frame if args.show_court else None,
+            player_boxes_by_frame=player_boxes_by_frame if args.minimap else None,
             max_pixels_per_frame=args.max_jump,
             max_interpolation_gap=args.interp_gap,
             static_lockon_frames=args.lockon_frames,
             static_lockon_radius=args.lockon_radius,
-            smoothing_window=0,
+            use_flight_segments=not args.no_flight_segments,
         )
-        bounce_positions = bounce_tracker.track(detections)
-        impacts = find_impacts(bounce_positions)
-        if not args.no_flight_segments:
-            impacts = _merge_impacts(
-                impacts, segment_impacts_as_candidates(bounce_positions), int(0.2 * reader.fps)
-            )
+        impacts = analysis.impacts
         if args.show_court:
-            # Judge bounce-vs-contact from the ball's PROJECTED court
-            # position, which measures the height effect directly, rather
-            # than from screen y, which confuses height with court depth -
-            # see touchdown_detector.py. Hand-checked on video_input2 this
-            # finds all five labelled bounces where the screen-space checks
-            # found two.
-            # Player boxes are passed only to WITHHOLD the contact verdict
-            # from impacts nobody could have reached - see
-            # touchdown_detector.classify_touchdowns. They are only
-            # collected under --minimap, and the classifier degrades to the
-            # direction rule alone without them.
-            touchdowns = classify_touchdowns(
-                impacts,
-                bounce_positions,
-                calibrations_by_frame,
-                reader.fps,
-                player_boxes_by_frame=player_boxes_by_frame if args.minimap else None,
-            )
-            impacts = [
-                replace(td.impact, is_bounce=td.is_bounce, kind=td.kind, reason=td.reason)
-                for td in touchdowns
-            ]
             bounces = [
                 BounceEvent(
                     frame_idx=impact.frame_idx,
@@ -503,11 +484,11 @@ def main() -> None:
                 if impact.is_bounce
             ]
         else:
-            bounces = detect_bounces_parabolic(bounce_positions)
+            bounces = detect_bounces_parabolic(analysis.positions)
         print(f"Detected {len(bounces)} bounces")
         if args.contacts:
-            contacts = [impact for impact in impacts if impact.kind == "contact"]
-            unknown = [impact for impact in impacts if impact.kind == "unknown"]
+            contacts = analysis.contacts
+            unknown = analysis.unattributed
             print(
                 f"Detected {len(contacts)} racket contacts and {len(unknown)} unattributed "
                 f"impacts ({len(impacts)} in total). Only bounces and contacts are drawn:"
@@ -618,7 +599,23 @@ def main() -> None:
 
     output_width = reader.width + (args.sidebar_width if args.sidebar else 0)
     writer = VideoWriter(args.output, reader.fps, output_width, reader.height)
-    trail = TrailDrawer(trail_length=args.trail_length)
+    # The arc comes from the same flight segmentation the impact detector
+    # uses, so what is drawn and what is measured cannot disagree. It needs
+    # the UNSMOOTHED trajectory (see parabolic_bounce_detector) - the
+    # analysis pass already tracked one, so reuse it rather than re-tracking.
+    arc_drawer = None
+    trail = None
+    if args.ball_overlay == "arc":
+        arc_positions = analysis.positions if analysis is not None else BallTracker(
+            max_pixels_per_frame=args.max_jump,
+            max_interpolation_gap=args.interp_gap,
+            static_lockon_frames=args.lockon_frames,
+            static_lockon_radius=args.lockon_radius,
+            smoothing_window=0,
+        ).track(detections)
+        arc_drawer = ShotArcDrawer(find_flight_segments(arc_positions), impacts)
+    else:
+        trail = TrailDrawer(trail_length=args.trail_length)
     bounce_drawer = BounceMarkerDrawer() if args.bounce and not args.contacts else None
     impact_drawer = ImpactMarkerDrawer(reader.fps) if args.contacts else None
     sidebar_drawer = SidebarDrawer(width=args.sidebar_width) if args.sidebar else None
@@ -631,7 +628,10 @@ def main() -> None:
         calibration = calibrations_by_frame.get(i) if args.show_court else None
         if args.show_court:
             annotated = court_drawer.draw(annotated, calibration)
-        annotated = trail.draw(annotated, positions_by_frame.get(i))
+        if arc_drawer is not None:
+            annotated = arc_drawer.draw(annotated, i)
+        else:
+            annotated = trail.draw(annotated, positions_by_frame.get(i))
         if args.contacts:
             annotated = impact_drawer.draw(annotated, i, impacts_by_frame)
         elif args.bounce:

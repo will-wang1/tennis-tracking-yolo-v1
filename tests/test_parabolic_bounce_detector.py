@@ -4,6 +4,7 @@ import numpy as np
 
 from src.analysis.court_calibration import CourtCalibration
 from src.analysis.parabolic_bounce_detector import (
+    _fit_arc,
     detect_bounces_parabolic,
     find_bounce_candidates,
     find_impacts,
@@ -286,6 +287,109 @@ class DetectBouncesParabolicTest(unittest.TestCase):
         positions = _impact_trajectory(restitution=0.7)
 
         self.assertEqual(detect_bounces_parabolic(positions, min_restitution=0.9), [])
+
+
+def _arc_samples(count=8, x0=700.0, y0=400.0, vx=13.0, vy=9.0, gravity=1.2, start_frame=100):
+    """One clean stretch of free flight, the shape _fit_arc is meant to model."""
+    return [
+        TrackedPosition(
+            frame_idx=start_frame + i,
+            x=x0 + vx * i,
+            y=y0 + vy * i + 0.5 * gravity * i * i,
+            interpolated=False,
+        )
+        for i in range(count)
+    ]
+
+
+class FitArcOutlierTest(unittest.TestCase):
+    """A least-squares fit has no defence against one bad detection, and the
+    caller throws away any arc whose RMSE is too high - so a single misplaced
+    blob used to cost a whole bounce. See _fit_arc."""
+
+    T_REF = 100.0
+
+    def test_fits_clean_flight_exactly(self):
+        arc = _fit_arc(_arc_samples(), t_ref=self.T_REF)
+
+        self.assertLess(arc.rmse, 1e-6)
+
+    def test_one_bad_detection_does_not_wreck_the_fit(self):
+        samples = _arc_samples()
+        samples[4] = TrackedPosition(
+            frame_idx=samples[4].frame_idx,
+            x=samples[4].x - 14.0,
+            y=samples[4].y + 12.0,
+            interpolated=False,
+        )
+        arc = _fit_arc(samples, t_ref=self.T_REF)
+
+        self.assertLess(arc.rmse, 1.0)
+
+    def test_the_velocity_survives_a_bad_detection(self):
+        samples = _arc_samples()
+        clean = _fit_arc(samples, t_ref=self.T_REF).velocity(104.0)
+        samples[4] = TrackedPosition(
+            frame_idx=samples[4].frame_idx, x=samples[4].x - 14.0, y=samples[4].y + 12.0,
+            interpolated=False,
+        )
+        corrupted = _fit_arc(samples, t_ref=self.T_REF).velocity(104.0)
+
+        self.assertAlmostEqual(clean[0], corrupted[0], delta=0.5)
+        self.assertAlmostEqual(clean[1], corrupted[1], delta=0.5)
+
+    def test_does_not_rescue_a_stretch_that_is_noisy_throughout(self):
+        # every sample off the parabola, not one - dropping the worst leaves
+        # the rest just as unlike free flight, so the caller's RMSE gate
+        # still rejects it
+        samples = _arc_samples()
+        wobble = [9.0, -8.0, 7.0, -9.0, 8.0, -7.0, 9.0, -8.0]
+        samples = [
+            TrackedPosition(frame_idx=p.frame_idx, x=p.x, y=p.y + w, interpolated=False)
+            for p, w in zip(samples, wobble)
+        ]
+        arc = _fit_arc(samples, t_ref=self.T_REF)
+
+        self.assertGreater(arc.rmse, 4.0)
+
+    def test_drops_at_most_one_sample(self):
+        samples = _arc_samples()
+        for i in (2, 5):
+            samples[i] = TrackedPosition(
+                frame_idx=samples[i].frame_idx, x=samples[i].x, y=samples[i].y + 20.0,
+                interpolated=False,
+            )
+        arc = _fit_arc(samples, t_ref=self.T_REF)
+
+        self.assertGreater(arc.rmse, 4.0)
+
+    def test_keeps_enough_samples_to_over_determine_the_fit(self):
+        # six samples with one outlier: dropping it would leave five, which
+        # barely constrains a quadratic, so the fit keeps them all and the
+        # caller's RMSE gate decides
+        samples = _arc_samples(count=6)
+        samples[3] = TrackedPosition(
+            frame_idx=samples[3].frame_idx, x=samples[3].x, y=samples[3].y + 20.0,
+            interpolated=False,
+        )
+        arc = _fit_arc(samples, t_ref=self.T_REF, min_samples=6)
+
+        self.assertGreater(arc.rmse, 4.0)
+
+    def test_still_refuses_too_few_samples(self):
+        self.assertIsNone(_fit_arc(_arc_samples(count=5), t_ref=self.T_REF, min_samples=6))
+
+    def test_a_small_wobble_is_not_treated_as_an_outlier(self):
+        # a sub-pixel disagreement is ordinary detector noise; removing the
+        # largest of those would just flatter the RMSE
+        samples = _arc_samples()
+        samples[4] = TrackedPosition(
+            frame_idx=samples[4].frame_idx, x=samples[4].x, y=samples[4].y + 1.5,
+            interpolated=False,
+        )
+        arc = _fit_arc(samples, t_ref=self.T_REF)
+
+        self.assertGreater(arc.rmse, 0.1)
 
 
 if __name__ == "__main__":

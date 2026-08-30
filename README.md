@@ -272,6 +272,34 @@ enough to fine-tune on CPU in a pinch, but 8.8k images at `imgsz=1280` is
 not.  Once trained, `scripts/calibrate_court_auto.py` replaces the manual
 calibration workflow above.
 
+## Checking bounce/contact accuracy without a GPU
+
+Every impact verdict downstream of the detectors is arithmetic over a few
+hundred tracked points; only the detectors themselves are expensive. So
+`scripts/replay_impacts.py` runs them once, caches what they said, and
+replays the rest as often as you like - a change to a threshold is measured
+in about a second instead of a render:
+
+```
+# once (the only step that wants a GPU)
+python scripts/replay_impacts.py --build --input match.mp4     --cache outputs/match/replay_cache.pkl
+
+# then, on any laptop
+python scripts/replay_impacts.py --cache outputs/match/replay_cache.pkl     --labels data/labels/video_input2_impacts.csv
+python scripts/replay_impacts.py --cache ... --labels ... --max-reach-ratio 0.4
+```
+
+It prints every impact with the measurements the verdict came from - the
+projected approach rate either side, and how close the nearest player
+was - and, given `--labels`, scores those verdicts against hand-labelled
+events. `--add-player-boxes` tops the cache up with the person detector on
+just the frames around this run's impacts, which is the only place player
+boxes are read.
+
+The label files live in `data/labels/` - see that directory's README for
+what they are, and for the more important question of what a good score on
+them does and does not prove.
+
 ## Diagnosing false positives
 
 If you're seeing dots that don't belong, don't guess from screenshots -
@@ -310,6 +338,7 @@ pytest tests/
 ```
 
 Covers the tracker's interpolation/outlier-rejection logic, bounce
-detection, court calibration geometry, speed estimation, striker selection,
-and stroke feature engineering directly with hand-built data - no trained
-model or video file needed to run any of these.
+detection, bounce-vs-contact attribution, label scoring, court calibration
+geometry, speed estimation, striker selection, and stroke feature
+engineering directly with hand-built data - no trained model or video file
+needed to run any of these.

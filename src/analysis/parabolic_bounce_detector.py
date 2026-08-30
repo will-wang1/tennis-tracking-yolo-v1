@@ -25,7 +25,11 @@ those two arcs is one that a COURT could have produced:
 - The arcs must actually be good fits. A lone bad detection can perturb a
   least-squares fit but cannot make both sides fit a parabola well, which
   is what kills the noise-driven false positives that single-frame peak
-  detection can't distinguish from real corners.
+  detection can't distinguish from real corners. The reverse case is real
+  too - one bad detection dragging a GOOD arc past the fit tolerance and
+  costing a real bounce - so `_fit_arc` may discard a single sample that
+  disagrees with the rest, and only a single one: several disagreeing
+  samples are what a noisy stretch looks like, and it stays rejected.
 - The ball must be descending on screen going in and rising coming out.
   A ball in continuous flight passing over the net doesn't do this at all
   (it's one arc, no junction), and a shot's apex does the opposite
@@ -162,8 +166,28 @@ class BounceCandidate:
     reason: str = "bounce"  # why it was classified the way it was
 
 
+def _least_squares_arc(
+    times: np.ndarray, xs: np.ndarray, ys: np.ndarray, t_ref: float
+) -> tuple[_Arc, np.ndarray]:
+    x_coeffs = np.polyfit(times, xs, 1)
+    y_coeffs = np.polyfit(times, ys, 2)
+    residuals = np.hypot(np.polyval(x_coeffs, times) - xs, np.polyval(y_coeffs, times) - ys)
+    arc = _Arc(
+        x_coeffs=x_coeffs,
+        y_coeffs=y_coeffs,
+        t_ref=t_ref,
+        rmse=float(np.sqrt(np.mean(residuals**2))),
+    )
+    return arc, residuals
+
+
 def _fit_arc(
-    samples: list[TrackedPosition], t_ref: float, min_samples: int = 6
+    samples: list[TrackedPosition],
+    t_ref: float,
+    min_samples: int = 6,
+    max_outliers: int = 1,
+    outlier_ratio: float = 3.0,
+    min_outlier_pixels: float = 3.0,
 ) -> Optional[_Arc]:
     """None if the samples can't properly over-determine the fit.
 
@@ -174,6 +198,23 @@ def _fit_arc(
     positive, sat immediately after an eight-frame dropout where only four
     samples were available, and requiring six removes it while keeping
     every confirmed bounce.
+
+    Up to `max_outliers` samples that disagree with the rest are dropped
+    before the fit is judged. A least-squares fit has no defence against a
+    single bad detection, and the caller's `max_arc_rmse` gate then throws
+    the whole arc away: on the US Open clip one blob at 3.57s that the
+    detector placed 14px off the ball (its confidence there was 0.24, the
+    ball being at its faintest just after landing) lifted the following
+    arc's RMSE from about 1.5 to 6.3 and cost a hand-confirmed bounce.
+
+    A sample is only dropped when it disagrees with the others by
+    `outlier_ratio` times their typical residual AND by at least
+    `min_outlier_pixels`, so this cannot quietly rescue an arc that is
+    merely a poor fit everywhere - the residuals of a noisy stretch, or of
+    a window fitted across an impact, are large together rather than one
+    at a time, and it stays rejected. The median is taken over the OTHER
+    samples so the suspect point cannot inflate the very threshold it has
+    to clear.
     """
     if len(samples) < min_samples:
         return None
@@ -181,15 +222,17 @@ def _fit_arc(
     xs = np.array([p.x for p in samples], dtype=np.float64)
     ys = np.array([p.y for p in samples], dtype=np.float64)
 
-    x_coeffs = np.polyfit(times, xs, 1)
-    y_coeffs = np.polyfit(times, ys, 2)
-    residuals = np.hypot(np.polyval(x_coeffs, times) - xs, np.polyval(y_coeffs, times) - ys)
-    return _Arc(
-        x_coeffs=x_coeffs,
-        y_coeffs=y_coeffs,
-        t_ref=t_ref,
-        rmse=float(np.sqrt(np.mean(residuals**2))),
-    )
+    keep = np.ones(len(samples), dtype=bool)
+    for _ in range(max_outliers + 1):
+        arc, residuals = _least_squares_arc(times[keep], xs[keep], ys[keep], t_ref)
+        if int(keep.sum()) - 1 < min_samples:
+            return arc
+        worst = int(np.argmax(residuals))
+        others = float(np.median(np.delete(residuals, worst)))
+        if residuals[worst] < max(outlier_ratio * others, min_outlier_pixels):
+            return arc
+        keep[np.flatnonzero(keep)[worst]] = False
+    return arc
 
 
 def _impact_time(before: _Arc, after: _Arc, around: float, search_frames: float) -> Optional[float]:
