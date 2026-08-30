@@ -61,26 +61,28 @@ events, so the only real test is a clip nobody has labelled yet.
 On the US Open clip all 13 hand-labelled events come out right: six
 bounces, including the 12.75s dropshot the reach gate exists to rescue and
 the 3.46s landing at a player's feet that the weak-reversal band rescues;
-four contacts; and no marker on any of the three confirmed non-events. Four
-further markers it draws were never labelled either way.
+four contacts; and no marker on any of the three confirmed non-events. Nine
+further markers it draws were never labelled either way - five of them the
+far player's contacts, which were suppressed as frame-edge artifacts until
+that rule started asking whether anyone was in reach.
 
-video_input2 is weaker, and honestly so - 12 of its 17 labels:
+video_input2 gives 14 of its 17 labels, and the three it misses are worth
+naming:
 
-  - 1.99s and 12.32s are confirmed bounces read as returns. Both have a
+  - 1.96s and 12.34s are confirmed bounces read as returns. Both have a
     player within reach (0.47 and 0.31 box heights) and both reverse into
-    the ambiguous middle band (3.1x and 1.1x), so every signal this module
-    has says racket. Separating them needs the ball's real height
-    (`court_camera.py`), not another threshold here: a reach gate loose
-    enough to save 1.99s would be shorter than a racket's own length
-    against a 1.75m player, which is label-fitting rather than physics.
-  - 7.28s draws a bounce where the labelling says nothing happened. The
-    same labelling does place a real bounce shortly after 6.95s, and this
-    may be that bounce timed about 0.15s late rather than an invention -
-    the impact time it reports puts the landing behind the baseline, which
-    a rally ball would not do. Unconfirmed either way.
-  - 7.11s and 11.39s are missed entirely. 11.39s is not this module's to
-    fix: the ball detector returns no candidate at all for the 16 frames
-    around it, so nothing downstream has anything to judge.
+    the ambiguous middle band, so every signal this module has says racket.
+    Separating them needs the ball's real height, and `court_camera.py`
+    does not deliver one on this footage - measured at eight known bounces
+    it places the ball a mean 2.2m off the ground at the moment it lands.
+    A reach gate loose enough to save 1.96s would be shorter than a
+    racket's own length against a 1.75m player, which is label-fitting
+    rather than physics.
+  - 11.39s is missed entirely, and is not this module's to fix: the ball
+    detector returns no candidate at all for the 16 frames around it, so
+    nothing downstream has anything to judge. Lowering its threshold does
+    not help - at 0.3 the dropout only shrinks to 14 frames, and at 0.2 the
+    clip's score falls to 12 of 17.
 
 The thresholds here should be expected to need revisiting on a different
 camera. None of this recovers impacts that `find_impacts` and the flight
