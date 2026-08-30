@@ -29,6 +29,7 @@ from src.analysis.velocity_bounce_detector import detect_bounces_by_velocity
 from src.analysis.bounce_detector import BounceEvent, find_trajectory_breakpoints
 from src.analysis.court_calibration import CourtCalibration
 from src.analysis.speed_estimator import (
+    estimate_flight_net_speeds,
     estimate_net_crossing_speeds,
     estimate_shot_speeds,
     merge_with_net_crossing_speeds,
@@ -545,16 +546,32 @@ def main() -> None:
     impacts_by_frame = {impact.frame_idx: impact for impact in impacts}
     minimap_bounce_points = [(b.world_x, b.world_y) for b in bounces if b.world_x is not None]
 
-    # estimate_net_crossing_speeds is the most accurate reading (near the
-    # ground plane the calibration homography is exact for) but only fires
-    # for shots actually seen crossing the net band with two consecutive
-    # DETECTED positions - many shots (occlusion right at the net, a rally
-    # ball that stays high, etc.) never qualify and would otherwise get no
-    # speed at all. estimate_shot_speeds' breakpoint segmentation covers
-    # every shot in the trajectory instead (in km/h when a calibration
-    # exists, else px/s), so merge_with_net_crossing_speeds uses that for
-    # full coverage and swaps in the sharper net-crossing number wherever
-    # one overlaps.
+    # One flight segmentation, used for both the speed readings and the arc
+    # overlay, so the number reported and the curve drawn describe the same
+    # fitted flight. Needs the UNSMOOTHED trajectory (see
+    # parabolic_bounce_detector) - the analysis pass already tracked one.
+    flight_positions = analysis.positions if analysis is not None else None
+    if flight_positions is None and (args.speed or args.sidebar or args.ball_overlay == "arc"):
+        flight_positions = BallTracker(
+            max_pixels_per_frame=args.max_jump,
+            max_interpolation_gap=args.interp_gap,
+            static_lockon_frames=args.lockon_frames,
+            static_lockon_radius=args.lockon_radius,
+            smoothing_window=0,
+        ).track(detections)
+    flight_segments = find_flight_segments(flight_positions) if flight_positions else []
+
+    # Speed at the net crossing is the most accurate reading available: the
+    # calibration is a ground-plane homography, so its error grows with the
+    # ball's height, and the crossing is where a rally ball is lowest
+    # between two strikes. estimate_flight_net_speeds solves for that moment
+    # on the FITTED flight, so it needs no detection at the net itself -
+    # unlike estimate_net_crossing_speeds, which needs several consecutive
+    # detected positions inside a pixel band there and so misses shots that
+    # are occluded or blurred at exactly the wrong moment. Neither covers a
+    # flight that never crosses the net (bounce-to-racket, about half of
+    # them), so estimate_shot_speeds still provides the floor and
+    # merge_with_net_crossing_speeds swaps in the sharper number.
     shot_speed_by_frame = {}
     if args.speed or args.sidebar:
         # Segmenting at every direction-reversal (find_trajectory_breakpoints)
@@ -583,8 +600,15 @@ def main() -> None:
             calibrations_by_frame=calibrations_by_frame if calibrations_by_frame else None,
         )
         if calibrations_by_frame:
-            net_shots = estimate_net_crossing_speeds(
-                positions, reader.fps, calibrations_by_frame, min_window_frames=args.net_speed_min_frames
+            net_shots = (
+                estimate_flight_net_speeds(flight_segments, reader.fps, calibrations_by_frame)
+                if flight_segments
+                else estimate_net_crossing_speeds(
+                    positions,
+                    reader.fps,
+                    calibrations_by_frame,
+                    min_window_frames=args.net_speed_min_frames,
+                )
             )
             shots = merge_with_net_crossing_speeds(fallback_shots, net_shots)
         else:
@@ -599,21 +623,12 @@ def main() -> None:
 
     output_width = reader.width + (args.sidebar_width if args.sidebar else 0)
     writer = VideoWriter(args.output, reader.fps, output_width, reader.height)
-    # The arc comes from the same flight segmentation the impact detector
-    # uses, so what is drawn and what is measured cannot disagree. It needs
-    # the UNSMOOTHED trajectory (see parabolic_bounce_detector) - the
-    # analysis pass already tracked one, so reuse it rather than re-tracking.
+    # The arc comes from the same flight segmentation the speed readings
+    # use, so what is drawn and what is reported cannot disagree.
     arc_drawer = None
     trail = None
     if args.ball_overlay == "arc":
-        arc_positions = analysis.positions if analysis is not None else BallTracker(
-            max_pixels_per_frame=args.max_jump,
-            max_interpolation_gap=args.interp_gap,
-            static_lockon_frames=args.lockon_frames,
-            static_lockon_radius=args.lockon_radius,
-            smoothing_window=0,
-        ).track(detections)
-        arc_drawer = ShotArcDrawer(find_flight_segments(arc_positions), impacts)
+        arc_drawer = ShotArcDrawer(flight_segments, impacts)
     else:
         trail = TrailDrawer(trail_length=args.trail_length)
     bounce_drawer = BounceMarkerDrawer() if args.bounce and not args.contacts else None

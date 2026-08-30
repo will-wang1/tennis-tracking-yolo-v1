@@ -81,6 +81,131 @@ def net_pixel_y_range(calibration: CourtCalibration) -> tuple[float, float]:
     return min(pixel_ys), max(pixel_ys)
 
 
+def net_pixel_line(calibration: CourtCalibration) -> tuple[float, float, float]:
+    """The net line reprojected into the image, as `(a, b, c)` with
+    `a*x + b*y + c` zero on the line, negative on the far side and positive
+    on the near side.
+
+    A single pixel height cannot describe the net: perspective tilts it
+    across the frame, which is why `net_pixel_y_range` has to return a range.
+    A line handles the tilt exactly and answers the question that matters
+    here - which side of the net is the ball on, right now.
+    """
+    net_world_y = max(y for _, y in FULL_COURT_REFERENCE_POINTS.values()) / 2
+    doubles_width = max(x for x, _ in FULL_COURT_REFERENCE_POINTS.values())
+    inverse_homography = np.linalg.inv(calibration.homography)
+
+    ends = []
+    for world_x in (0.0, doubles_width):
+        point = np.array([[[world_x, net_world_y]]], dtype=np.float64)
+        ends.append(cv2.perspectiveTransform(point, inverse_homography)[0, 0])
+    (x1, y1), (x2, y2) = ends
+    # the image line through both ends, oriented so "down the image" is positive
+    a, b = y1 - y2, x2 - x1
+    c = -(a * x1 + b * y1)
+    if b < 0:
+        a, b, c = -a, -b, -c
+    return float(a), float(b), float(c)
+
+
+def estimate_flight_net_speeds(
+    segments: list,
+    fps: float,
+    calibrations_by_frame: dict[int, CourtCalibration],
+    half_window_frames: float = 2.0,
+    min_half_window_frames: float = 1.0,
+    min_flight_frames: int = 12,
+    max_speed_kmh: float = MAX_PLAUSIBLE_KMH,
+) -> list[ShotSpeed]:
+    """Ball speed as each fitted FLIGHT crosses the net.
+
+    `estimate_net_crossing_speeds` asks the same question of the raw
+    trajectory, and can only answer it when the detector happened to supply
+    several consecutive positions inside a pixel band at the net. That is a
+    minority of shots: the ball is small, fast and often occluded exactly
+    there. Measured on this project's three clips it produced a reading for
+    well under half of them, so most shots fell back to a speed averaged
+    over whatever part of the flight was tracked - a different and cruder
+    quantity.
+
+    A fitted flight has no such gap. The curve is defined at every instant
+    between its endpoints, so the crossing time can be solved for directly
+    (`net_pixel_line`, sign change of the ball's side of the net) whether or
+    not the ball was detected at that moment, and the speed read off the
+    curve either side of it. Every flight that crosses the net gets a
+    reading, and it is a reading of the same thing every time.
+
+    Why at the net at all: the calibration is a GROUND-PLANE homography, so
+    it is exact for a ball on the court and increasingly wrong the higher
+    the ball is (see `court_camera.py`). The net crossing is where a rally
+    ball is lowest between the two strikes, so it is where that error is
+    smallest - not zero, since the ball is still a metre or so up, but the
+    best moment available in a monocular view.
+
+    A flight shorter than `min_flight_frames` is skipped: the crossing
+    cannot be placed confidently within it, and the narrow measuring window
+    that follows turns the fit's own noise into a headline number.
+
+    Speed is measured over `half_window_frames` either side of the crossing
+    rather than at the instant itself: a derivative taken at a point on a
+    fitted curve inherits the fit's noise, while a displacement over a few
+    frames averages it out, and over that short a window the ball has not
+    slowed appreciably.
+    """
+    shots = []
+    for segment in segments:
+        calibration = calibrations_by_frame.get(int(round(segment.start_frame)))
+        if calibration is None:
+            continue
+        if segment.duration_frames < min_flight_frames:
+            # too little flight to place the crossing confidently, and a
+            # narrow window there turns fit noise into a headline number -
+            # an 11-frame flight on video_input2 read 287 km/h this way
+            continue
+        a, b, c = net_pixel_line(calibration)
+
+        crossing = None
+        steps = np.arange(segment.start_frame, segment.end_frame + 0.05, 0.05)
+        sides = [a * segment.position(t)[0] + b * segment.position(t)[1] + c for t in steps]
+        for i in range(len(sides) - 1):
+            if np.sign(sides[i]) != np.sign(sides[i + 1]):
+                crossing = float(steps[i])
+                break
+        if crossing is None:
+            continue
+
+        # a crossing near an end of the flight gets a narrower window rather
+        # than no reading, down to the point where the window is too short
+        # for the fit's own noise to average out
+        half = min(
+            half_window_frames,
+            crossing - segment.start_frame,
+            segment.end_frame - crossing,
+        )
+        if half < min_half_window_frames:
+            continue
+        first, last = crossing - half, crossing + half
+
+        start_world = calibration.pixel_to_world(*segment.position(first))
+        end_world = calibration.pixel_to_world(*segment.position(last))
+        metres = float(np.hypot(end_world[0] - start_world[0], end_world[1] - start_world[1]))
+        seconds = (last - first) / fps
+        speed = metres / seconds * 3.6
+        if not 0.0 < speed <= max_speed_kmh:
+            continue
+
+        shots.append(
+            ShotSpeed(
+                start_frame=int(segment.start_frame),
+                end_frame=int(segment.end_frame),
+                peak_frame=int(round(crossing)),
+                peak_speed=speed,
+                unit="km/h",
+            )
+        )
+    return shots
+
+
 def estimate_net_crossing_speeds(
     positions: list[TrackedPosition],
     fps: float,

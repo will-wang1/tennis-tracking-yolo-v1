@@ -1,7 +1,10 @@
 import unittest
 
+from src.analysis.flight_segmenter import find_flight_segments
 from src.analysis.court_calibration import FULL_COURT_REFERENCE_POINTS, CourtCalibration
 from src.analysis.speed_estimator import (
+    estimate_flight_net_speeds,
+    net_pixel_line,
     ShotSpeed,
     estimate_net_crossing_speeds,
     estimate_shot_speeds,
@@ -366,6 +369,147 @@ class SpeedEstimatorTest(unittest.TestCase):
         self.assertEqual(merged[1].peak_speed, 140.0)  # overlapped, upgraded
         self.assertEqual(merged[0].peak_speed, 60.0)  # no overlap, kept as-is
         self.assertEqual(merged[2].peak_speed, 90.0)  # no overlap, kept as-is
+
+
+class FlightNetSpeedTest(unittest.TestCase):
+    """Speed read off a fitted flight where it crosses the net. See
+    speed_estimator.estimate_flight_net_speeds."""
+
+    FPS = 30.0
+
+    def _calibration(self, scale=20.0):
+        """Pixels = world metres * scale, so a known world speed produces a
+        known pixel speed and the arithmetic can be checked by hand."""
+        from src.analysis.court_calibration import FULL_COURT_REFERENCE_POINTS
+
+        names = [
+            "baseline_far_left",
+            "baseline_far_right",
+            "baseline_near_left",
+            "baseline_near_right",
+        ]
+        pixel_points = {
+            name: (wx * scale, wy * scale)
+            for name, (wx, wy) in FULL_COURT_REFERENCE_POINTS.items()
+            if name in names
+        }
+        return CourtCalibration.from_keypoints(pixel_points)
+
+    def _straight_flight(self, metres_per_second, scale=20.0, frames=40, start_frame=10):
+        """A ball crossing the net down the middle at a known ground speed."""
+        court_length = max(y for _, y in FULL_COURT_REFERENCE_POINTS.values())
+        net_y = court_length / 2
+        per_frame = metres_per_second / self.FPS
+        positions = [
+            TrackedPosition(
+                frame_idx=start_frame + i,
+                x=5.0 * scale,
+                y=(net_y - (frames / 2 - i) * per_frame) * scale,
+                interpolated=False,
+            )
+            for i in range(frames)
+        ]
+        return find_flight_segments(positions)
+
+    def _speeds(self, segments, scale=20.0, **kwargs):
+        calibrations = {i: self._calibration(scale) for i in range(0, 200)}
+        return estimate_flight_net_speeds(segments, self.FPS, calibrations, **kwargs)
+
+    def test_measures_a_known_ground_speed(self):
+        segments = self._straight_flight(metres_per_second=30.0)
+        shots = self._speeds(segments)
+
+        self.assertEqual(len(shots), 1)
+        self.assertAlmostEqual(shots[0].peak_speed, 30.0 * 3.6, delta=1.0)
+        self.assertEqual(shots[0].unit, "km/h")
+
+    def test_reports_the_crossing_frame(self):
+        segments = self._straight_flight(metres_per_second=30.0, frames=40, start_frame=10)
+        shots = self._speeds(segments)
+
+        # the fixture is built to cross the net at its midpoint
+        self.assertAlmostEqual(shots[0].peak_frame, 30, delta=2)
+
+    def test_ignores_a_flight_that_never_reaches_the_net(self):
+        court_length = max(y for _, y in FULL_COURT_REFERENCE_POINTS.values())
+        scale = 20.0
+        positions = [
+            TrackedPosition(
+                frame_idx=10 + i,
+                x=5.0 * scale,
+                y=(court_length * 0.9 - i * 0.1) * scale,
+                interpolated=False,
+            )
+            for i in range(40)
+        ]
+
+        self.assertEqual(self._speeds(find_flight_segments(positions)), [])
+
+    def test_ignores_a_flight_too_short_to_measure(self):
+        segments = self._straight_flight(metres_per_second=30.0, frames=40)
+        self.assertTrue(self._speeds(segments))
+
+        self.assertEqual(self._speeds(segments, min_flight_frames=100), [])
+
+    def test_rejects_an_impossible_speed(self):
+        segments = self._straight_flight(metres_per_second=30.0)
+
+        self.assertEqual(self._speeds(segments, max_speed_kmh=10.0), [])
+
+    def test_needs_no_detection_at_the_crossing_itself(self):
+        # the whole point of measuring off the fitted flight: the ball is
+        # small, fast and often occluded exactly at the net, and the curve
+        # is defined there whether or not the detector saw it
+        court_length = max(y for _, y in FULL_COURT_REFERENCE_POINTS.values())
+        scale, per_frame = 20.0, 30.0 / self.FPS
+        positions = [
+            TrackedPosition(
+                frame_idx=10 + i,
+                x=5.0 * scale,
+                y=(court_length / 2 - (20 - i) * per_frame) * scale,
+                interpolated=False,
+            )
+            for i in range(40)
+            if not 17 <= i <= 23  # nothing detected across the crossing
+        ]
+        segments = find_flight_segments(positions)
+        self.assertTrue(segments, "a dropout should not break the flight")
+        shots = self._speeds(segments)
+
+        self.assertEqual(len(shots), 1)
+        self.assertAlmostEqual(shots[0].peak_speed, 108.0, delta=2.0)
+
+    def test_returns_nothing_without_a_calibration(self):
+        segments = self._straight_flight(metres_per_second=30.0)
+
+        self.assertEqual(estimate_flight_net_speeds(segments, self.FPS, {}), [])
+
+
+class NetPixelLineTest(unittest.TestCase):
+    def test_the_net_line_separates_the_two_halves(self):
+        from src.analysis.court_calibration import FULL_COURT_REFERENCE_POINTS
+
+        scale = 20.0
+        names = [
+            "baseline_far_left",
+            "baseline_far_right",
+            "baseline_near_left",
+            "baseline_near_right",
+        ]
+        calibration = CourtCalibration.from_keypoints(
+            {
+                name: (wx * scale, wy * scale)
+                for name, (wx, wy) in FULL_COURT_REFERENCE_POINTS.items()
+                if name in names
+            }
+        )
+        a, b, c = net_pixel_line(calibration)
+        court_length = max(y for _, y in FULL_COURT_REFERENCE_POINTS.values())
+
+        far = a * (5 * scale) + b * (1.0 * scale) + c
+        near = a * (5 * scale) + b * ((court_length - 1.0) * scale) + c
+
+        self.assertLess(far * near, 0.0, "the halves must land on opposite sides")
 
 
 if __name__ == "__main__":
