@@ -113,39 +113,45 @@ levers, cheapest first:
 All of this is opt-in - omit these flags and `main.py` behaves exactly as
 before (ball tracking only).
 
-**Bounce detection** needs nothing extra on its own - it's post-processing
-on the already-tracked trajectory (a local maximum in screen-y):
+**Bounce detection** is post-processing on the already-tracked trajectory,
+and it works best with the court:
 
 ```
-python main.py --input match.mp4 --output outputs/tracked.mp4 --bounce
+python main.py --input match.mp4 --output outputs/tracked.mp4 \
+    --bounce --contacts --show-court --minimap
 ```
 
-A local max in y is necessary but not sufficient: for a broadcast camera
-looking down the court from behind a baseline, the ball's height off the
-ground and its depth (near/far court position) are both encoded in the same
-2D y-pixel, so a racket **contact** that redirects the ball back across the
-court reverses y almost the same way a real **bounce** does - they can look
-identical in trajectory alone. Two filters help distinguish them:
-horizontal direction (`--bounce-min-x-reversal`) is a weak signal for this
-camera angle specifically, since lateral motion isn't where the primary
-court-crossing action is. **Add `--pose` alongside `--bounce`** for the
-strong signal instead: it cross-references each candidate against the
-nearest player's ankle height that frame (a standing player's feet are at
-court level), and rejects anything more than `--bounce-max-height` (default
-160px) above it as too high to be a real landing - almost certainly a
-contact. That threshold is deliberately generous: telling a low bounce from
-a contact from pixels alone is inherently approximate (monocular depth
-ambiguity, not a bug to fully solve here), and a stricter threshold in
-testing rejected every candidate in some clips outright. Without `--pose`,
-bounce detection still runs, but only has the weaker trajectory-only
-signals to go on.
+The hard part is not finding where the ball was struck - it is saying WHAT
+struck it. For a camera looking down the court, the ball's height off the
+ground and its depth down the court are both encoded in the same y-pixel,
+so a racket **contact** that sends the ball back reverses y almost exactly
+as a **bounce** does. Every method that judges a single frame's shape
+confuses the two, which is what the earlier ones here did.
 
-`--bounce-min-prominence` (default 15px) is sensitive to camera framing -
-how many pixels the ball's y-position needs to swing to count as a real
-bounce depends on how zoomed in/far the broadcast camera is. If you're
-seeing zero bounces on a clip, try lowering it; if you're seeing bounces
-that are obviously just noise, raise it. There's no single default that
-fits every camera angle.
+The default (`--bounce-method parabolic`) instead fits a whole free-flight
+arc either side of each candidate and keeps only transitions a court
+surface could physically have produced - see
+`src/analysis/parabolic_bounce_detector.py`. Fitting arcs rather than
+reading one frame is what separates a real bounce from both detector noise
+and a racket contact.
+
+`--show-court` then upgrades the verdict from "something hit the ball" to
+"the court hit the ball", by measuring the ball's PROJECTED court position
+rather than its screen position: the homography maps the ground plane, so
+it is exact for a ball on the court and wrong for one above it, and that
+error is itself the height signal (`src/analysis/touchdown_detector.py`).
+`--minimap` additionally collects player boxes, which are used in one
+direction only - to withhold the "contact" verdict from an impact nobody
+could have reached.
+
+Verdicts are three-valued. "Bounce" and "contact" are positive claims
+backed by a measurement; an impact that can be found but not attributed is
+reported as neither and draws no marker, because a marker is a claim.
+`--contacts` prints every impact with the reason behind its verdict, which
+is the quickest way to see where a run is failing: a rally alternates
+bounce and contact, so a contact with no bounce before the next one is
+either a volley or a bounce that was missed.
+
 
 **Pose + stroke skeleton overlay** uses YOLOv8-pose (`yolov8n-pose.pt`,
 auto-downloaded by `ultralytics` on first use - unlike `weights/ball_detector.pt`
@@ -225,13 +231,23 @@ a bug. Readings above 300 km/h (faster than any tennis shot ever recorded)
 are excluded from peak-speed selection outright - almost always a single
 noisy pixel jump, not a real shot.
 
-`--speed-window` (default 1, i.e. raw frame-to-frame displacement) trades
-responsiveness for robustness to detector jitter: a coarser/more zoomed-out
-camera calibration maps the same few pixels of jitter to more real-world
-meters, which can otherwise swing the reported speed by 100+ km/h frame to
-frame. If a clip's speed readings look noisy, raise this - there's no
-single value that's right for every camera's zoom level, same as
-`--bounce-min-prominence`.
+With `--show-court`, the headline reading for a shot is taken where its
+fitted flight crosses the NET (`estimate_flight_net_speeds`). That is the
+best moment available in a monocular view: the calibration is a
+ground-plane homography, so its error grows with the ball's height, and a
+rally ball is lowest there between the two strikes. Solving the crossing on
+the fitted curve rather than looking for detections near the net means it
+does not matter whether the ball was actually seen at that instant - it
+usually is not, since the ball is small, fast and often occluded exactly
+there.
+
+A flight that never crosses the net - bounce to racket, about half of
+them - still gets the coarser whole-flight reading, so every shot has a
+number. `--speed-window` (default 1, i.e. raw frame-to-frame displacement)
+controls that fallback, and trades responsiveness for robustness to
+detector jitter: a more zoomed-out calibration maps the same few pixels of
+jitter to more real-world metres, which can otherwise swing the reading by
+100+ km/h frame to frame. If a clip's speeds look noisy, raise it.
 
 `--speed` prints each shot's peak speed to the console once processing
 finishes. `--sidebar` shows a **stable per-shot** speed reading (not a raw

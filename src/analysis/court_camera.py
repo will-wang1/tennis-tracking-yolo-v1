@@ -56,6 +56,26 @@ roughly a fifth of frames have no ball detection at all, which breaks the
 long stretches further. Run against the real clip, only 2 of 17 flight
 segments produced physical heights.
 
+RETESTED on better footage, since the diagnosis above says the fix is a
+higher detection rate rather than better code, and the zverev clip has one:
+93.7% of frames detected against video_input2's 83%, and 13 of its 33
+flights clear the 0.75s bar rather than 6 of 24. Ten of those thirteen
+return heights inside a physical range, with least-squares residuals of
+0.001 to 0.006 - and they are still wrong. The check that shows it is to
+ask the height at an instant where it is already known: a flight that ends
+in a detected bounce must reach the ground there. It does not. Measured at
+eight such bounces on the zverev clip the reconstruction puts the ball
+between 0.2m and 3.8m up at the moment it lands, mean error 2.2m; on the US
+Open clip, four bounces, mean error 2.9m, one of them 2.1m BELOW the court.
+
+That is the predicted failure rather than a new one - the fit slides the
+ball along the camera ray and reports an excellent residual for a wrong
+answer - but it is worth recording how convincing the wrong answer looks.
+Neither a plausible height range nor a tiny residual is evidence of
+anything here; only agreement with a height known independently is, and
+the bounce is where such a height is free. Any future attempt should be
+scored that way from the start.
+
 Measurement precision is close to sufficient, which is worth recording
 because it is the intuitive suspect and it is not the culprit. Measured on
 this footage: the ball's frame-to-frame jitter is under a pixel per axis,
