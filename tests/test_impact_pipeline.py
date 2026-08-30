@@ -76,9 +76,26 @@ class MergeImpactsTest(unittest.TestCase):
 
         self.assertEqual(merged[0].rmse, 1.0)
 
-    def test_prefers_the_better_fit_whichever_search_found_it(self):
+    def test_the_segment_intersection_wins_a_collision(self):
+        # it is computed from two whole flights, the scan candidate from two
+        # short windows around a guessed frame - so RMSE, measured over
+        # different window lengths, cannot arbitrate between them
         merged = merge_impacts(
             [_candidate(10.0, rmse=1.0)], [_candidate(12.0, rmse=4.0)], min_frame_gap=5
+        )
+
+        self.assertEqual(merged[0].t, 12.0)
+
+    def test_the_segment_intersection_wins_even_when_it_fits_worse(self):
+        merged = merge_impacts(
+            [_candidate(10.0, rmse=0.1)], [_candidate(12.0, rmse=9.0)], min_frame_gap=5
+        )
+
+        self.assertEqual(merged[0].t, 12.0)
+
+    def test_rmse_still_decides_between_two_of_the_same_kind(self):
+        merged = merge_impacts(
+            [_candidate(10.0, rmse=4.0), _candidate(12.0, rmse=1.0)], [], min_frame_gap=5
         )
 
         self.assertEqual(merged[0].rmse, 1.0)

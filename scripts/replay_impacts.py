@@ -64,7 +64,9 @@ def build_cache(args) -> dict:
     if not frames:
         raise SystemExit(f"No frames read from {args.input}")
 
-    ball_detector = WASBBallDetector(args.wasb_weights, device=args.device)
+    ball_detector = WASBBallDetector(
+        args.wasb_weights, device=args.device, score_threshold=args.ball_score_threshold
+    )
     court_detector = TennisCourtNetDetector(args.court_weights, device=args.device)
 
     candidates_by_frame = []
@@ -254,6 +256,14 @@ def main() -> None:
     parser.add_argument("--wasb-weights", default=str(REPO_ROOT / "weights" / "wasb_tennis_pretrained.pth.tar"))
     parser.add_argument("--court-weights", default=str(REPO_ROOT / "weights" / "court_net_pretrained.pt"))
     parser.add_argument("--device", default=None, help="'cpu' to keep off the GPU")
+    parser.add_argument(
+        "--ball-score-threshold",
+        type=float,
+        default=None,
+        help="Override the ball detector's heatmap threshold when building a cache. Lower finds "
+        "the ball in more frames but grows each blob, which drags its intensity-weighted centroid "
+        "off the ball - see WASBBallDetector. Only used with --build.",
+    )
     parser.add_argument("--max-jump", type=float, default=150.0)
     parser.add_argument("--interp-gap", type=int, default=8)
     parser.add_argument("--lockon-frames", type=int, default=10)

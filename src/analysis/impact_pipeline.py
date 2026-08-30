@@ -39,21 +39,43 @@ def merge_impacts(
     from_segments: list[BounceCandidate],
     min_frame_gap: int,
 ) -> list[BounceCandidate]:
-    """One impact list from the two searches, keeping the better-fitting of
-    any pair that describe the same event.
+    """One impact list from the two searches, deduplicated by proximity.
 
     The frame-by-frame scan is precise when it has data either side of the
     impact; the segment intersection still finds the impact when it doesn't.
     They agree on most events, so the union is deduplicated by proximity.
+
+    Where they describe the same event but disagree about WHEN, the segment
+    intersection wins. It is computed from two complete fitted flights -
+    thirty-odd samples each - while a scan candidate comes from two eight
+    frame windows either side of a guessed frame, so the intersection rests
+    on far more data. RMSE cannot arbitrate between them, because each is
+    measured over its own window length and the two are not comparable;
+    using it to choose was comparing two different quantities.
+
+    Measured on video_input2, where the ball lands deep in the far court at
+    7.14s: the segmenter puts the impact there, 3.4m inside the baseline,
+    while the scan reports two events either side of it, at 6.95s and
+    7.28s, both of which a human confirmed were nothing at all. All three
+    fall inside one merge window, and preferring the lower RMSE kept the
+    7.28s one - a marker on a non-event, and a real bounce missed. Taking
+    the segment estimate instead fixes both, and changes nothing on the US
+    Open clip.
     """
-    merged: list[BounceCandidate] = []
-    for impact in sorted(list(scanned) + list(from_segments), key=lambda c: c.t):
-        if merged and impact.t - merged[-1].t <= min_frame_gap:
-            if impact.rmse < merged[-1].rmse:
-                merged[-1] = impact
+    tagged = [(impact, False) for impact in scanned]
+    tagged += [(impact, True) for impact in from_segments]
+
+    merged: list[tuple[BounceCandidate, bool]] = []
+    for impact, from_segment in sorted(tagged, key=lambda pair: pair[0].t):
+        if merged and impact.t - merged[-1][0].t <= min_frame_gap:
+            previous, previous_from_segment = merged[-1]
+            if from_segment and not previous_from_segment:
+                merged[-1] = (impact, True)
+            elif from_segment == previous_from_segment and impact.rmse < previous.rmse:
+                merged[-1] = (impact, from_segment)
         else:
-            merged.append(impact)
-    return merged
+            merged.append((impact, from_segment))
+    return [impact for impact, _ in merged]
 
 
 @dataclass(frozen=True)
