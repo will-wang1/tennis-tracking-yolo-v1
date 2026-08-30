@@ -3,7 +3,13 @@ import unittest
 from pathlib import Path
 
 from src.analysis.parabolic_bounce_detector import BounceCandidate
-from src.evaluation.impact_labels import Label, match_labels, read_labels, score_impacts
+from src.evaluation.impact_labels import (
+    Label,
+    match_labels,
+    rally_flaws,
+    read_labels,
+    score_impacts,
+)
 
 FPS = 100.0  # one frame per centisecond, so seconds read straight off `t`
 
@@ -173,6 +179,61 @@ class CheckedInLabelFilesTest(unittest.TestCase):
             with self.subTest(path.name):
                 times = [label.seconds for label in read_labels(path)]
                 self.assertEqual(len(times), len(set(times)))
+
+
+class RallyFlawsTest(unittest.TestCase):
+    """A rally alternates strike, landing, strike. Where the verdicts do not,
+    one of them is wrong - see rally_flaws."""
+
+    def test_a_normal_exchange_is_not_flagged(self):
+        impacts = [_marker(1.0, "contact"), _marker(1.6, "bounce"), _marker(2.2, "contact")]
+
+        self.assertEqual(rally_flaws(impacts, FPS), [])
+
+    def test_two_contacts_too_close_together_are_flagged(self):
+        # the ball cannot cross the court and come back in 0.28s - measured
+        # on video_input2, where one of the pair is a bounce
+        impacts = [_marker(1.96, "contact"), _marker(2.24, "contact")]
+        flaws = rally_flaws(impacts, FPS)
+
+        self.assertEqual(len(flaws), 1)
+        self.assertIn("too quick", flaws[0].problem)
+
+    def test_two_contacts_with_no_landing_between_are_flagged(self):
+        impacts = [_marker(1.0, "contact"), _marker(2.5, "contact")]
+        flaws = rally_flaws(impacts, FPS)
+
+        self.assertEqual(len(flaws), 1)
+        self.assertEqual(flaws[0].bounces_between, 0)
+        self.assertIn("no bounce", flaws[0].problem)
+
+    def test_unknown_impacts_neither_satisfy_nor_break_the_pattern(self):
+        # an unattributed impact makes no claim, so it cannot stand in for
+        # the landing a rally needs
+        impacts = [_marker(1.0, "contact"), _marker(1.6, "unknown"), _marker(2.5, "contact")]
+        flaws = rally_flaws(impacts, FPS)
+
+        self.assertEqual(len(flaws), 1)
+        self.assertEqual(flaws[0].bounces_between, 0)
+
+    def test_the_exchange_threshold_is_configurable(self):
+        impacts = [_marker(1.0, "contact"), _marker(1.6, "bounce"), _marker(2.2, "contact")]
+
+        self.assertTrue(rally_flaws(impacts, FPS, min_exchange_seconds=2.0))
+
+    def test_reports_both_pairs_a_bad_verdict_sits_in(self):
+        # a misfiled verdict breaks the pattern on each side of it, which is
+        # what makes the offender identifiable by eye
+        impacts = [
+            _marker(1.0, "contact"), _marker(1.6, "bounce"),
+            _marker(2.2, "contact"), _marker(3.8, "contact"), _marker(5.4, "contact"),
+        ]
+        flaws = rally_flaws(impacts, FPS)
+
+        self.assertEqual([(f.first, f.second) for f in flaws], [(2.2, 3.8), (3.8, 5.4)])
+
+    def test_nothing_to_report_without_contacts(self):
+        self.assertEqual(rally_flaws([_marker(1.0, "bounce")], FPS), [])
 
 
 if __name__ == "__main__":

@@ -43,7 +43,12 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from src.analysis.court_calibration import CourtCalibration  # noqa: E402
 from src.analysis.impact_pipeline import analyze_impacts  # noqa: E402
-from src.evaluation.impact_labels import Score, read_labels, score_impacts  # noqa: E402
+from src.evaluation.impact_labels import (  # noqa: E402
+    Score,
+    rally_flaws,
+    read_labels,
+    score_impacts,
+)
 from src.tracking.candidate_tracker import track_candidates  # noqa: E402
 
 _MARKER = {"bounce": "BOUNCE ", "contact": "contact", "unknown": "  -    "}
@@ -185,6 +190,12 @@ def print_impacts(analysis, fps: float) -> None:
     for impact in analysis.impacts:
         touchdown = by_frame.get(impact.frame_idx)
         print(f"  {impact.t / fps:6.2f}s  {_MARKER[impact.kind]}  {_measurements(touchdown)}{impact.reason}")
+
+    flaws = rally_flaws(analysis.impacts, fps)
+    if flaws:
+        print("\nthe sequence is not a rally here - one verdict in each pair is wrong:")
+        for flaw in flaws:
+            print(f"  {flaw.first:6.2f}s and {flaw.second:6.2f}s: {flaw.problem}")
 
 
 def _measurements(touchdown) -> str:

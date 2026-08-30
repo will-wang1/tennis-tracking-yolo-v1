@@ -147,3 +147,63 @@ def score_impacts(impacts: Sequence, labels: Sequence[Label], fps: float) -> Sco
         scored=scored,
         unclaimed=[impact for impact in drawn if id(impact) not in claimed],
     )
+
+
+@dataclass(frozen=True)
+class RallyFlaw:
+    """One place where the sequence of verdicts is not a rally.
+
+    A rally alternates: somebody hits the ball, it lands, somebody hits it
+    back. So between two contacts there should be exactly one bounce, and
+    the two contacts should be far enough apart for the ball to have crossed
+    the court and back. Neither says which verdict is wrong, only that one of
+    them is - which is why this reports rather than corrects.
+    """
+
+    first: float  # seconds
+    second: float
+    bounces_between: int
+    problem: str
+
+
+def rally_flaws(impacts, fps: float, min_exchange_seconds: float = 0.6) -> list[RallyFlaw]:
+    """Consecutive contacts that cannot both be right.
+
+    `min_exchange_seconds` is how quickly two players could conceivably hit
+    the ball in turn. Measured over 35 exchanges on this project's three
+    clips the shortest real one is 0.74s, and the two that break the rule
+    sit at 0.19s and 0.28s, so the gap between plausible and impossible is
+    wide and the exact threshold in it does not matter much. It has to be
+    generous anyway: a volley is played from mid-court, which legitimately
+    shortens the exchange.
+
+    A pair with no bounce between them is reported whatever the gap - the
+    ball has to land somewhere between two strikes, so a missing bounce is
+    a missing detection even when the timing is fine. Both checks locate a
+    fault without attributing it: the pair is inconsistent, and which half
+    is wrong needs evidence this cannot supply.
+    """
+    contacts = [impact for impact in impacts if impact.kind == "contact"]
+    flaws = []
+    for first, second in zip(contacts, contacts[1:]):
+        between = sum(
+            1
+            for impact in impacts
+            if first.t < impact.t < second.t and impact.kind == "bounce"
+        )
+        gap = (second.t - first.t) / fps
+        if gap < min_exchange_seconds:
+            problem = f"only {gap:.2f}s apart - too quick for the ball to have crossed and come back"
+        elif between == 0:
+            problem = f"{gap:.2f}s apart with no bounce between them"
+        else:
+            continue
+        flaws.append(
+            RallyFlaw(
+                first=first.t / fps,
+                second=second.t / fps,
+                bounces_between=between,
+                problem=problem,
+            )
+        )
+    return flaws
