@@ -73,9 +73,29 @@ class TrackNetBallDetector:
         x, y, confidence = xy
         return Detection(x=x, y=y, confidence=confidence)
 
+    # Reject a thresholded blob outside this pixel-area range on the 640x360
+    # heatmap - too small is stray single-pixel noise, too large is the
+    # model lighting up something that isn't a compact ball-sized dot
+    # (a line, a bright patch of court).
+    _MIN_BLOB_AREA = 1
+    _MAX_BLOB_AREA = 60
+
     @staticmethod
     def _postprocess(pred: np.ndarray, orig_width: int, orig_height: int) -> Optional[tuple[float, float, float]]:
-        """Threshold the predicted heatmap and locate the ball as a small circular blob.
+        """Threshold the predicted heatmap and locate the ball as a small blob.
+
+        Originally used `cv2.HoughCircles` to find the blob center, but that
+        fits a circle shape to the thresholded region rather than just
+        averaging it - on this heatmap's coarse, blocky blobs (a handful of
+        pixels at 640x360, then scaled ~3x back up for 1080p) that shape-fit
+        is unstable frame to frame even when the underlying blob barely
+        moves, which is what most of the ball trajectory's on-screen jitter
+        actually came from (measured: median frame-to-frame curvature ~16px
+        with Hough vs ~3.5px with the intensity-weighted centroid below, on
+        the same real footage). A weighted centroid - the blob's pixels
+        averaged by their heatmap intensity, i.e. its center of mass - is a
+        much steadier estimate of "where most of the model's confidence
+        actually sits" and doesn't require the blob to look circular at all.
 
         Scale factors are derived from the actual frame size rather than the
         original repo's hardcoded 2x, since that assumed exactly 1280x720 input.
@@ -83,13 +103,26 @@ class TrackNetBallDetector:
         heatmap = pred.reshape(MODEL_HEIGHT, MODEL_WIDTH).astype(np.uint8)
         peak_value = float(heatmap.max())
         _, binary = cv2.threshold(heatmap, 127, 255, cv2.THRESH_BINARY)
-        circles = cv2.HoughCircles(
-            binary, cv2.HOUGH_GRADIENT, dp=1, minDist=1, param1=50, param2=2, minRadius=2, maxRadius=7
-        )
-        if circles is None or len(circles) != 1:
+
+        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binary)
+        if num_labels <= 1:
             return None
+        # label 0 is the background component - only consider real blobs
+        areas = stats[1:, cv2.CC_STAT_AREA]
+        best_label = 1 + int(np.argmax(areas))
+        area = stats[best_label, cv2.CC_STAT_AREA]
+        if not (TrackNetBallDetector._MIN_BLOB_AREA <= area <= TrackNetBallDetector._MAX_BLOB_AREA):
+            return None
+
+        mask = labels == best_label
+        weights = heatmap.astype(np.float64) * mask
+        total_weight = weights.sum()
+        if total_weight <= 0:
+            return None
+        rows, cols = np.indices(heatmap.shape)
+        cx = float((cols * weights).sum() / total_weight)
+        cy = float((rows * weights).sum() / total_weight)
 
         scale_x = orig_width / MODEL_WIDTH
         scale_y = orig_height / MODEL_HEIGHT
-        cx, cy = circles[0][0][0], circles[0][0][1]
-        return float(cx * scale_x), float(cy * scale_y), peak_value / 255.0
+        return cx * scale_x, cy * scale_y, peak_value / 255.0

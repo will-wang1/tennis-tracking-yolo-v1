@@ -13,6 +13,9 @@ data/*.cache
 weights/*.pt
 weights/*.onnx
 weights/*.cbm
+weights/*.pth.tar
+weights/*.tflite
+weights/*.h5
 runs/
 *.pt
 .pytest_cache/
@@ -21,9 +24,13 @@ runs/
 outputs/
 *.mp4
 *.avi
+*.webm
 !tests/fixtures/**
 
 # one-off data transfer staging (dataset/weights copied in manually, not project source)
 tennis_tracking_transfer/
 
 .DS_Store
+
+# graphify knowledge-graph build output (regenerate with /graphify)
+graphify-out/

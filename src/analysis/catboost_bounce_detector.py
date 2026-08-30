@@ -120,6 +120,36 @@ class CatBoostBounceDetector:
         return filtered
 
 
+def filter_bounces_near_players(
+    bounces: list[BounceEvent],
+    player_boxes_by_frame: dict[int, list[tuple[float, float, float, float]]],
+    reach_margin: float = 50.0,
+) -> list[BounceEvent]:
+    """Drop a candidate that lands inside (or within `reach_margin` px of) a
+    detected player's box that frame.
+
+    The CatBoost model was trained on trajectory shape alone (see this
+    module's docstring), so it has no way to distinguish a real court
+    bounce from a racket CONTACT - both produce the same kind of sharp
+    trajectory reversal. A contact happens AT the player, not out on open
+    court, so proximity to a player's detected box is a cheap signal the
+    model itself never sees. Only affects frames where player boxes were
+    actually computed (i.e. `--minimap`) - a frame with no box entry passes
+    every candidate through untouched.
+    """
+    filtered = []
+    for bounce in bounces:
+        boxes = player_boxes_by_frame.get(bounce.frame_idx)
+        near_player = boxes is not None and any(
+            (x1 - reach_margin) <= bounce.x <= (x2 + reach_margin)
+            and (y1 - reach_margin) <= bounce.y <= (y2 + reach_margin)
+            for x1, y1, x2, y2 in boxes
+        )
+        if not near_player:
+            filtered.append(bounce)
+    return filtered
+
+
 def detect_bounces_catboost(
     positions: list[TrackedPosition],
     model: CatBoostBounceDetector,

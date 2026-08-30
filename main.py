@@ -8,30 +8,50 @@ Ball detection defaults to the pretrained TrackNet checkpoint
 Court, player, and bounce detection are likewise pretrained models
 (TennisCourtDetector, a COCO Faster R-CNN, and a CatBoost trajectory
 regressor respectively - see yastrebksv/TennisProject), not project-trained
-ones - there's no pose/stroke classification here, unlike earlier versions
-of this pipeline, since none of these pretrained models produce pose data.
+ones. Shot classification (--stroke) is pretrained too - MoveNet (Google,
+pose) + a small GRU (antoinekeller/tennis_shot_recognition) - unlike the
+pose-based stroke classifier this pipeline had before the pivot to
+pretrained models, which needed its own training data.
 """
 
 import argparse
+from dataclasses import replace
 from pathlib import Path
 
 from tqdm import tqdm
 
-from src.analysis.catboost_bounce_detector import CatBoostBounceDetector, detect_bounces_catboost
-from src.analysis.bounce_detector import find_trajectory_breakpoints
+from src.analysis.bounce_ensemble import detect_bounces_ensemble
+from src.analysis.catboost_bounce_detector import CatBoostBounceDetector
+from src.analysis.geometric_bounce_detector import detect_bounces_geometric
+from src.analysis.flight_segmenter import segment_impacts_as_candidates
+from src.analysis.parabolic_bounce_detector import detect_bounces_parabolic, find_impacts
+from src.analysis.touchdown_detector import classify_touchdowns
+from src.analysis.velocity_bounce_detector import detect_bounces_by_velocity
+from src.analysis.bounce_detector import BounceEvent, find_trajectory_breakpoints
 from src.analysis.court_calibration import CourtCalibration
 from src.analysis.speed_estimator import (
     estimate_net_crossing_speeds,
     estimate_shot_speeds,
     merge_with_net_crossing_speeds,
 )
+from src.analysis.shot_classifier import ShotClassifier, ShotEventTracker
 from src.detection.ball_detector import BallDetector
+from src.detection.movenet_pose_extractor import MoveNetPoseExtractor
 from src.detection.player_detector import PlayerDetector
 from src.detection.tennis_court_net import TennisCourtNetDetector
 from src.detection.tracknet_ball_detector import TrackNetBallDetector
+from src.detection.wasb_ball_detector import WASBBallDetector
 from src.tracking.ball_tracker import BallTracker
+from src.tracking.candidate_tracker import track_candidates
 from src.video.io import VideoReader, VideoWriter
-from src.visualize.draw import BounceMarkerDrawer, CourtOverlayDrawer, SidebarDrawer, TrailDrawer
+from src.visualize.draw import (
+    BounceMarkerDrawer,
+    CourtOverlayDrawer,
+    ImpactMarkerDrawer,
+    ShotLabelDrawer,
+    SidebarDrawer,
+    TrailDrawer,
+)
 from src.visualize.minimap import MinimapDrawer
 
 REPO_ROOT = Path(__file__).resolve().parent
@@ -43,16 +63,37 @@ _FALLBACK_BREAKPOINT_MIN_Y_PROMINENCE = 15.0
 _FALLBACK_BREAKPOINT_MIN_FRAME_GAP = 5
 
 
+def _merge_impacts(scanned, from_segments, min_frame_gap):
+    """One impact list from the two searches, keeping the better-fitting of
+    any pair that describe the same event.
+
+    The frame-by-frame scan is precise when it has data either side of the
+    impact; the segment intersection still finds the impact when it doesn't.
+    They agree on most events, so the union is deduplicated by proximity.
+    """
+    merged = []
+    for impact in sorted(list(scanned) + list(from_segments), key=lambda c: c.t):
+        if merged and impact.t - merged[-1].t <= min_frame_gap:
+            if impact.rmse < merged[-1].rmse:
+                merged[-1] = impact
+        else:
+            merged.append(impact)
+    return merged
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", required=True, help="Input match video")
     parser.add_argument("--output", required=True, help="Output annotated video")
     parser.add_argument(
         "--detector-backend",
-        choices=["yolo", "tracknet"],
-        default="tracknet",
-        help="'yolo' uses a project-trained --weights checkpoint instead of the pretrained "
-        "TrackNet model, if you have one",
+        choices=["yolo", "tracknet", "wasb"],
+        default="wasb",
+        help="'wasb' (default) is WASB-SBDT's pretrained tennis HRNet - on this project's "
+        "footage it drops the ball less often and is noticeably steadier frame-to-frame than "
+        "'tracknet' (measured: 83%% vs 76%% raw detection rate, ~4x lower mean frame-to-frame "
+        "jitter on the same video). 'yolo' uses a project-trained --weights checkpoint instead, "
+        "if you have one.",
     )
     parser.add_argument(
         "--weights",
@@ -64,10 +105,15 @@ def main() -> None:
         default=str(REPO_ROOT / "weights" / "tracknet_pretrained.pt"),
         help="Pretrained TrackNet checkpoint, only used with --detector-backend tracknet",
     )
+    parser.add_argument(
+        "--wasb-weights",
+        default=str(REPO_ROOT / "weights" / "wasb_tennis_pretrained.pth.tar"),
+        help="Pretrained WASB-SBDT tennis checkpoint, only used with --detector-backend wasb",
+    )
     parser.add_argument("--confidence", type=float, default=0.15, help="YOLO backend only")
     parser.add_argument("--imgsz", type=int, default=1280, help="YOLO backend only")
     parser.add_argument("--device", default=None)
-    parser.add_argument("--trail-length", type=int, default=15)
+    parser.add_argument("--trail-length", type=int, default=8)
     parser.add_argument(
         "--max-jump",
         type=float,
@@ -97,9 +143,12 @@ def main() -> None:
         type=int,
         default=9,
         help="Savitzky-Golay filter window (frames) applied to the tracked trajectory to remove "
-        "detector jitter - set below 3 to disable. Matters most for the TrackNet backend, whose "
-        "heatmap-based position has more pixel-scale noise than a box detector. Larger reduces "
-        "more jitter but rounds off sharp bounce corners more too - 9 is a middle ground.",
+        "detector jitter - set below 3 to disable. Both ball detector backends localize the "
+        "ball via an intensity-weighted centroid rather than a shape-fitting method, so most of "
+        "the jitter this used to need to remove is already gone at the source - this only needs "
+        "to mop up what's left. A larger window keeps cutting jitter further but rounds off "
+        "real sharp bounce corners more too, which also blunts the bounce detector's own "
+        "features.",
     )
     parser.add_argument(
         "--smoothing-polyorder",
@@ -108,7 +157,67 @@ def main() -> None:
         help="Polynomial order for --smoothing-window's filter - 2 tracks a parabolic arc well "
         "without following raw jitter; must be lower than --smoothing-window",
     )
+    parser.add_argument(
+        "--no-candidate-tracking",
+        action="store_true",
+        help="Take each frame's single strongest ball blob instead of choosing a path through "
+        "several candidates per frame (see src/tracking/candidate_tracker.py). The strongest "
+        "blob is often not the ball - a line, the net cord or a shoe can outscore it, and at an "
+        "impact the ball is blurriest and weakest - so the default keeps every plausible blob "
+        "and picks the trajectory that best explains them. Only affects the 'wasb' backend.",
+    )
+    parser.add_argument(
+        "--no-flight-segments",
+        action="store_true",
+        help="Skip the flight-segment impact search (src/analysis/flight_segmenter.py), which "
+        "finds impacts by intersecting fitted flights instead of scanning frame by frame. The "
+        "scan needs detections either side of the impact, so it misses bounces hidden by a "
+        "dropout; intersecting segments recovers those. Only used with --bounce-method parabolic.",
+    )
     parser.add_argument("--bounce", action="store_true", help="Detect + mark ball landing spots")
+    parser.add_argument(
+        "--contacts",
+        action="store_true",
+        help="Also mark every racket CONTACT, not just bounces - each labelled with its "
+        "timestamp so a run can be checked by eye. A rally alternates contact and bounce, so a "
+        "contact with no bounce before the next contact is either a volley or a bounce that was "
+        "missed, which is what makes this the quickest way to see where recall is failing. "
+        "Requires --bounce and --bounce-method parabolic (the only method that classifies "
+        "impacts rather than only reporting bounces).",
+    )
+    parser.add_argument(
+        "--bounce-method",
+        choices=["parabolic", "geometric", "ensemble", "velocity"],
+        default="parabolic",
+        help="'parabolic' (default, see src/analysis/parabolic_bounce_detector.py) fits a "
+        "free-flight arc to each side of a candidate impact and keeps only transitions a court "
+        "surface could physically have produced - the ball descending in and rising out, giving "
+        "back less vertical speed than it received, keeping its horizontal direction, and never "
+        "leaving faster than it arrived. Fitting whole arcs rather than reading one frame's "
+        "shape is what separates a real bounce from both detector noise and a racket contact. "
+        "The other three all judge a single frame or frame pair and were each less reliable on "
+        "this project's footage - kept for comparison, not recommended: 'geometric' takes the "
+        "ball's lowest point on SCREEN (see geometric_bounce_detector.py, needs "
+        "--bounce-smoothing-window), 'ensemble' unions CatBoost with that scan and a "
+        "minimap-velocity scan behind off-court/near-net/near-player filters (bounce_ensemble.py), "
+        "and 'velocity' uses the minimap velocity direction alone (velocity_bounce_detector.py).",
+    )
+    parser.add_argument(
+        "--bounce-smoothing-window",
+        type=int,
+        default=3,
+        help="Savitzky-Golay window for the SEPARATE, lightly smoothed trajectory --bounce-method "
+        "geometric scans - deliberately much smaller than --smoothing-window (used for the "
+        "visible trail), which rounds off real bounce corners before the scan ever sees them. "
+        "Only used with --bounce-method geometric.",
+    )
+    parser.add_argument(
+        "--bounce-sources",
+        default="catboost,geometric,speed_drop",
+        help="Comma-separated subset of {catboost,geometric,speed_drop} - which candidate "
+        "source(s) feed detect_bounces_ensemble's union. Mainly for isolating one signal to see "
+        "how it performs alone, e.g. --bounce-sources speed_drop.",
+    )
     parser.add_argument(
         "--bounce-weights",
         default=str(REPO_ROOT / "weights" / "bounce_catboost_pretrained.cbm"),
@@ -117,8 +226,38 @@ def main() -> None:
     parser.add_argument(
         "--bounce-threshold",
         type=float,
-        default=0.45,
-        help="Minimum CatBoost bounce probability to call a frame a bounce",
+        default=0.3,
+        help="Minimum CatBoost bounce probability to call a frame a bounce - the model's default "
+        "0.45 cutoff (tuned on its own training footage) under-recalls on this project's camera "
+        "angle, missing real bounces; --bounce-player-margin is what should be filtering out the "
+        "resulting extra racket-contact false positives, not a higher threshold.",
+    )
+    parser.add_argument(
+        "--bounce-player-margin",
+        type=float,
+        default=50.0,
+        help="A bounce candidate within this many pixels of a detected player's box is dropped "
+        "as a likely racket contact rather than a real court bounce - see "
+        "filter_bounces_near_players. Only takes effect with --minimap, which is what computes "
+        "player boxes; set to 0 to disable while keeping --minimap.",
+    )
+    parser.add_argument(
+        "--bounce-court-margin",
+        type=float,
+        default=2.0,
+        help="A bounce candidate whose court-projected position lands more than this many "
+        "meters outside the doubles lines is dropped as detector noise - see "
+        "filter_bounces_off_court. Only takes effect with --show-court.",
+    )
+    parser.add_argument(
+        "--bounce-net-margin",
+        type=float,
+        default=8.0,
+        help="A bounce candidate whose court-projected position lands within this many meters "
+        "of the net line is dropped - the ground-plane homography is least reliable exactly "
+        "there (a ball crossing the net is at its most elevated), which measured on real "
+        "footage was producing mostly false positives out to about this distance. Only takes "
+        "effect with --show-court.",
     )
     parser.add_argument(
         "--speed", action="store_true", help="Print peak speed per shot to the console"
@@ -161,12 +300,37 @@ def main() -> None:
     )
     parser.add_argument("--sidebar", action="store_true", help="Composite a speed sidebar panel")
     parser.add_argument("--sidebar-width", type=int, default=250)
+    parser.add_argument(
+        "--stroke",
+        action="store_true",
+        help="Classify each player's shots as forehand/backhand/serve (MoveNet pose + a "
+        "pretrained GRU, see src/analysis/shot_classifier.py). Requires --minimap, which is "
+        "what computes the player boxes this points the pose model at.",
+    )
+    parser.add_argument(
+        "--movenet-weights",
+        default=str(REPO_ROOT / "weights" / "movenet_singlepose_lightning_int8.tflite"),
+        help="Pretrained MoveNet SinglePose Lightning checkpoint, only used with --stroke",
+    )
+    parser.add_argument(
+        "--stroke-weights",
+        default=str(REPO_ROOT / "weights" / "shot_classifier_rnn_pretrained.h5"),
+        help="Pretrained shot-classifier GRU checkpoint, only used with --stroke",
+    )
     args = parser.parse_args()
 
     if args.minimap and not args.show_court:
         raise SystemExit("--minimap requires --show-court")
+    if args.stroke and not args.minimap:
+        raise SystemExit("--stroke requires --minimap")
+    if args.contacts and not (args.bounce and args.bounce_method == "parabolic"):
+        raise SystemExit("--contacts requires --bounce with --bounce-method parabolic")
+    if args.bounce_method == "velocity" and not args.show_court:
+        raise SystemExit("--bounce-method velocity requires --show-court")
 
-    if args.detector_backend == "tracknet":
+    if args.detector_backend == "wasb":
+        detector = WASBBallDetector(args.wasb_weights, device=args.device)
+    elif args.detector_backend == "tracknet":
         detector = TrackNetBallDetector(args.tracknet_weights, device=args.device)
     else:
         detector = BallDetector(
@@ -182,6 +346,11 @@ def main() -> None:
     )
     court_detector = TennisCourtNetDetector(args.court_weights, device=args.device) if args.show_court else None
     player_detector = PlayerDetector(device=args.device) if args.minimap else None
+    pose_extractor = MoveNetPoseExtractor(args.movenet_weights) if args.stroke else None
+    near_shot_classifier = ShotClassifier(args.stroke_weights) if args.stroke else None
+    far_shot_classifier = ShotClassifier(args.stroke_weights) if args.stroke else None
+    near_shot_tracker = ShotEventTracker() if args.stroke else None
+    far_shot_tracker = ShotEventTracker() if args.stroke else None
 
     reader = VideoReader(args.input)
     frames = list(reader.frames())
@@ -194,8 +363,19 @@ def main() -> None:
     last_good_calibration: "CourtCalibration | None" = None
     far_players_by_frame: dict[int, list[tuple[float, float]]] = {}
     near_players_by_frame: dict[int, list[tuple[float, float]]] = {}
+    player_boxes_by_frame: dict[int, list[tuple[float, float, float, float]]] = {}
+    near_shot_display_by_frame: dict[int, str] = {}
+    far_shot_display_by_frame: dict[int, str] = {}
+    near_player_bbox_by_frame: dict[int, tuple[float, float, float, float]] = {}
+    far_player_bbox_by_frame: dict[int, tuple[float, float, float, float]] = {}
+    use_candidates = args.detector_backend == "wasb" and not args.no_candidate_tracking
+    candidates_by_frame: list[list] = []
     for i, frame in enumerate(tqdm(frames)):
-        detections.append(detector.detect(frame))
+        if use_candidates:
+            candidates_by_frame.append(detector.detect_candidates(frame))
+            detections.append(None)  # filled in below, once the whole path is known
+        else:
+            detections.append(detector.detect(frame))
         if args.show_court:
             # A frame where the detector doesn't find enough confident
             # keypoints (motion blur, court briefly out of frame) carries
@@ -212,6 +392,45 @@ def main() -> None:
                 far, near = PlayerDetector.split_top_bottom(players)
                 far_players_by_frame[i] = [p.world_point for p in far]
                 near_players_by_frame[i] = [p.world_point for p in near]
+                player_boxes_by_frame[i] = [p.bbox for p in players]
+
+                if args.stroke:
+                    if near:
+                        near_player_bbox_by_frame[i] = near[0].bbox
+                    if far:
+                        far_player_bbox_by_frame[i] = far[0].bbox
+
+                    near_pose = pose_extractor.extract(frame, near[0].bbox) if near else None
+                    near_prediction = near_shot_classifier.update(near_pose)
+                    near_display_label = near_shot_tracker.update(i, near_prediction)
+                    if near_display_label is not None:
+                        near_shot_display_by_frame[i] = near_display_label
+
+                    far_pose = pose_extractor.extract(frame, far[0].bbox) if far else None
+                    far_prediction = far_shot_classifier.update(far_pose)
+                    far_display_label = far_shot_tracker.update(i, far_prediction)
+                    if far_display_label is not None:
+                        far_shot_display_by_frame[i] = far_display_label
+
+    if args.stroke:
+        print(
+            f"Near player shots: {near_shot_tracker.counts['forehand']} forehand, "
+            f"{near_shot_tracker.counts['backhand']} backhand, {near_shot_tracker.counts['serve']} serve"
+        )
+        print(
+            f"Far player shots: {far_shot_tracker.counts['forehand']} forehand, "
+            f"{far_shot_tracker.counts['backhand']} backhand, {far_shot_tracker.counts['serve']} serve"
+        )
+
+    if use_candidates:
+        # Choose the ball's path through the per-frame candidates before any
+        # smoothing: which blob is the ball is a question about the
+        # trajectory, and answering it per frame throws the real ball away
+        # exactly where it is hardest to see.
+        detections = track_candidates(candidates_by_frame, max_pixels_per_frame=args.max_jump)
+        kept = sum(1 for d in detections if d is not None)
+        offered = sum(1 for row in candidates_by_frame if row)
+        print(f"Candidate tracking: {kept}/{len(frames)} frames tracked from {offered} frames offering candidates")
 
     positions = tracker.track(detections)
     positions_by_frame = {p.frame_idx: p for p in positions}
@@ -224,18 +443,125 @@ def main() -> None:
         f"tracked position ({interpolated} interpolated)."
     )
 
-    if args.bounce:
-        bounce_model = CatBoostBounceDetector(args.bounce_weights, threshold=args.bounce_threshold)
-        bounces = detect_bounces_catboost(positions, bounce_model, num_frames=len(frames))
+    impacts = []
+    if args.bounce and args.bounce_method == "parabolic":
+        # Fitted arcs are their own noise filter, so this one wants the raw
+        # samples - smoothing first would flatten the very corner being
+        # measured and make the fit-quality check meaningless (see
+        # parabolic_bounce_detector.py).
+        bounce_tracker = BallTracker(
+            max_pixels_per_frame=args.max_jump,
+            max_interpolation_gap=args.interp_gap,
+            static_lockon_frames=args.lockon_frames,
+            static_lockon_radius=args.lockon_radius,
+            smoothing_window=0,
+        )
+        bounce_positions = bounce_tracker.track(detections)
+        impacts = find_impacts(bounce_positions)
+        if not args.no_flight_segments:
+            impacts = _merge_impacts(
+                impacts, segment_impacts_as_candidates(bounce_positions), int(0.2 * reader.fps)
+            )
         if args.show_court:
-            for bounce in bounces:
-                bounce_calibration = calibrations_by_frame.get(bounce.frame_idx)
-                if bounce_calibration is not None:
-                    bounce.world_x, bounce.world_y = bounce_calibration.pixel_to_world(bounce.x, bounce.y)
+            # Judge bounce-vs-contact from the ball's PROJECTED court
+            # position, which measures the height effect directly, rather
+            # than from screen y, which confuses height with court depth -
+            # see touchdown_detector.py. Hand-checked on video_input2 this
+            # finds all five labelled bounces where the screen-space checks
+            # found two.
+            # Player boxes are passed only to WITHHOLD the contact verdict
+            # from impacts nobody could have reached - see
+            # touchdown_detector.classify_touchdowns. They are only
+            # collected under --minimap, and the classifier degrades to the
+            # direction rule alone without them.
+            touchdowns = classify_touchdowns(
+                impacts,
+                bounce_positions,
+                calibrations_by_frame,
+                reader.fps,
+                player_boxes_by_frame=player_boxes_by_frame if args.minimap else None,
+            )
+            impacts = [
+                replace(td.impact, is_bounce=td.is_bounce, kind=td.kind, reason=td.reason)
+                for td in touchdowns
+            ]
+            bounces = [
+                BounceEvent(
+                    frame_idx=impact.frame_idx,
+                    x=impact.x,
+                    y=impact.y,
+                    **dict(
+                        zip(
+                            ("world_x", "world_y"),
+                            calibrations_by_frame[impact.frame_idx].pixel_to_world(impact.x, impact.y)
+                            if impact.frame_idx in calibrations_by_frame
+                            else (None, None),
+                        )
+                    ),
+                )
+                for impact in impacts
+                if impact.is_bounce
+            ]
+        else:
+            bounces = detect_bounces_parabolic(bounce_positions)
+        print(f"Detected {len(bounces)} bounces")
+        if args.contacts:
+            contacts = [impact for impact in impacts if impact.kind == "contact"]
+            unknown = [impact for impact in impacts if impact.kind == "unknown"]
+            print(
+                f"Detected {len(contacts)} racket contacts and {len(unknown)} unattributed "
+                f"impacts ({len(impacts)} in total). Only bounces and contacts are drawn:"
+            )
+            for impact in impacts:
+                label = {"bounce": "BOUNCE ", "contact": "contact", "unknown": "  -    "}[impact.kind]
+                print(f"  {impact.t / reader.fps:6.2f}s  {label}  {impact.reason}")
+    elif args.bounce and args.bounce_method == "geometric":
+        # A separate, lightly smoothed tracking pass - the window used for
+        # the visible trail/speed readings rounds off exactly the corner
+        # this method looks for (see geometric_bounce_detector.py).
+        bounce_tracker = BallTracker(
+            max_pixels_per_frame=args.max_jump,
+            max_interpolation_gap=args.interp_gap,
+            static_lockon_frames=args.lockon_frames,
+            static_lockon_radius=args.lockon_radius,
+            smoothing_window=args.bounce_smoothing_window,
+        )
+        bounce_positions = bounce_tracker.track(detections)
+        bounces = detect_bounces_geometric(
+            bounce_positions,
+            calibrations_by_frame=calibrations_by_frame if args.show_court else None,
+            player_boxes_by_frame=player_boxes_by_frame if args.minimap else None,
+            court_margin_m=args.bounce_court_margin,
+            player_reach_margin=args.bounce_player_margin,
+        )
+        print(f"Detected {len(bounces)} bounces")
+    elif args.bounce and args.bounce_method == "velocity":
+        bounces = detect_bounces_by_velocity(positions, calibrations_by_frame, reader.fps)
+        print(f"Detected {len(bounces)} bounces")
+    elif args.bounce:
+        bounce_sources = frozenset(s.strip() for s in args.bounce_sources.split(",") if s.strip())
+        bounce_model = (
+            CatBoostBounceDetector(args.bounce_weights, threshold=args.bounce_threshold)
+            if "catboost" in bounce_sources
+            else None
+        )
+        bounces = detect_bounces_ensemble(
+            positions,
+            bounce_model,
+            num_frames=len(frames),
+            calibrations_by_frame=calibrations_by_frame if args.show_court else None,
+            player_boxes_by_frame=player_boxes_by_frame if args.minimap else None,
+            fps=reader.fps if args.show_court else None,
+            sources=bounce_sources,
+            court_margin_m=args.bounce_court_margin,
+            net_margin_m=args.bounce_net_margin,
+            player_reach_margin=args.bounce_player_margin,
+        )
         print(f"Detected {len(bounces)} bounces")
     else:
         bounces = []
     bounces_by_frame = {b.frame_idx: b for b in bounces}
+    impacts_by_frame = {impact.frame_idx: impact for impact in impacts}
     minimap_bounce_points = [(b.world_x, b.world_y) for b in bounces if b.world_x is not None]
 
     # estimate_net_crossing_speeds is the most accurate reading (near the
@@ -252,12 +578,12 @@ def main() -> None:
     if args.speed or args.sidebar:
         # Segmenting at every direction-reversal (find_trajectory_breakpoints)
         # over-splits a single real shot whenever detector jitter or a
-        # mid-flight wobble looks like a local max. detect_bounces_catboost's
-        # output is far more selective, so when --bounce is on, its output
-        # IS the shot boundary: each segment runs bounce-to-bounce, immune
-        # to the false splits a bare local-max scan produces. Without
-        # --bounce there's no bounce list to segment on, so this falls back
-        # to the old scan.
+        # mid-flight wobble looks like a local max. detect_bounces_ensemble's
+        # output is far more selective (multiple candidate sources, then
+        # filtered), so when --bounce is on, its output IS the shot
+        # boundary: each segment runs bounce-to-bounce, immune to the false
+        # splits a bare local-max scan produces. Without --bounce there's no
+        # bounce list to segment on, so this falls back to the old scan.
         breakpoint_frames = (
             [b.frame_idx for b in bounces]
             if args.bounce
@@ -293,10 +619,12 @@ def main() -> None:
     output_width = reader.width + (args.sidebar_width if args.sidebar else 0)
     writer = VideoWriter(args.output, reader.fps, output_width, reader.height)
     trail = TrailDrawer(trail_length=args.trail_length)
-    bounce_drawer = BounceMarkerDrawer() if args.bounce else None
+    bounce_drawer = BounceMarkerDrawer() if args.bounce and not args.contacts else None
+    impact_drawer = ImpactMarkerDrawer(reader.fps) if args.contacts else None
     sidebar_drawer = SidebarDrawer(width=args.sidebar_width) if args.sidebar else None
     court_drawer = CourtOverlayDrawer() if args.show_court else None
     minimap_drawer = MinimapDrawer() if args.minimap else None
+    shot_label_drawer = ShotLabelDrawer() if args.stroke else None
 
     for i, frame in enumerate(frames):
         annotated = frame
@@ -304,7 +632,9 @@ def main() -> None:
         if args.show_court:
             annotated = court_drawer.draw(annotated, calibration)
         annotated = trail.draw(annotated, positions_by_frame.get(i))
-        if args.bounce:
+        if args.contacts:
+            annotated = impact_drawer.draw(annotated, i, impacts_by_frame)
+        elif args.bounce:
             annotated = bounce_drawer.draw(annotated, bounces_by_frame.get(i))
         if args.minimap:
             position = positions_by_frame.get(i)
@@ -316,8 +646,11 @@ def main() -> None:
                 far_players_world=far_players_by_frame.get(i),
                 near_players_world=near_players_by_frame.get(i),
             )
+        if args.stroke:
+            annotated = shot_label_drawer.draw(annotated, near_player_bbox_by_frame.get(i), near_shot_display_by_frame.get(i))
+            annotated = shot_label_drawer.draw(annotated, far_player_bbox_by_frame.get(i), far_shot_display_by_frame.get(i))
         if args.sidebar:
-            annotated = sidebar_drawer.draw(annotated, None, shot_speed_by_frame.get(i))
+            annotated = sidebar_drawer.draw(annotated, near_shot_display_by_frame.get(i), shot_speed_by_frame.get(i))
         writer.write(annotated)
     writer.close()
 

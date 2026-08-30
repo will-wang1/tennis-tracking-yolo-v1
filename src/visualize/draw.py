@@ -31,6 +31,8 @@ POSE_SKELETON_EDGES = [
 ]
 
 BOUNCE_MARKER_COLOR = (255, 0, 255)  # magenta
+SHOT_LABEL_COLOR = (128, 255, 255)  # pale yellow
+CONTACT_MARKER_COLOR = (0, 165, 255)  # orange, clearly not the bounce magenta
 
 SIDEBAR_BACKGROUND = (30, 30, 30)
 SIDEBAR_TEXT_COLOR = (255, 255, 255)
@@ -123,6 +125,88 @@ class BounceMarkerDrawer:
         return frame
 
 
+class ImpactMarkerDrawer:
+    """Marks every impact the ball takes, bounces and racket contacts alike,
+    so a run can be checked by eye rather than taken on trust.
+
+    The two are drawn differently on purpose. A bounce is a magenta cross
+    that STAYS for the rest of the video, building up the landing map. A
+    contact is a transient orange circle, shown only for `hold_frames`
+    around the moment it happens - there are many more of them, and leaving
+    them all on screen would bury the landing map they are meant to give
+    context to. Both carry their timestamp, so what's on screen can be
+    matched against the impact list the run prints.
+
+    Impacts of kind "unknown" are drawn as NEITHER. They are real kinks in
+    the trajectory that the classifier could not attribute, and marking them
+    as contacts by default put an orange circle on the server's ball toss
+    and on a stray blob over the net. A marker is a claim; no evidence, no
+    marker.
+    """
+
+    def __init__(self, fps: float, hold_frames: int = 30):
+        self.fps = fps
+        self.hold_frames = hold_frames
+        self.bounces: list[tuple[float, float, float]] = []  # x, y, seconds
+
+    def draw(self, frame, frame_idx: int, impacts_by_frame: dict) -> "np.ndarray":
+        impact = impacts_by_frame.get(frame_idx)
+        if impact is not None and impact.kind == "bounce":
+            self.bounces.append((impact.x, impact.y, impact.t / self.fps))
+
+        for x, y, seconds in self.bounces:
+            cv2.drawMarker(
+                frame, (int(x), int(y)), BOUNCE_MARKER_COLOR, cv2.MARKER_TILTED_CROSS, 16, 2
+            )
+            cv2.putText(
+                frame, f"BOUNCE {seconds:.2f}s", (int(x) + 12, int(y) - 8),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, BOUNCE_MARKER_COLOR, 1,
+            )
+
+        # Contacts are looked up by scanning the recent window rather than
+        # kept in a list, so seeking or re-running a frame can't double-count.
+        for offset in range(self.hold_frames):
+            recent = impacts_by_frame.get(frame_idx - offset)
+            if recent is None or recent.kind != "contact":
+                continue
+            x, y = int(recent.x), int(recent.y)
+            cv2.circle(frame, (x, y), 14, CONTACT_MARKER_COLOR, 2)
+            cv2.putText(
+                frame, f"CONTACT {recent.t / self.fps:.2f}s", (x + 16, y + 5),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, CONTACT_MARKER_COLOR, 1,
+            )
+        return frame
+
+
+class ShotLabelDrawer:
+    """Draws a player's current shot label (from
+    `src.analysis.shot_classifier.ShotEventTracker`, already windowed to
+    stay visible a beat after the frame it was actually detected on)
+    directly above their detection box - a sidebar reading is easy to miss
+    while watching the rally itself, this puts it right where the eye
+    already is."""
+
+    def draw(
+        self,
+        frame: np.ndarray,
+        bbox: Optional[tuple[float, float, float, float]],
+        label: Optional[str],
+    ) -> np.ndarray:
+        if bbox is None or label is None:
+            return frame
+        x1, y1, _, _ = bbox
+        cv2.putText(
+            frame,
+            label.upper(),
+            (int(x1), max(0, int(y1) - 12)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.8,
+            SHOT_LABEL_COLOR,
+            2,
+        )
+        return frame
+
+
 class CourtOverlayDrawer:
     """Court-line wireframe + corner markers, reprojected fresh from
     whichever `CourtCalibration` is passed to `draw()` each call - a panning/
@@ -165,16 +249,20 @@ class SidebarDrawer:
     def draw(
         self,
         frame: np.ndarray,
-        stroke: Optional[StrokePrediction],
+        stroke_label: Optional[str],
         speed: Optional[tuple[float, str]],
     ) -> np.ndarray:
         """`speed` is (value, unit) - e.g. (42.3, "km/h") - the current
         LIVE instantaneous ball speed this frame, not a shot summary, so it
-        updates continuously rather than only within bounce-segmented shots."""
+        updates continuously rather than only within bounce-segmented shots.
+        `stroke_label` is the display label from a
+        `src.analysis.shot_classifier.ShotEventTracker` (already windowed
+        to stay visible a beat after the frame it was actually detected
+        on), or None."""
         height = frame.shape[0]
         sidebar = np.full((height, self.width, 3), SIDEBAR_BACKGROUND, dtype=np.uint8)
 
-        lines = ["Stroke:", stroke.label.upper() if stroke else "-", "", "Speed:"]
+        lines = ["Stroke:", stroke_label.upper() if stroke_label else "-", "", "Speed:"]
         if speed is not None:
             value, unit = speed
             lines.append(f"{value:.0f} {unit}")

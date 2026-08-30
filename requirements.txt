@@ -11,3 +11,5 @@ torchvision>=0.20.0
 catboost>=1.2.0
 scipy>=1.13.0
 sympy>=1.13.0
+tensorflow>=2.15.0
+h5py>=3.10.0
