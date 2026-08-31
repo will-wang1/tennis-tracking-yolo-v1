@@ -467,23 +467,30 @@ def main() -> None:
         )
         impacts = analysis.impacts
         if args.show_court:
-            bounces = [
-                BounceEvent(
-                    frame_idx=impact.frame_idx,
-                    x=impact.x,
-                    y=impact.y,
-                    **dict(
-                        zip(
-                            ("world_x", "world_y"),
-                            calibrations_by_frame[impact.frame_idx].pixel_to_world(impact.x, impact.y)
-                            if impact.frame_idx in calibrations_by_frame
-                            else (None, None),
-                        )
-                    ),
+            # The bounce's world position is reprojected from the MAIN
+            # (smoothed) trajectory's position at that frame - the same
+            # position the minimap's live ball dot and the on-screen trail
+            # are drawn from - rather than from the impact's own unsmoothed
+            # x/y. The two can disagree right at a bounce: smoothing rounds
+            # off exactly the sharp corner the impact detector needs raw
+            # (see BallTracker/parabolic_bounce_detector), so the unsmoothed
+            # position the detector measured is not always where the ball
+            # is shown to be on screen at that instant. Using the displayed
+            # position instead means the landing mark always sits on top of
+            # the visible ball, at the cost of a little precision in
+            # exchange for a picture that agrees with itself. Classification
+            # (is_bounce, kind, timing) is untouched - only where the result
+            # is DRAWN changes.
+            def _bounce_event(impact):
+                shown = positions_by_frame.get(impact.frame_idx)
+                x, y = (shown.x, shown.y) if shown is not None else (impact.x, impact.y)
+                calibration = calibrations_by_frame.get(impact.frame_idx)
+                world_x, world_y = calibration.pixel_to_world(x, y) if calibration else (None, None)
+                return BounceEvent(
+                    frame_idx=impact.frame_idx, x=x, y=y, world_x=world_x, world_y=world_y
                 )
-                for impact in impacts
-                if impact.is_bounce
-            ]
+
+            bounces = [_bounce_event(impact) for impact in impacts if impact.is_bounce]
         else:
             bounces = detect_bounces_parabolic(analysis.positions)
         print(f"Detected {len(bounces)} bounces")
