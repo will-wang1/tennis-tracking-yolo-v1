@@ -341,14 +341,31 @@ def merge_with_net_crossing_speeds(
     Each fallback shot's own (start_frame, end_frame) window is always kept
     - a net_shot's window is only the narrow crossing pair, not the whole
     shot - only peak_speed/peak_frame/unit are swapped in from whichever
-    overlapping net_shot has the highest peak_speed.
+    matching net_shot has the highest peak_speed.
+
+    A net_shot belongs to a fallback shot when its PEAK_FRAME - the actual
+    net-crossing instant, the one moment the reading is really about - falls
+    inside that shot's window, using the same half-open convention
+    `segment_shots` defines shots with (`start_frame < frame <= end_frame`).
+    An earlier version compared the two WINDOWS for any overlap instead, and
+    that double-counted: `estimate_flight_net_speeds` fits its window on the
+    unsmoothed trajectory, whose flight boundaries land a frame or so from
+    the confirmed bounce `segment_shots` cuts shots at, so a net_shot's own
+    span routinely reaches a frame or two past a shot boundary. Measured on
+    the zverev clip, four of sixteen shots ended up sharing another shot's
+    exact peak_frame and peak_speed this way - the displayed speed did not
+    change between two consecutive shots because the second had silently
+    been overwritten with the first's reading, not because nothing new was
+    measured. A single instant can only truly belong to one shot, so testing
+    containment of that instant rather than overlap of two intervals cannot
+    make the same mistake.
     """
     merged = []
     for shot in fallback_shots:
         overlapping = [
             net_shot
             for net_shot in net_shots
-            if net_shot.start_frame <= shot.end_frame and net_shot.end_frame >= shot.start_frame
+            if shot.start_frame < net_shot.peak_frame <= shot.end_frame
         ]
         if overlapping:
             best = max(overlapping, key=lambda s: s.peak_speed)

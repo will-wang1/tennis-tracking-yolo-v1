@@ -353,6 +353,44 @@ class SpeedEstimatorTest(unittest.TestCase):
 
         self.assertEqual(merged, fallback)
 
+    def test_merge_does_not_duplicate_a_reading_across_a_shot_boundary(self):
+        # a net_shot's own WINDOW can straddle a shot boundary even when its
+        # peak_frame - the actual crossing instant - sits cleanly inside one
+        # shot: estimate_flight_net_speeds fits on the unsmoothed trajectory,
+        # whose flight endpoints land a frame or so from the bounce
+        # segment_shots cuts shots at. Measured on the zverev clip this
+        # windows a net_shot into TWO adjacent shots and overwrites the
+        # second with the first's exact reading - the displayed speed
+        # appeared not to update between two consecutive shots because it
+        # had silently been copied, not because nothing new was measured.
+        fallback = [
+            ShotSpeed(start_frame=0, end_frame=20, peak_frame=10, peak_speed=80.0, unit="km/h"),
+            ShotSpeed(start_frame=20, end_frame=40, peak_frame=30, peak_speed=90.0, unit="km/h"),
+        ]
+        # this net_shot's window (17-22) crosses the boundary at 20, but its
+        # peak_frame (18) belongs to the FIRST shot only
+        net = [ShotSpeed(start_frame=17, end_frame=22, peak_frame=18, peak_speed=150.0, unit="km/h")]
+
+        merged = merge_with_net_crossing_speeds(fallback, net)
+
+        self.assertEqual(merged[0].peak_speed, 150.0)  # upgraded, correctly
+        self.assertEqual(merged[1].peak_speed, 90.0)  # untouched - not this shot's reading
+
+    def test_merge_uses_the_shots_half_open_boundary_convention(self):
+        # matches segment_shots: start_frame < frame <= end_frame, so a
+        # crossing exactly AT a boundary belongs to the shot ending there,
+        # not the one beginning there
+        fallback = [
+            ShotSpeed(start_frame=0, end_frame=20, peak_frame=10, peak_speed=80.0, unit="km/h"),
+            ShotSpeed(start_frame=20, end_frame=40, peak_frame=30, peak_speed=90.0, unit="km/h"),
+        ]
+        net = [ShotSpeed(start_frame=20, end_frame=20, peak_frame=20, peak_speed=150.0, unit="km/h")]
+
+        merged = merge_with_net_crossing_speeds(fallback, net)
+
+        self.assertEqual(merged[0].peak_speed, 150.0)
+        self.assertEqual(merged[1].peak_speed, 90.0)
+
     def test_merge_gives_every_fallback_shot_a_reading(self):
         # the core guarantee this function exists for: every fallback shot
         # survives the merge (nothing dropped), regardless of net coverage
