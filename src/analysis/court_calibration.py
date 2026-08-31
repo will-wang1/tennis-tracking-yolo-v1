@@ -89,6 +89,27 @@ class CourtCalibration:
         wx, wy = mapped[0, 0]
         return float(wx), float(wy)
 
+    def world_to_pixel(self, world_x: float, world_y: float) -> tuple[float, float]:
+        """The inverse of `pixel_to_world`: where a fixed COURT position
+        reprojects to on screen this frame.
+
+        This is what keeps something drawn at a court-relative position
+        visually locked to the court as a panning/zooming broadcast camera
+        moves - the homography changes frame to frame, so the reprojection
+        has to be recomputed fresh each call, the same as
+        `CourtOverlayDrawer` already does for the court lines themselves.
+        Anything meant to represent a fixed spot on the court (a bounce
+        mark, say) needs this rather than a pixel position captured once
+        and held fixed on screen, which drifts away from the court lines
+        the moment the camera moves - measured on the zverev clip, a fixed
+        court point reprojects up to 94px away from where it started over
+        the clip's 744 frames.
+        """
+        point = np.array([[[world_x, world_y]]], dtype=np.float64)
+        mapped = cv2.perspectiveTransform(point, np.linalg.inv(self.homography))
+        x, y = mapped[0, 0]
+        return float(x), float(y)
+
     def pixel_distance_to_meters(self, x1: float, y1: float, x2: float, y2: float) -> float:
         """Distance in meters between two pixel points, both mapped through
         the homography first - not a uniform px-per-meter scalar, since

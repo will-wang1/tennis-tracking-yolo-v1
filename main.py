@@ -655,9 +655,9 @@ def main() -> None:
         else:
             annotated = trail.draw(annotated, positions_by_frame.get(i))
         if args.contacts:
-            annotated = impact_drawer.draw(annotated, i, impacts_by_frame)
+            annotated = impact_drawer.draw(annotated, i, impacts_by_frame, calibration)
         elif args.bounce:
-            annotated = bounce_drawer.draw(annotated, bounces_by_frame.get(i))
+            annotated = bounce_drawer.draw(annotated, bounces_by_frame.get(i), calibration)
         if args.minimap:
             position = positions_by_frame.get(i)
             ball_world = calibration.pixel_to_world(position.x, position.y) if position and calibration else None

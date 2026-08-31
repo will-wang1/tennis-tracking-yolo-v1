@@ -276,18 +276,35 @@ class PoseDrawer:
 
 class BounceMarkerDrawer:
     """Every bounce detected so far stays drawn for the rest of the video -
-    a persistent landing map, not a transient flash."""
+    a persistent landing map, not a transient flash.
+
+    A bounce is a fixed spot on the COURT, so each marker is reprojected
+    fresh from its `world_x`/`world_y` through the CURRENT frame's
+    `calibration` - not drawn at the pixel position it happened to occupy
+    the moment it was detected. A panning/zooming broadcast camera changes
+    the pixel<->world mapping frame to frame (see `CourtOverlayDrawer`,
+    which reprojects the court lines the same way), and a marker held fixed
+    in screen space drifts away from those lines as the camera moves -
+    measured on the zverev clip, up to 94px over 744 frames for a single
+    fixed court point. Falls back to the stored pixel position when no
+    world coordinate or no current calibration is available.
+    """
 
     def __init__(self):
         self.markers: list[BounceEvent] = []
 
-    def draw(self, frame: np.ndarray, bounce: Optional[BounceEvent]) -> np.ndarray:
+    def draw(
+        self, frame: np.ndarray, bounce: Optional[BounceEvent], calibration: Optional[CourtCalibration] = None
+    ) -> np.ndarray:
         if bounce is not None:
             self.markers.append(bounce)
 
         for marker in self.markers:
-            x, y = int(marker.x), int(marker.y)
-            cv2.drawMarker(frame, (x, y), BOUNCE_MARKER_COLOR, cv2.MARKER_TILTED_CROSS, 16, 2)
+            if calibration is not None and marker.world_x is not None:
+                x, y = calibration.world_to_pixel(marker.world_x, marker.world_y)
+            else:
+                x, y = marker.x, marker.y
+            cv2.drawMarker(frame, (int(x), int(y)), BOUNCE_MARKER_COLOR, cv2.MARKER_TILTED_CROSS, 16, 2)
 
         return frame
 
@@ -309,19 +326,43 @@ class ImpactMarkerDrawer:
     as contacts by default put an orange circle on the server's ball toss
     and on a stray blob over the net. A marker is a claim; no evidence, no
     marker.
+
+    A bounce marks a fixed spot on the COURT and stays on screen for the
+    rest of the video, so it is reprojected fresh from its world position
+    through each frame's own `calibration` rather than held at a fixed
+    pixel - the same reasoning as `BounceMarkerDrawer`, which see. A
+    contact needs none of this: it is only ever drawn within `hold_frames`
+    of its own moment, looked up fresh from `impacts_by_frame` each time,
+    so it is never on screen long enough for camera drift to matter.
     """
 
     def __init__(self, fps: float, hold_frames: int = 30):
         self.fps = fps
         self.hold_frames = hold_frames
-        self.bounces: list[tuple[float, float, float]] = []  # x, y, seconds
+        # world_x, world_y (None if no calibration was available at the
+        # impact's own frame), x, y (pixel fallback), seconds
+        self.bounces: list[tuple[Optional[float], Optional[float], float, float, float]] = []
 
-    def draw(self, frame, frame_idx: int, impacts_by_frame: dict) -> "np.ndarray":
+    def draw(
+        self,
+        frame,
+        frame_idx: int,
+        impacts_by_frame: dict,
+        calibration: Optional[CourtCalibration] = None,
+    ) -> "np.ndarray":
         impact = impacts_by_frame.get(frame_idx)
         if impact is not None and impact.kind == "bounce":
-            self.bounces.append((impact.x, impact.y, impact.t / self.fps))
+            # `calibration` here is this call's, i.e. frame_idx's - the
+            # impact's own frame, since this branch only runs the one time
+            # frame_idx == impact.frame_idx
+            world_x, world_y = (
+                calibration.pixel_to_world(impact.x, impact.y) if calibration is not None else (None, None)
+            )
+            self.bounces.append((world_x, world_y, impact.x, impact.y, impact.t / self.fps))
 
-        for x, y, seconds in self.bounces:
+        for world_x, world_y, x, y, seconds in self.bounces:
+            if calibration is not None and world_x is not None:
+                x, y = calibration.world_to_pixel(world_x, world_y)
             cv2.drawMarker(
                 frame, (int(x), int(y)), BOUNCE_MARKER_COLOR, cv2.MARKER_TILTED_CROSS, 16, 2
             )
@@ -386,12 +427,10 @@ class CourtOverlayDrawer:
         if calibration is None:
             return frame
 
-        inverse_homography = np.linalg.inv(calibration.homography)
-        points_px: dict[str, tuple[float, float]] = {}
-        for name, (world_x, world_y) in FULL_COURT_REFERENCE_POINTS.items():
-            point = np.array([[[world_x, world_y]]], dtype=np.float64)
-            px, py = cv2.perspectiveTransform(point, inverse_homography)[0, 0]
-            points_px[name] = (float(px), float(py))
+        points_px: dict[str, tuple[float, float]] = {
+            name: calibration.world_to_pixel(world_x, world_y)
+            for name, (world_x, world_y) in FULL_COURT_REFERENCE_POINTS.items()
+        }
 
         for a, b in COURT_LINE_EDGES:
             xa, ya = points_px[a]

@@ -2,11 +2,18 @@ import unittest
 
 import numpy as np
 
+from src.analysis.bounce_detector import BounceEvent
 from src.analysis.court_calibration import FULL_COURT_REFERENCE_POINTS, CourtCalibration
 from src.analysis.flight_segmenter import find_flight_segments
 from src.analysis.parabolic_bounce_detector import BounceCandidate
 from src.tracking.ball_tracker import TrackedPosition
-from src.visualize.draw import ARC_COLOR, CourtOverlayDrawer, ShotArcDrawer
+from src.visualize.draw import (
+    ARC_COLOR,
+    BounceMarkerDrawer,
+    CourtOverlayDrawer,
+    ImpactMarkerDrawer,
+    ShotArcDrawer,
+)
 
 
 def scaled_calibration(scale):
@@ -306,6 +313,130 @@ class ShotArcGroupingTest(unittest.TestCase):
         x, y = self.second[0].position(60)
 
         self.assertTrue(frame[int(round(y)), int(round(x))].any())
+
+
+class WorldToPixelTest(unittest.TestCase):
+    def test_round_trips_with_pixel_to_world(self):
+        calibration = scaled_calibration(scale=37.0)
+
+        world = calibration.pixel_to_world(120.0, 340.0)
+        pixel = calibration.world_to_pixel(*world)
+
+        self.assertAlmostEqual(pixel[0], 120.0, places=4)
+        self.assertAlmostEqual(pixel[1], 340.0, places=4)
+
+    def test_a_fixed_court_point_reprojects_differently_under_a_different_calibration(self):
+        # this is the whole mechanism a panning/zooming camera relies on -
+        # the same court point must NOT reproject to the same pixel once
+        # the calibration (camera pose) has changed
+        narrow = scaled_calibration(scale=1.0)
+        wide = scaled_calibration(scale=2.0)
+
+        self.assertNotEqual(narrow.world_to_pixel(5.0, 10.0), wide.world_to_pixel(5.0, 10.0))
+
+
+class BounceMarkerDrawerTest(unittest.TestCase):
+    """A bounce is a fixed spot on the COURT, so its marker must track the
+    court as the camera pans/zooms, not stay fixed on screen."""
+
+    def setUp(self):
+        self.narrow = scaled_calibration(scale=1.0)
+        self.wide = scaled_calibration(scale=2.0)
+        self.bounce = BounceEvent(frame_idx=10, x=999.0, y=999.0, world_x=5.0, world_y=10.0)
+        self.drawer = BounceMarkerDrawer()
+
+    def test_draws_at_the_reprojected_world_position_not_the_stored_pixel(self):
+        frame = _blank(1200, 1200)
+        self.drawer.draw(frame, self.bounce, self.narrow)
+        x, y = self.narrow.world_to_pixel(5.0, 10.0)
+
+        self.assertTrue(frame[int(y), int(x)].any())
+        # the marker's own stored (x, y) = (999, 999) - the pixel field it
+        # was captured at, not where a court-relative marker belongs
+        self.assertFalse(frame[989:1010, 989:1010].any())
+
+    def test_the_marker_moves_when_the_calibration_changes(self):
+        # this is the fix itself: the same marker, redrawn under a different
+        # calibration, must land somewhere else - never at a fixed pixel
+        narrow_frame, wide_frame = _blank(600, 1200), _blank(600, 1200)
+        self.drawer.draw(narrow_frame, self.bounce, self.narrow)
+        second = BounceMarkerDrawer()
+        second.draw(wide_frame, self.bounce, self.wide)
+
+        self.assertFalse(np.array_equal(narrow_frame, wide_frame))
+
+    def test_the_marker_persists_and_still_tracks_on_later_calls(self):
+        frame = _blank(600, 1200)
+        self.drawer.draw(frame, self.bounce, self.narrow)
+        later = _blank(600, 1200)
+        self.drawer.draw(later, None, self.wide)  # no new bounce this frame
+        x, y = self.wide.world_to_pixel(5.0, 10.0)
+
+        self.assertTrue(later[int(y), int(x)].any())
+
+    def test_falls_back_to_the_stored_pixel_without_a_calibration(self):
+        frame = _blank(1200, 1200)
+        self.drawer.draw(frame, self.bounce, None)
+
+        self.assertTrue(frame[999, 999].any())
+
+    def test_falls_back_to_the_stored_pixel_when_the_bounce_has_no_world_position(self):
+        undated = BounceEvent(frame_idx=10, x=999.0, y=999.0, world_x=None, world_y=None)
+        frame = _blank(1200, 1200)
+        BounceMarkerDrawer().draw(frame, undated, self.narrow)
+
+        self.assertTrue(frame[999, 999].any())
+
+
+class ImpactMarkerDrawerBounceTrackingTest(unittest.TestCase):
+    """Same fix, same reasoning, applied to the --contacts path: a bounce
+    marker here must also track the court rather than stay fixed on screen.
+    Contacts need none of this - see the drawer's own docstring - so they
+    are not covered here."""
+
+    def _bounce(self, frame_idx=10, x=999.0, y=999.0, kind="bounce"):
+        return BounceCandidate(
+            frame_idx=frame_idx, t=float(frame_idx), x=x, y=y,
+            restitution=0.5, horizontal_ratio=0.8, speed_ratio=0.7, rmse=1.0,
+            is_bounce=kind == "bounce", kind=kind,
+        )
+
+    def setUp(self):
+        self.narrow = scaled_calibration(scale=1.0)
+        self.wide = scaled_calibration(scale=2.0)
+        self.impact = self._bounce()
+        self.drawer = ImpactMarkerDrawer(fps=30.0)
+
+    def test_computes_world_position_from_the_calibration_at_its_own_frame(self):
+        frame = _blank(600, 1200)
+        # frame_idx 10 == the impact's own frame, so this IS the impact's
+        # own calibration, per ImpactMarkerDrawer's contract
+        self.drawer.draw(frame, 10, {10: self.impact}, self.narrow)
+        world_x, world_y, *_ = self.drawer.bounces[0]
+
+        self.assertEqual((world_x, world_y), self.narrow.pixel_to_world(999.0, 999.0))
+
+    def test_the_marker_tracks_a_later_frames_calibration(self):
+        frame = _blank(2000, 2000)
+        self.drawer.draw(frame, 10, {10: self.impact}, self.narrow)
+        later = _blank(2000, 2000)
+        self.drawer.draw(later, 40, {10: self.impact}, self.wide)
+        world = self.narrow.pixel_to_world(999.0, 999.0)
+        x, y = self.wide.world_to_pixel(*world)
+
+        self.assertTrue(later[int(y), int(x)].any())
+
+    def test_falls_back_to_the_stored_pixel_without_any_calibration(self):
+        frame = _blank(1200, 1200)
+        self.drawer.draw(frame, 10, {10: self.impact}, None)
+
+        self.assertTrue(frame[999, 999].any())
+
+    def test_an_unknown_impact_draws_no_bounce_marker(self):
+        frame = _blank(600, 1200)
+        self.drawer.draw(frame, 10, {10: self._bounce(kind="unknown")}, self.narrow)
+
+        self.assertEqual(self.drawer.bounces, [])
 
 
 if __name__ == "__main__":
