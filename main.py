@@ -98,16 +98,16 @@ def main() -> None:
     parser.add_argument("--device", default=None)
     parser.add_argument(
         "--ball-overlay",
-        choices=["arc", "trail"],
-        default="arc",
-        help="How the ball's path is drawn. 'arc' (default) draws the current shot as the "
-        "single fitted parabola the ball actually flew (see ShotArcDrawer), growing as it "
-        "travels and holding after it lands until the next shot starts. 'trail' draws the old "
-        "row of dots, one per tracked frame - which shows the detector's jitter as well as the "
-        "ball's path, since it joins raw samples rather than a fitted curve.",
+        choices=["trail", "arc"],
+        default="trail",
+        help="How the ball's path is drawn. 'trail' (default) draws a row of dots, one per "
+        "tracked frame. 'arc' draws the current shot as the fitted flights the ball actually "
+        "flew, joined across the bounce into one path (see ShotArcDrawer) - smoother, and "
+        "nothing in it comes from a raw detection, but it shows a model of the path rather "
+        "than the tracked positions themselves.",
     )
     parser.add_argument(
-        "--trail-length", type=int, default=8, help="Dots to keep, for --ball-overlay trail"
+        "--trail-length", type=int, default=8, help="Dots to keep in the trail"
     )
     parser.add_argument(
         "--max-jump",
