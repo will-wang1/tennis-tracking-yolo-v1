@@ -29,7 +29,7 @@ from src.analysis.velocity_bounce_detector import detect_bounces_by_velocity
 from src.analysis.bounce_detector import BounceEvent, find_trajectory_breakpoints
 from src.analysis.court_calibration import CourtCalibration
 from src.analysis.speed_estimator import (
-    estimate_flight_net_speeds,
+    estimate_flight_speeds,
     estimate_net_crossing_speeds,
     estimate_shot_speeds,
     merge_with_net_crossing_speeds,
@@ -289,7 +289,7 @@ def main() -> None:
         help="Minimum consecutive DETECTED frames the ball must stay within the net band "
         "before estimate_net_crossing_speeds reports a reading. Only used when no flight "
         "segmentation is available: with one, the net crossing is solved on the fitted curve "
-        "instead (estimate_flight_net_speeds), which needs no detection at the crossing at all "
+        "instead (estimate_flight_speeds), which needs no detection at the crossing at all "
         "and so does not have a window to size. More frames means more jitter-robust but less "
         "responsive to genuine sub-window acceleration.",
     )
@@ -567,18 +567,16 @@ def main() -> None:
             smoothing_window=0,
         ).track(detections)
     flight_segments = find_flight_segments(flight_positions) if flight_positions else []
+    bounce_frames = [impact.frame_idx for impact in impacts if impact.kind == "bounce"]
 
-    # Speed at the net crossing is the most accurate reading available: the
-    # calibration is a ground-plane homography, so its error grows with the
-    # ball's height, and the crossing is where a rally ball is lowest
-    # between two strikes. estimate_flight_net_speeds solves for that moment
-    # on the FITTED flight, so it needs no detection at the net itself -
-    # unlike estimate_net_crossing_speeds, which needs several consecutive
-    # detected positions inside a pixel band there and so misses shots that
-    # are occluded or blurred at exactly the wrong moment. Neither covers a
-    # flight that never crosses the net (bounce-to-racket, about half of
-    # them), so estimate_shot_speeds still provides the floor and
-    # merge_with_net_crossing_speeds swaps in the sharper number.
+    # estimate_flight_speeds measures each fitted flight at whichever
+    # instant its calibration error is smallest - the net crossing where
+    # one exists, else a bounce at either end of the flight, else its own
+    # midpoint - covering every flight rather than only the ~half that
+    # cross the net. See its docstring for the full reasoning and the
+    # three-tier priority. estimate_shot_speeds still provides the floor
+    # for a flight neither method could measure at all, and
+    # merge_with_net_crossing_speeds swaps in the sharper number by tier.
     shot_speed_by_frame = {}
     if args.speed or args.sidebar:
         # Segmenting at every direction-reversal (find_trajectory_breakpoints)
@@ -608,7 +606,9 @@ def main() -> None:
         )
         if calibrations_by_frame:
             net_shots = (
-                estimate_flight_net_speeds(flight_segments, reader.fps, calibrations_by_frame)
+                estimate_flight_speeds(
+                    flight_segments, reader.fps, calibrations_by_frame, bounce_frames=bounce_frames
+                )
                 if flight_segments
                 else estimate_net_crossing_speeds(
                     positions,
@@ -623,7 +623,10 @@ def main() -> None:
         if args.speed:
             print(f"Peak speed per shot ({len(shots)} shots):")
             for shot in shots:
-                print(f"  frames {shot.start_frame}-{shot.end_frame}: {shot.peak_speed:.0f} {shot.unit}")
+                print(
+                    f"  frames {shot.start_frame}-{shot.end_frame}: "
+                    f"{shot.peak_speed:.0f} {shot.unit}  [{shot.method}]"
+                )
         for shot in shots:
             for frame_idx in range(shot.start_frame, shot.end_frame + 1):
                 shot_speed_by_frame[frame_idx] = (shot.peak_speed, shot.unit)
