@@ -24,6 +24,7 @@ from src.analysis.catboost_bounce_detector import CatBoostBounceDetector
 from src.analysis.geometric_bounce_detector import detect_bounces_geometric
 from src.analysis.flight_segmenter import find_flight_segments
 from src.analysis.impact_pipeline import analyze_impacts
+from src.analysis.match_stats import compute_match_stats
 from src.analysis.parabolic_bounce_detector import detect_bounces_parabolic
 from src.analysis.velocity_bounce_detector import detect_bounces_by_velocity
 from src.analysis.bounce_detector import BounceEvent, find_trajectory_breakpoints
@@ -312,7 +313,18 @@ def main() -> None:
         default=str(REPO_ROOT / "weights" / "shot_classifier_rnn_pretrained.h5"),
         help="Pretrained shot-classifier GRU checkpoint, only used with --stroke",
     )
+    parser.add_argument(
+        "--stats",
+        help="Write a JSON match summary here - rally count/duration, shot and bounce counts "
+        "per rally, peak shot speeds, bounce locations, and (with --stroke) forehand/backhand"
+        "/serve counts. Requires --bounce; nothing here is detected fresh, it only folds "
+        "together what --bounce/--speed/--stroke already computed (see "
+        "src/analysis/match_stats.py). Rally segmentation is a genuinely new inference on top "
+        "of that, though, and an honestly untested one - see that module's docstring.",
+    )
     args = parser.parse_args()
+    if args.stats and not args.bounce:
+        raise SystemExit("--stats needs --bounce")
 
     if args.minimap and not args.show_court:
         raise SystemExit("--minimap requires --show-court")
@@ -578,7 +590,8 @@ def main() -> None:
     # for a flight neither method could measure at all, and
     # merge_with_net_crossing_speeds swaps in the sharper number by tier.
     shot_speed_by_frame = {}
-    if args.speed or args.sidebar:
+    shots: list = []
+    if args.speed or args.sidebar or args.stats:
         # Segmenting at every direction-reversal (find_trajectory_breakpoints)
         # over-splits a single real shot whenever detector jitter or a
         # mid-flight wobble looks like a local max. detect_bounces_ensemble's
@@ -630,6 +643,21 @@ def main() -> None:
         for shot in shots:
             for frame_idx in range(shot.start_frame, shot.end_frame + 1):
                 shot_speed_by_frame[frame_idx] = (shot.peak_speed, shot.unit)
+
+    if args.stats:
+        match_stats = compute_match_stats(
+            impacts,
+            shots,
+            bounces,
+            reader.fps,
+            near_shot_counts=near_shot_tracker.counts if args.stroke else None,
+            far_shot_counts=far_shot_tracker.counts if args.stroke else None,
+        )
+        match_stats.write_json(args.stats)
+        print(
+            f"Wrote {args.stats}: {len(match_stats.rallies)} rally/rallies, "
+            f"{match_stats.total_bounces} bounces, {match_stats.total_contacts} contacts"
+        )
 
     output_width = reader.width + (args.sidebar_width if args.sidebar else 0)
     writer = VideoWriter(args.output, reader.fps, output_width, reader.height)
