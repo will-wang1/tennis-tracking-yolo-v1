@@ -1,7 +1,10 @@
 import unittest
 
+from src.analysis.flight_segmenter import find_flight_segments
 from src.analysis.court_calibration import FULL_COURT_REFERENCE_POINTS, CourtCalibration
 from src.analysis.speed_estimator import (
+    estimate_flight_speeds,
+    net_pixel_line,
     ShotSpeed,
     estimate_net_crossing_speeds,
     estimate_shot_speeds,
@@ -350,6 +353,71 @@ class SpeedEstimatorTest(unittest.TestCase):
 
         self.assertEqual(merged, fallback)
 
+    def test_merge_does_not_duplicate_a_reading_across_a_shot_boundary(self):
+        # a net_shot's own WINDOW can straddle a shot boundary even when its
+        # peak_frame - the actual crossing instant - sits cleanly inside one
+        # shot: estimate_flight_speeds fits on the unsmoothed trajectory,
+        # whose flight endpoints land a frame or so from the bounce
+        # segment_shots cuts shots at. Measured on the zverev clip this
+        # windows a net_shot into TWO adjacent shots and overwrites the
+        # second with the first's exact reading - the displayed speed
+        # appeared not to update between two consecutive shots because it
+        # had silently been copied, not because nothing new was measured.
+        fallback = [
+            ShotSpeed(start_frame=0, end_frame=20, peak_frame=10, peak_speed=80.0, unit="km/h"),
+            ShotSpeed(start_frame=20, end_frame=40, peak_frame=30, peak_speed=90.0, unit="km/h"),
+        ]
+        # this net_shot's window (17-22) crosses the boundary at 20, but its
+        # peak_frame (18) belongs to the FIRST shot only
+        net = [ShotSpeed(start_frame=17, end_frame=22, peak_frame=18, peak_speed=150.0, unit="km/h")]
+
+        merged = merge_with_net_crossing_speeds(fallback, net)
+
+        self.assertEqual(merged[0].peak_speed, 150.0)  # upgraded, correctly
+        self.assertEqual(merged[1].peak_speed, 90.0)  # untouched - not this shot's reading
+
+    def test_merge_uses_the_shots_half_open_boundary_convention(self):
+        # matches segment_shots: start_frame < frame <= end_frame, so a
+        # crossing exactly AT a boundary belongs to the shot ending there,
+        # not the one beginning there
+        fallback = [
+            ShotSpeed(start_frame=0, end_frame=20, peak_frame=10, peak_speed=80.0, unit="km/h"),
+            ShotSpeed(start_frame=20, end_frame=40, peak_frame=30, peak_speed=90.0, unit="km/h"),
+        ]
+        net = [ShotSpeed(start_frame=20, end_frame=20, peak_frame=20, peak_speed=150.0, unit="km/h")]
+
+        merged = merge_with_net_crossing_speeds(fallback, net)
+
+        self.assertEqual(merged[0].peak_speed, 150.0)
+        self.assertEqual(merged[1].peak_speed, 90.0)
+
+    def test_merge_prefers_net_crossing_over_a_same_window_bounce_reading(self):
+        # a shot's window can legitimately hold TWO readings once
+        # estimate_flight_speeds measures bounces too: the incoming flight
+        # (this shot's own landing settling toward its contact) and the
+        # outgoing one (the stroke this shot actually is). Picking by raw
+        # magnitude would sometimes report the WRONG flight's speed as this
+        # shot's - the tier has to decide, not the number, even when the
+        # less-trustworthy reading happens to be the bigger one
+        fallback = [ShotSpeed(start_frame=0, end_frame=20, peak_frame=5, peak_speed=80.0, unit="km/h")]
+        net = [
+            ShotSpeed(start_frame=1, end_frame=2, peak_frame=1, peak_speed=200.0, unit="km/h", method="bounce"),
+            ShotSpeed(start_frame=10, end_frame=11, peak_frame=10, peak_speed=150.0, unit="km/h", method="net_crossing"),
+        ]
+
+        merged = merge_with_net_crossing_speeds(fallback, net)
+
+        self.assertEqual(merged[0].peak_speed, 150.0)
+        self.assertEqual(merged[0].method, "net_crossing")
+
+    def test_merge_propagates_the_winning_readings_method(self):
+        fallback = [ShotSpeed(start_frame=0, end_frame=20, peak_frame=5, peak_speed=80.0, unit="km/h")]
+        net = [ShotSpeed(start_frame=10, end_frame=11, peak_frame=10, peak_speed=150.0, unit="km/h", method="bounce")]
+
+        merged = merge_with_net_crossing_speeds(fallback, net)
+
+        self.assertEqual(merged[0].method, "bounce")
+
     def test_merge_gives_every_fallback_shot_a_reading(self):
         # the core guarantee this function exists for: every fallback shot
         # survives the merge (nothing dropped), regardless of net coverage
@@ -366,6 +434,213 @@ class SpeedEstimatorTest(unittest.TestCase):
         self.assertEqual(merged[1].peak_speed, 140.0)  # overlapped, upgraded
         self.assertEqual(merged[0].peak_speed, 60.0)  # no overlap, kept as-is
         self.assertEqual(merged[2].peak_speed, 90.0)  # no overlap, kept as-is
+
+
+class EstimateFlightSpeedsTest(unittest.TestCase):
+    """Speed read off a fitted flight, at whichever instant its calibration
+    error is smallest: the net crossing, else a bounce at either end, else
+    the flight's own midpoint. See speed_estimator.estimate_flight_speeds."""
+
+    FPS = 30.0
+
+    def _calibration(self, scale=20.0):
+        """Pixels = world metres * scale, so a known world speed produces a
+        known pixel speed and the arithmetic can be checked by hand."""
+        from src.analysis.court_calibration import FULL_COURT_REFERENCE_POINTS
+
+        names = [
+            "baseline_far_left",
+            "baseline_far_right",
+            "baseline_near_left",
+            "baseline_near_right",
+        ]
+        pixel_points = {
+            name: (wx * scale, wy * scale)
+            for name, (wx, wy) in FULL_COURT_REFERENCE_POINTS.items()
+            if name in names
+        }
+        return CourtCalibration.from_keypoints(pixel_points)
+
+    def _straight_flight(self, metres_per_second, scale=20.0, frames=40, start_frame=10):
+        """A ball crossing the net down the middle at a known ground speed."""
+        court_length = max(y for _, y in FULL_COURT_REFERENCE_POINTS.values())
+        net_y = court_length / 2
+        per_frame = metres_per_second / self.FPS
+        positions = [
+            TrackedPosition(
+                frame_idx=start_frame + i,
+                x=5.0 * scale,
+                y=(net_y - (frames / 2 - i) * per_frame) * scale,
+                interpolated=False,
+            )
+            for i in range(frames)
+        ]
+        return find_flight_segments(positions)
+
+    def _speeds(self, segments, scale=20.0, **kwargs):
+        calibrations = {i: self._calibration(scale) for i in range(0, 200)}
+        return estimate_flight_speeds(segments, self.FPS, calibrations, **kwargs)
+
+    def _low_flight(self, metres_per_second, scale=20.0, frames=15, start_frame=10, world_y0=2.0):
+        """A flight that stays well short of the net (11.885m) the whole
+        time - the bounce-recovery half of an exchange, not the stroke that
+        crosses over. `frames` defaults short enough that even a fast
+        low_flight doesn't reach the net line before running out of
+        samples (14 steps * 0.4m/frame at 12m/s = 5.6m, well under it) while
+        still clearing min_flight_frames (12). Straight-line y (no
+        curvature) is still a valid parabola fit (near-zero leading
+        coefficient), so this segments cleanly."""
+        per_frame = metres_per_second / self.FPS
+        positions = [
+            TrackedPosition(
+                frame_idx=start_frame + i,
+                x=5.0 * scale,
+                y=(world_y0 + i * per_frame) * scale,
+                interpolated=False,
+            )
+            for i in range(frames)
+        ]
+        return find_flight_segments(positions)
+
+    def test_measures_a_known_ground_speed(self):
+        segments = self._straight_flight(metres_per_second=30.0)
+        shots = self._speeds(segments)
+
+        self.assertEqual(len(shots), 1)
+        self.assertAlmostEqual(shots[0].peak_speed, 30.0 * 3.6, delta=1.0)
+        self.assertEqual(shots[0].unit, "km/h")
+
+    def test_reports_the_crossing_frame(self):
+        segments = self._straight_flight(metres_per_second=30.0, frames=40, start_frame=10)
+        shots = self._speeds(segments)
+
+        # the fixture is built to cross the net at its midpoint
+        self.assertAlmostEqual(shots[0].peak_frame, 30, delta=2)
+
+    def test_falls_back_to_the_midpoint_when_it_never_reaches_the_net(self):
+        # no net crossing and (with no bounce_frames given) no bounce match
+        # either - the weakest tier still gives a reading rather than none,
+        # because a fitted curve beats raw jittery positions anywhere on it
+        segments = self._low_flight(metres_per_second=10.0)
+        shots = self._speeds(segments)
+
+        self.assertEqual(len(shots), 1)
+        self.assertEqual(shots[0].method, "midpoint")
+
+    def test_a_flight_that_crosses_the_net_still_prefers_that_tier(self):
+        segments = self._straight_flight(metres_per_second=30.0)
+        shots = self._speeds(segments)
+
+        self.assertEqual(shots[0].method, "net_crossing")
+
+    def test_ignores_a_flight_too_short_to_measure(self):
+        segments = self._straight_flight(metres_per_second=30.0, frames=40)
+        self.assertTrue(self._speeds(segments))
+
+        self.assertEqual(self._speeds(segments, min_flight_frames=100), [])
+
+    def test_rejects_an_impossible_speed(self):
+        segments = self._straight_flight(metres_per_second=30.0)
+
+        self.assertEqual(self._speeds(segments, max_speed_kmh=10.0), [])
+
+    def test_needs_no_detection_at_the_crossing_itself(self):
+        # the whole point of measuring off the fitted flight: the ball is
+        # small, fast and often occluded exactly at the net, and the curve
+        # is defined there whether or not the detector saw it
+        court_length = max(y for _, y in FULL_COURT_REFERENCE_POINTS.values())
+        scale, per_frame = 20.0, 30.0 / self.FPS
+        positions = [
+            TrackedPosition(
+                frame_idx=10 + i,
+                x=5.0 * scale,
+                y=(court_length / 2 - (20 - i) * per_frame) * scale,
+                interpolated=False,
+            )
+            for i in range(40)
+            if not 17 <= i <= 23  # nothing detected across the crossing
+        ]
+        segments = find_flight_segments(positions)
+        self.assertTrue(segments, "a dropout should not break the flight")
+        shots = self._speeds(segments)
+
+        self.assertEqual(len(shots), 1)
+        self.assertAlmostEqual(shots[0].peak_speed, 108.0, delta=2.0)
+
+    def test_returns_nothing_without_a_calibration(self):
+        segments = self._straight_flight(metres_per_second=30.0)
+
+        self.assertEqual(estimate_flight_speeds(segments, self.FPS, {}), [])
+
+    def test_measures_at_a_bounce_when_the_flight_does_not_cross_the_net(self):
+        segments = self._low_flight(metres_per_second=12.0)
+        start_frame = segments[0].start_frame
+        shots = self._speeds(segments, bounce_frames=[start_frame])
+
+        self.assertEqual(len(shots), 1)
+        self.assertEqual(shots[0].method, "bounce")
+        self.assertAlmostEqual(shots[0].peak_speed, 12.0 * 3.6, delta=1.5)
+
+    def test_bounce_matching_tolerates_a_few_frames_of_offset(self):
+        # a flight's own start/end rarely lands exactly on the confirmed
+        # impact frame - measured this session at up to 4.5 frames off
+        segments = self._low_flight(metres_per_second=12.0)
+        start_frame = segments[0].start_frame
+
+        self.assertEqual(
+            self._speeds(segments, bounce_frames=[start_frame + 4]).pop().method, "bounce"
+        )
+        self.assertEqual(
+            self._speeds(segments, bounce_frames=[start_frame + 40]).pop().method, "midpoint"
+        )
+
+    def test_a_bounce_at_the_end_measures_the_landing_not_the_departure(self):
+        segments = self._low_flight(metres_per_second=12.0)
+        end_frame = segments[0].end_frame
+        shots = self._speeds(segments, bounce_frames=[end_frame])
+
+        self.assertEqual(shots[0].method, "bounce")
+        self.assertAlmostEqual(shots[0].peak_frame, end_frame, delta=1)
+
+    def test_net_crossing_beats_a_bounce_match_on_the_same_flight(self):
+        # a flight that crosses the net AND happens to end at a bounce - the
+        # already-validated net-crossing tier keeps priority regardless
+        segments = self._straight_flight(metres_per_second=30.0)
+        shots = self._speeds(segments, bounce_frames=[segments[0].end_frame])
+
+        self.assertEqual(shots[0].method, "net_crossing")
+
+    def test_a_flight_too_short_for_any_tier_is_skipped_entirely(self):
+        segments = self._low_flight(metres_per_second=12.0, frames=8)
+
+        self.assertEqual(self._speeds(segments, bounce_frames=[10]), [])
+
+
+class NetPixelLineTest(unittest.TestCase):
+    def test_the_net_line_separates_the_two_halves(self):
+        from src.analysis.court_calibration import FULL_COURT_REFERENCE_POINTS
+
+        scale = 20.0
+        names = [
+            "baseline_far_left",
+            "baseline_far_right",
+            "baseline_near_left",
+            "baseline_near_right",
+        ]
+        calibration = CourtCalibration.from_keypoints(
+            {
+                name: (wx * scale, wy * scale)
+                for name, (wx, wy) in FULL_COURT_REFERENCE_POINTS.items()
+                if name in names
+            }
+        )
+        a, b, c = net_pixel_line(calibration)
+        court_length = max(y for _, y in FULL_COURT_REFERENCE_POINTS.values())
+
+        far = a * (5 * scale) + b * (1.0 * scale) + c
+        near = a * (5 * scale) + b * ((court_length - 1.0) * scale) + c
+
+        self.assertLess(far * near, 0.0, "the halves must land on opposite sides")
 
 
 if __name__ == "__main__":

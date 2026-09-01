@@ -34,7 +34,7 @@ reading and the best available one.
 """
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Sequence
 
 import cv2
 import numpy as np
@@ -61,6 +61,13 @@ class ShotSpeed:
     peak_frame: int
     peak_speed: float
     unit: str  # "km/h" if a calibration was given, else "px/s"
+    # what the reading was measured against, best first - see
+    # estimate_flight_speeds for what each one means and why the order
+    # matters. "fallback" is the whole-flight/whole-window average
+    # (estimate_shot_speeds, estimate_net_crossing_speeds's own un-merged
+    # output) - not wrong, just measured over noisier raw positions instead
+    # of a fitted curve, and not anchored to a moment of known low height.
+    method: str = "fallback"  # "net_crossing" | "bounce" | "midpoint" | "fallback"
 
 
 def net_pixel_y_range(calibration: CourtCalibration) -> tuple[float, float]:
@@ -79,6 +86,221 @@ def net_pixel_y_range(calibration: CourtCalibration) -> tuple[float, float]:
         _, pixel_y = cv2.perspectiveTransform(point, inverse_homography)[0, 0]
         pixel_ys.append(float(pixel_y))
     return min(pixel_ys), max(pixel_ys)
+
+
+def net_pixel_line(calibration: CourtCalibration) -> tuple[float, float, float]:
+    """The net line reprojected into the image, as `(a, b, c)` with
+    `a*x + b*y + c` zero on the line, negative on the far side and positive
+    on the near side.
+
+    A single pixel height cannot describe the net: perspective tilts it
+    across the frame, which is why `net_pixel_y_range` has to return a range.
+    A line handles the tilt exactly and answers the question that matters
+    here - which side of the net is the ball on, right now.
+    """
+    net_world_y = max(y for _, y in FULL_COURT_REFERENCE_POINTS.values()) / 2
+    doubles_width = max(x for x, _ in FULL_COURT_REFERENCE_POINTS.values())
+    inverse_homography = np.linalg.inv(calibration.homography)
+
+    ends = []
+    for world_x in (0.0, doubles_width):
+        point = np.array([[[world_x, net_world_y]]], dtype=np.float64)
+        ends.append(cv2.perspectiveTransform(point, inverse_homography)[0, 0])
+    (x1, y1), (x2, y2) = ends
+    # the image line through both ends, oriented so "down the image" is positive
+    a, b = y1 - y2, x2 - x1
+    c = -(a * x1 + b * y1)
+    if b < 0:
+        a, b, c = -a, -b, -c
+    return float(a), float(b), float(c)
+
+
+def _measure_window(
+    segment,
+    calibration: CourtCalibration,
+    first: float,
+    last: float,
+    fps: float,
+    max_speed_kmh: float,
+) -> Optional[float]:
+    """Speed over [`first`, `last`] on the fitted curve, in km/h, or None if
+    the reading is implausible. `first`/`last` are the caller's - this does
+    no shrinking or centring of its own, since a symmetric "half either
+    side of a centre" window (right for net-crossing and midpoint, where
+    there is real flight data on both sides) is wrong for a bounce, which
+    IS one edge of the segment: there is nothing before it to average over.
+    """
+    start_world = calibration.pixel_to_world(*segment.position(first))
+    end_world = calibration.pixel_to_world(*segment.position(last))
+    metres = float(np.hypot(end_world[0] - start_world[0], end_world[1] - start_world[1]))
+    seconds = (last - first) / fps
+    speed = metres / seconds * 3.6
+    return speed if 0.0 < speed <= max_speed_kmh else None
+
+
+def _measure_centered(segment, calibration, center, fps, half_window_frames, min_half_window_frames, max_speed_kmh):
+    """A window straddling `center` on both sides, shrunk to stay inside
+    the segment. For the net-crossing and midpoint tiers, where `center`
+    sits properly inside the flight with real data either side of it."""
+    half = min(half_window_frames, center - segment.start_frame, segment.end_frame - center)
+    if half < min_half_window_frames:
+        return None
+    return _measure_window(segment, calibration, center - half, center + half, fps, max_speed_kmh)
+
+
+def _measure_from_edge(segment, calibration, at_start, fps, half_window_frames, min_half_window_frames, max_speed_kmh):
+    """A window running INTO the segment from one of its own true edges,
+    for the bounce tier: `at_start=True` measures departure (start_frame
+    forward), `at_start=False` measures arrival (end_frame backward)."""
+    half = min(half_window_frames, segment.end_frame - segment.start_frame)
+    if half < min_half_window_frames:
+        return None
+    if at_start:
+        first, last = segment.start_frame, segment.start_frame + half
+    else:
+        first, last = segment.end_frame - half, segment.end_frame
+    return _measure_window(segment, calibration, first, last, fps, max_speed_kmh)
+
+
+def _net_crossing_time(segment, calibration: CourtCalibration) -> Optional[float]:
+    a, b, c = net_pixel_line(calibration)
+    steps = np.arange(segment.start_frame, segment.end_frame + 0.05, 0.05)
+    sides = [a * segment.position(t)[0] + b * segment.position(t)[1] + c for t in steps]
+    for i in range(len(sides) - 1):
+        if np.sign(sides[i]) != np.sign(sides[i + 1]):
+            return float(steps[i])
+    return None
+
+
+def estimate_flight_speeds(
+    segments: list,
+    fps: float,
+    calibrations_by_frame: dict[int, CourtCalibration],
+    bounce_frames: Sequence[int] = (),
+    half_window_frames: float = 2.0,
+    min_half_window_frames: float = 1.0,
+    min_flight_frames: int = 12,
+    max_speed_kmh: float = MAX_PLAUSIBLE_KMH,
+    bounce_snap_frames: int = 6,
+) -> list[ShotSpeed]:
+    """Ball speed measured off each fitted FLIGHT, at whichever instant on
+    it the calibration's ground-plane error is smallest - not just at the
+    net.
+
+    The calibration is a GROUND-PLANE homography: exact for a ball on the
+    court, increasingly wrong the higher it is (see `court_camera.py`), so
+    the only trustworthy moments to measure at are the ones where the ball
+    is known to be near the ground WITHOUT needing the height reconstruction
+    that module can't deliver on this footage. Three such moments exist, in
+    order of how well-grounded (literally) each one is:
+
+    1. NET CROSSING. Not zero height - the ball still clears the net by
+       some margin - but a fixed, known court line, so the crossing instant
+       is solvable from the curve alone (`_net_crossing_time`) with no
+       height data at all. This is the original, validated method
+       (`estimate_flight_net_speeds`, folded into this tier) and it keeps
+       first priority: changing what already works to something merely
+       theoretically better is not a trade this function makes without
+       evidence.
+
+    2. A BOUNCE at either end of the flight. Every flight is racket-to-
+       -bounce, bounce-to-racket, or racket-to-racket (which crosses the
+       net and is caught by tier 1) - so a flight that does NOT cross the
+       net is, structurally, the bounce-recovery half of an exchange, and
+       one of its own two ends is either the landing it is about to make or
+       the bounce it just came off. That instant has EXACTLY zero height,
+       by definition, not merely small error - the ball is touching the
+       court. This is what "generalizing the net-crossing technique"
+       means: the same short-window, fitted-curve measurement
+       (`_measure_on_curve`), aimed at a different, still-provably-low-
+       height instant, for the roughly half of flights tier 1 cannot reach.
+       `bounce_frames` are the confirmed bounce frame indices from
+       `classify_touchdowns`; a flight's own start/end frame rarely lands
+       exactly on one (the flight segmenter's grown boundary and the
+       impact detector's confirmed frame typically differ by a frame or a
+       few - measured this session at up to 4.5 frames), so `bounce_snap_frames`
+       allows a small tolerance rather than requiring an exact match.
+
+    3. Neither of the above: the flight's own midpoint. No claim of low
+       height here - this tier exists only because a fitted curve is a
+       smoother, jitter-resistant measurement than raw frame-to-frame
+       detector positions regardless of WHERE on the flight it is taken, so
+       it is still a strict improvement over falling all the way back to
+       `estimate_shot_speeds`. It is the weakest tier and is labelled as
+       such (`ShotSpeed.method`) rather than reported the same as the other
+       two.
+
+    A flight shorter than `min_flight_frames` is skipped entirely: no
+    instant on it can be placed confidently, and the narrow measuring
+    window that follows would turn the fit's own noise into a headline
+    number - an 11-frame flight on video_input2 read 287 km/h this way.
+    """
+    shots = []
+    for segment in segments:
+        calibration = calibrations_by_frame.get(int(round(segment.start_frame)))
+        if calibration is None:
+            continue
+        if segment.duration_frames < min_flight_frames:
+            continue
+
+        crossing = _net_crossing_time(segment, calibration)
+        if crossing is not None:
+            speed = _measure_centered(
+                segment, calibration, crossing, fps, half_window_frames, min_half_window_frames, max_speed_kmh
+            )
+            if speed is not None:
+                shots.append(
+                    ShotSpeed(
+                        start_frame=int(segment.start_frame),
+                        end_frame=int(segment.end_frame),
+                        peak_frame=int(round(crossing)),
+                        peak_speed=speed,
+                        unit="km/h",
+                        method="net_crossing",
+                    )
+                )
+                continue
+
+        near_start = any(abs(segment.start_frame - b) <= bounce_snap_frames for b in bounce_frames)
+        near_end = any(abs(segment.end_frame - b) <= bounce_snap_frames for b in bounce_frames)
+        if near_start or near_end:
+            # if somehow both ends are near a bounce (a double bounce with
+            # no contact between - the point already ended), the departure
+            # end is measured; which one makes no real difference since
+            # both sit at true zero height
+            speed = _measure_from_edge(
+                segment, calibration, near_start, fps, half_window_frames, min_half_window_frames, max_speed_kmh
+            )
+            if speed is not None:
+                edge_frame = segment.start_frame if near_start else segment.end_frame
+                shots.append(
+                    ShotSpeed(
+                        start_frame=int(segment.start_frame),
+                        end_frame=int(segment.end_frame),
+                        peak_frame=int(round(edge_frame)),
+                        peak_speed=speed,
+                        unit="km/h",
+                        method="bounce",
+                    )
+                )
+                continue
+
+        midpoint = (segment.start_frame + segment.end_frame) / 2.0
+        speed = _measure_centered(
+            segment, calibration, midpoint, fps, half_window_frames, min_half_window_frames, max_speed_kmh
+        )
+        if speed is not None:
+            shots.append(
+                ShotSpeed(
+                    start_frame=int(segment.start_frame),
+                    end_frame=int(segment.end_frame),
+                    peak_frame=int(round(midpoint)),
+                    peak_speed=speed,
+                    unit="km/h",
+                    method="midpoint",
+                )
+            )
+    return shots
 
 
 def estimate_net_crossing_speeds(
@@ -199,6 +421,11 @@ def estimate_net_crossing_speeds(
     return shots
 
 
+# Lower ranks first when more than one candidate reading falls inside the
+# same shot's window - see merge_with_net_crossing_speeds.
+_METHOD_RANK = {"net_crossing": 0, "bounce": 1, "midpoint": 2, "fallback": 3}
+
+
 def merge_with_net_crossing_speeds(
     fallback_shots: list[ShotSpeed], net_shots: list[ShotSpeed]
 ) -> list[ShotSpeed]:
@@ -215,18 +442,45 @@ def merge_with_net_crossing_speeds(
 
     Each fallback shot's own (start_frame, end_frame) window is always kept
     - a net_shot's window is only the narrow crossing pair, not the whole
-    shot - only peak_speed/peak_frame/unit are swapped in from whichever
-    overlapping net_shot has the highest peak_speed.
+    shot - only peak_speed/peak_frame/unit/method are swapped in.
+
+    A shot's window can now contain TWO candidate readings, not one, since
+    `estimate_flight_speeds` measures a shot's own bounce-recovery flight as
+    well as its net-crossing one: the incoming flight (the previous shot's
+    landing settling toward this shot's own contact) and the outgoing one
+    (the stroke this shot actually is, after that contact). These describe
+    different events, so when both are present the choice is NOT "whichever
+    reads faster" - it is "whichever tier is more trustworthy", per
+    `_METHOD_RANK`, because the outgoing/net-crossing flight is what "this
+    shot's speed" means and is also measured at the more reliable instant.
+    Speed is only the tie-breaker within equally-ranked candidates.
+
+    A net_shot belongs to a fallback shot when its PEAK_FRAME - the actual
+    net-crossing instant, the one moment the reading is really about - falls
+    inside that shot's window, using the same half-open convention
+    `segment_shots` defines shots with (`start_frame < frame <= end_frame`).
+    An earlier version compared the two WINDOWS for any overlap instead, and
+    that double-counted: `estimate_flight_net_speeds` fits its window on the
+    unsmoothed trajectory, whose flight boundaries land a frame or so from
+    the confirmed bounce `segment_shots` cuts shots at, so a net_shot's own
+    span routinely reaches a frame or two past a shot boundary. Measured on
+    the zverev clip, four of sixteen shots ended up sharing another shot's
+    exact peak_frame and peak_speed this way - the displayed speed did not
+    change between two consecutive shots because the second had silently
+    been overwritten with the first's reading, not because nothing new was
+    measured. A single instant can only truly belong to one shot, so testing
+    containment of that instant rather than overlap of two intervals cannot
+    make the same mistake.
     """
     merged = []
     for shot in fallback_shots:
         overlapping = [
             net_shot
             for net_shot in net_shots
-            if net_shot.start_frame <= shot.end_frame and net_shot.end_frame >= shot.start_frame
+            if shot.start_frame < net_shot.peak_frame <= shot.end_frame
         ]
         if overlapping:
-            best = max(overlapping, key=lambda s: s.peak_speed)
+            best = min(overlapping, key=lambda s: (_METHOD_RANK.get(s.method, 99), -s.peak_speed))
             merged.append(
                 ShotSpeed(
                     start_frame=shot.start_frame,
@@ -234,6 +488,7 @@ def merge_with_net_crossing_speeds(
                     peak_frame=best.peak_frame,
                     peak_speed=best.peak_speed,
                     unit=best.unit,
+                    method=best.method,
                 )
             )
         else:
