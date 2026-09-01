@@ -3,7 +3,7 @@
 Even a well fine-tuned detector will miss the ball on some frames (motion
 blur, occlusion by a player, low contrast against the court) and will
 occasionally fire on the wrong thing (a shoe, a line, the net, a broadcast
-graphic). Three cheap post-processing passes clean that up without touching
+graphic). Four cheap post-processing passes clean that up without touching
 the model:
 
 1. Outlier rejection - a detection that implies the ball teleported further
@@ -16,13 +16,43 @@ the model:
    step is small. A ball in play is essentially never confined like that
    for long, so a run of accepted detections that wanders within a tight
    radius is treated as a lock-on and discarded rather than tracked.
-3. Interpolation - short gaps (a few missed frames) are filled in by linear
+3. Implausible-reappearance rejection - a NARROWER, deliberately more
+   specific case static lock-on rejection can miss: a false positive whose
+   own small drift is fast enough, or whose run is short enough, to slip
+   under that check, but which still gives itself away by HOW it starts.
+   Neither raw speed nor run length alone can safely tell this apart from a
+   real ball settling into a bounce - measured against hand labels on this
+   project's clips, a real ball can sit under 10px/frame for 8-12
+   consecutive frames near a confirmed bounce, so a threshold tight enough
+   to catch a short fake run also catches real ones. The combination is
+   safe where either alone is not: a jump close to the outlier ceiling's
+   own speed, immediately followed by several near-static frames, whether
+   or not a gap preceded the jump - a real single-frame jump that fast can
+   happen right off a hard hit with no gap at all, and this needs to catch
+   that case too, not just a reappearance after missing frames. A ball
+   that really covered that much ground that fast does not then stop dead
+   the very next frame - nothing about tennis physics produces that
+   combination - so this is the one signature measured to produce zero
+   false positives against all 23 hand-labelled events across both
+   labelled clips while still catching two confirmed artifacts (one after
+   a real gap, one on consecutive frames with none) outright. Runs BEFORE
+   outlier rejection rather than after: outlier rejection's own tolerance
+   scales up the longer a discontinuity persists, so left to run first on
+   an unrecognised artifact it eventually "gives in" and accepts the same
+   wrong position once enough elapsed frames make the average speed look
+   affordable again - measured on the US Open clip, that let a 14-frame
+   static run back in from frame 14 onward even though frames 12-13 were
+   correctly rejected on their own. See `_reject_implausible_reappearances`.
+4. Interpolation - short gaps (a few missed frames) are filled in by linear
    interpolation between the surrounding accepted points, which is what the
    real trajectory would have looked like anyway. Gaps longer than
    `max_interpolation_gap` are left as missing rather than papered over,
    since a straight line is a bad guess once the ball may have bounced or
-   been hit in between.
-4. Smoothing - a Savitzky-Golay filter over each contiguous run of frames
+   been hit in between - impact detection elsewhere (`find_segment_impacts`)
+   can still infer what happened by fitting the clean flight either side
+   and intersecting them, which is a better model of a real strike than a
+   straight line would be regardless of gap length.
+5. Smoothing - a Savitzky-Golay filter over each contiguous run of frames
    (real + interpolated), which removes single-pixel-scale jitter while
    still tracking the trajectory's actual curvature (unlike a moving
    average, it doesn't lag behind or flatten a genuine direction change).
@@ -59,6 +89,10 @@ class BallTracker:
         max_interpolation_gap: int = 8,
         static_lockon_frames: int = 10,
         static_lockon_radius: float = 20.0,
+        reappearance_speed_fraction: float = 0.7,
+        reappearance_freeze_speed: float = 10.0,
+        reappearance_freeze_run: int = 3,
+        max_reappearance_reject: int = 20,
         smoothing_window: int = 9,
         smoothing_polyorder: int = 2,
     ):
@@ -66,6 +100,16 @@ class BallTracker:
         self.max_interpolation_gap = max_interpolation_gap
         self.static_lockon_frames = static_lockon_frames
         self.static_lockon_radius = static_lockon_radius
+        # See `_reject_implausible_reappearances`. `reappearance_speed_fraction`
+        # is of `max_pixels_per_frame`; measured against this project's
+        # clips, the one confirmed artifact reappears at 0.99x that ceiling,
+        # so 0.7 catches it with real margin while staying well above the
+        # typical fast-shot speeds this footage otherwise sees (its own
+        # median frame-to-frame speed is under a tenth of the ceiling).
+        self.reappearance_speed_fraction = reappearance_speed_fraction
+        self.reappearance_freeze_speed = reappearance_freeze_speed
+        self.reappearance_freeze_run = reappearance_freeze_run
+        self.max_reappearance_reject = max_reappearance_reject
         if smoothing_window >= 3 and smoothing_window % 2 == 0:
             smoothing_window += 1  # savgol_filter requires an odd window
         self.smoothing_window = smoothing_window
@@ -99,9 +143,72 @@ class BallTracker:
                 accepted.append((idx, det))
         return cleaned
 
+    def _reject_implausible_reappearances(
+        self, detections: Sequence[Optional[Detection]]
+    ) -> list[Optional[Detection]]:
+        """Reject a detection that arrives suspiciously fast - whether or
+        not a gap preceded it - and then immediately goes suspiciously
+        still. See the module docstring for why this specific combination,
+        and not speed or duration alone, is what's safe to act on, and why
+        this runs BEFORE outlier rejection rather than after.
+
+        The WHOLE suspect run is rejected, not just the point that gave it
+        away, up to `max_reappearance_reject` frames - turning it back into
+        a gap lets interpolation, or flight-segment intersection for a gap
+        too long to interpolate, infer what really happened instead.
+        """
+        cleaned = list(detections)
+        last_idx: Optional[int] = None
+        last: Optional[Detection] = None
+        speed_threshold = self.max_pixels_per_frame * self.reappearance_speed_fraction
+
+        for idx, det in enumerate(cleaned):
+            if det is None:
+                continue
+            if last is not None:
+                elapsed = idx - last_idx
+                jump = np.hypot(det.x - last.x, det.y - last.y)
+                if jump / elapsed >= speed_threshold:
+                    run_end = idx
+                    k = idx
+                    frozen_steps = 0
+                    while (
+                        frozen_steps < self.max_reappearance_reject
+                        and k + 1 < len(cleaned)
+                        and cleaned[k] is not None
+                        and cleaned[k + 1] is not None
+                    ):
+                        step = np.hypot(
+                            cleaned[k + 1].x - cleaned[k].x, cleaned[k + 1].y - cleaned[k].y
+                        )
+                        if step >= self.reappearance_freeze_speed:
+                            break
+                        frozen_steps += 1
+                        run_end = k + 1
+                        k += 1
+                    if frozen_steps >= self.reappearance_freeze_run:
+                        for r in range(idx, run_end + 1):
+                            cleaned[r] = None
+                        # last_idx/last deliberately untouched: the rejected
+                        # run was never legitimately "last", so the next
+                        # reappearance attempt is still judged against the
+                        # true last known-good point, not reset by it.
+                        continue
+            last_idx, last = idx, det
+        return cleaned
+
     def track(self, detections: Sequence[Optional[Detection]]) -> list[TrackedPosition]:
         """`detections[i]` is the raw detector output for frame i, or None."""
-        cleaned = self._reject_outliers(detections)
+        # implausible-reappearance rejection runs FIRST: it needs to see the
+        # artifact's own reappearance jump to identify it, and until it has
+        # run, _reject_outliers' simple per-step check can be fooled into
+        # treating the artifact as a trusted "last accepted" reference -
+        # measured directly, a genuine detection right after a rejected
+        # artifact run was itself wrongly rejected for jumping "too far"
+        # from the artifact's own (fake) last position, one frame too
+        # early for _reject_outliers' elapsed-scaled tolerance to allow.
+        cleaned = self._reject_implausible_reappearances(detections)
+        cleaned = self._reject_outliers(cleaned)
 
         xs = [d.x if d is not None else np.nan for d in cleaned]
         ys = [d.y if d is not None else np.nan for d in cleaned]

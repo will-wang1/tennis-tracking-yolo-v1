@@ -318,6 +318,7 @@ def segment_impacts_as_candidates(
                 is_bounce=False,
                 kind="unknown",
                 reason="recovered by intersecting flights - not yet attributed",
+                before_bound_frame=impact.before.start_frame,
             )
         )
     return candidates

@@ -164,6 +164,14 @@ class BounceCandidate:
     is_bounce: bool = True
     kind: str = "bounce"  # "bounce" | "contact" | "unknown"
     reason: str = "bounce"  # why it was classified the way it was
+    # Earliest frame `touchdown_detector` may look back to when its own
+    # "before" window comes back too weak to judge a direction from. Only
+    # `segment_impacts_as_candidates` sets this, to the START of the flight
+    # that precedes the impact - the one span it is known safe to widen
+    # into, because it is provably the SAME uninterrupted flight rather than
+    # a different, already-judged shot before it. None for impacts from the
+    # frame-by-frame scan, which has no such span to bound the search to.
+    before_bound_frame: Optional[int] = None
 
 
 def _least_squares_arc(

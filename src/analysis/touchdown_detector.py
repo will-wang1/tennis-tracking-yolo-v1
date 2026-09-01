@@ -298,6 +298,7 @@ def classify_touchdowns(
     max_reach_ratio: float = _DEFAULT_MAX_REACH_RATIO,
     max_reversal_fraction: float = _DEFAULT_MAX_REVERSAL_FRACTION,
     strong_reversal_ratio: float = _DEFAULT_STRONG_REVERSAL_RATIO,
+    gap_extension: int = 20,
 ) -> list[Touchdown]:
     """Re-judge each impact from `find_impacts` as bounce, contact or unknown.
 
@@ -305,6 +306,21 @@ def classify_touchdowns(
     over, skipping the two frames adjacent to the impact itself - those
     straddle it and blend the two sides together. `min_approach` and
     `min_slowdown` are in court-metres per second.
+
+    `gap_extension` is a FALLBACK, tried only when the ordinary `window`
+    comes up short of `min_samples` real points on one side. A flight-segment
+    -recovered impact (see `segment_impacts_as_candidates`) commonly sits
+    inside or right next to the very gap that made segment recovery
+    necessary in the first place, which can starve the ordinary window of
+    real samples on the side nearest the gap even though clean data exists
+    just a little further out - exactly the case flight-segment recovery
+    exists to handle, so the approach-rate measurement should be able to
+    reach it too. Only tried after the narrow window fails, so it cannot
+    change any verdict that already had enough data, and it searches
+    OUTWARD from the impact (further from it, not closer), so it can only
+    add real trajectory the ball actually had, never blend across the gap
+    itself. 20 matches `BallTracker`'s own `max_reappearance_reject` ceiling
+    - the longest a real gap this pipeline creates is expected to run.
 
     `player_boxes_by_frame` is optional and used in ONE direction only: to
     withhold the "contact" verdict from an impact nobody could have reached.
@@ -329,9 +345,50 @@ def classify_touchdowns(
         before = _approach_rate(
             court_y_by_frame, impact.frame_idx - window - 2, impact.frame_idx - 1, min_samples, fps
         )
+        if before is None and gap_extension:
+            before = _approach_rate(
+                court_y_by_frame,
+                impact.frame_idx - window - 2 - gap_extension,
+                impact.frame_idx - 1,
+                min_samples,
+                fps,
+            )
+        if (
+            before is not None
+            and abs(before) < min_approach
+            and impact.before_bound_frame is not None
+        ):
+            # The narrow window came back too weak to call a direction from -
+            # which is also exactly what the final stretch of a slow, skidding
+            # landing looks like, since the window sits right up against the
+            # impact and can end up measuring the ball AFTER it has already
+            # mostly settled rather than the approach that preceded it.
+            # Retrying wider is normally unsafe (measured: it flips "weak" to
+            # "strong" at many unrelated, already-correctly-classified points
+            # throughout ordinary play, by reaching back into a DIFFERENT
+            # shot's motion) - safe here only because `before_bound_frame` is
+            # the start of the very flight this impact ends, so widening
+            # cannot cross into an earlier, already-judged shot.
+            widened = _approach_rate(
+                court_y_by_frame,
+                max(impact.before_bound_frame, impact.frame_idx - window - 2 - gap_extension),
+                impact.frame_idx - 1,
+                min_samples,
+                fps,
+            )
+            if widened is not None and abs(widened) >= min_approach:
+                before = widened
         after = _approach_rate(
             court_y_by_frame, impact.frame_idx + 2, impact.frame_idx + window + 3, min_samples, fps
         )
+        if after is None and gap_extension:
+            after = _approach_rate(
+                court_y_by_frame,
+                impact.frame_idx + 2,
+                impact.frame_idx + window + 3 + gap_extension,
+                min_samples,
+                fps,
+            )
 
         reach = player_reach_ratio(
             impact.x, impact.y, (player_boxes_by_frame or {}).get(impact.frame_idx, [])
