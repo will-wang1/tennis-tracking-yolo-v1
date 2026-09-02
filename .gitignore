@@ -34,3 +34,11 @@ tennis_tracking_transfer/
 
 # graphify knowledge-graph build output (regenerate with /graphify)
 graphify-out/
+
+# web UI
+.env
+backend/.env
+frontend/node_modules/
+frontend/dist/
+frontend/tsconfig.tsbuildinfo
+

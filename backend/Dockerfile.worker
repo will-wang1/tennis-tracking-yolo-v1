@@ -1,0 +1,23 @@
+# Worker container - runs the actual ML pipeline (src/pipeline.py), so it
+# needs the full project requirements.txt (torch/tensorflow/ultralytics/
+# catboost) on top of the backend's. Model weights are NOT baked into this
+# image (see docker-compose.yml's `weights` volume) - they're supplied at
+# deploy time, per the project README.
+FROM python:3.11-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg libgl1 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY requirements.txt requirements.txt
+COPY backend/requirements.txt backend/requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt -r backend/requirements.txt
+
+COPY src src
+COPY backend backend
+
+WORKDIR /app/backend
+ENV PYTHONPATH=/app
+
+CMD ["python", "-m", "celery", "-A", "app.celery_app", "worker", "--loglevel=info", "--concurrency=1"]
