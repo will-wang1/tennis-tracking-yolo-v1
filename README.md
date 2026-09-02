@@ -358,3 +358,43 @@ detection, bounce-vs-contact attribution, label scoring, court calibration
 geometry, speed estimation, striker selection, and stroke feature
 engineering directly with hand-built data - no trained model or video file
 needed to run any of these.
+
+## Web UI
+
+A browser-based upload-and-track UI lives alongside the CLI: `backend/`
+(FastAPI + Celery/Redis + Postgres + S3-compatible storage) and `frontend/`
+(React + Vite). It wraps the same pipeline the CLI uses -
+`src/pipeline.py::run_pipeline`, extracted from `main.py` so both can call
+it - so nothing about the detection/tracking/analysis logic is duplicated.
+
+A user registers, uploads a video, picks bounce/speed/sidebar/minimap
+toggles, optionally clicks 4 court corners in the browser to calibrate real
+km/h speeds and a bounce landing heatmap (`CourtCalibration.from_points`,
+the same math `scripts/calibrate_court.py` uses), then watches a Celery
+worker's progress and gets back the annotated video plus a stats table,
+speed chart, and heatmap.
+
+**This needs real model weights to do anything** - none ship in this repo
+(see "Setup" above). Point `BALL_WEIGHTS_PATH`/`WASB_WEIGHTS_PATH`/etc at
+your checkpoints via `.env` (`cp .env.example .env`); `COURT_WEIGHTS_PATH`
+is optional - leave it unset and the minimap/court-overlay toggle is simply
+hidden as unavailable rather than failing jobs.
+
+Run the whole stack:
+
+```
+cp .env.example .env   # fill in JWT_SECRET and the weight paths
+docker compose up --build
+```
+
+Frontend at `http://localhost:5173`, API at `http://localhost:8000/docs`.
+The worker mounts `./weights` into the container - drop your checkpoints
+there. Uncomment the GPU block in `docker-compose.yml`'s `worker` service if
+running on an NVIDIA GPU host.
+
+For local dev without Docker: `cd backend && cp ../.env.example .env`, run
+Postgres/Redis/MinIO yourself (or point `DATABASE_URL`/`REDIS_URL`/
+`S3_ENDPOINT_URL` at existing ones), then
+`PYTHONPATH=.. python -m uvicorn app.main:app --reload` and, in another
+shell, `PYTHONPATH=.. python -m celery -A app.celery_app worker --loglevel=info`.
+`cd frontend && npm install && npm run dev` for the UI.
