@@ -1,7 +1,7 @@
 import type { ShotSpeedStat } from "../api/types";
 
 export default function ShotStatsTable({ shots }: { shots: ShotSpeedStat[] }) {
-  if (shots.length === 0) return <p>No shots recorded.</p>;
+  if (shots.length === 0) return <p style={{ color: "var(--text-muted)" }}>No shots recorded.</p>;
 
   return (
     <div style={{ overflowX: "auto" }}>
@@ -21,7 +21,7 @@ export default function ShotStatsTable({ shots }: { shots: ShotSpeedStat[] }) {
               <td>
                 {shot.start_frame}–{shot.end_frame}
               </td>
-              <td>
+              <td className="numeric">
                 {shot.peak_speed.toFixed(0)} {shot.unit}
               </td>
               <td>{shot.method}</td>

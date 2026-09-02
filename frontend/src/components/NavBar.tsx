@@ -1,5 +1,6 @@
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import Logo from "./Logo";
 
 export default function NavBar() {
   const { isAuthenticated, logout } = useAuth();
@@ -8,16 +9,20 @@ export default function NavBar() {
   return (
     <nav className="navbar">
       <Link className="brand" to="/">
-        🎾 Tennis Video Analysis
+        <Logo size={20} />
+        <span className="brand-wordmark">
+          Tennis<span className="accent">VA</span>
+        </span>
       </Link>
       {isAuthenticated && (
         <button
+          className="btn-ghost"
           onClick={() => {
             logout();
             navigate("/login");
           }}
         >
-          Log out
+          Sign out
         </button>
       )}
     </nav>

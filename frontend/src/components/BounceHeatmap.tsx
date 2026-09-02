@@ -22,16 +22,23 @@ function toSvg(xMeters: number, yMeters: number): [number, number] {
 function Line({ x1, y1, x2, y2 }: { x1: number; y1: number; x2: number; y2: number }) {
   const [px1, py1] = toSvg(x1, y1);
   const [px2, py2] = toSvg(x2, y2);
-  return <line x1={px1} y1={py1} x2={px2} y2={py2} stroke="#3a4553" strokeWidth={2} />;
+  return <line x1={px1} y1={py1} x2={px2} y2={py2} stroke="rgba(255,255,255,0.45)" strokeWidth={1.5} />;
 }
 
 export default function BounceHeatmap({ locations }: { locations: [number, number][] }) {
   if (locations.length === 0) {
-    return <p>No bounce locations available - run with bounce detection and a court calibration.</p>;
+    return (
+      <p style={{ color: "var(--text-muted)" }}>
+        No bounce locations available — run with bounce detection and a court calibration.
+      </p>
+    );
   }
 
+  const [courtX, courtY] = toSvg(0, 0);
+
   return (
-    <svg width={SVG_WIDTH} height={SVG_HEIGHT} style={{ background: "#0f1720", borderRadius: 8 }}>
+    <svg width={SVG_WIDTH} height={SVG_HEIGHT} style={{ background: "var(--tva-black)", borderRadius: "var(--radius-md)" }}>
+      <rect x={courtX} y={courtY} width={COURT_WIDTH_PX} height={COURT_LENGTH_PX} fill="#1e5c40" rx={3} />
       {/* doubles sidelines + baselines */}
       <Line x1={0} y1={0} x2={COURT_WIDTH_M} y2={0} />
       <Line x1={0} y1={COURT_LENGTH_M} x2={COURT_WIDTH_M} y2={COURT_LENGTH_M} />
@@ -54,7 +61,7 @@ export default function BounceHeatmap({ locations }: { locations: [number, numbe
 
       {locations.map(([x, y], index) => {
         const [px, py] = toSvg(x, y);
-        return <circle key={index} cx={px} cy={py} r={5} fill="#ef6461" fillOpacity={0.75} stroke="#0f1720" />;
+        return <circle key={index} cx={px} cy={py} r={5} fill="#ef4444" fillOpacity={0.85} stroke="var(--tva-black)" />;
       })}
     </svg>
   );
