@@ -52,13 +52,13 @@ export default function CalibrationCanvas({ frameUrl, frameWidth, frameHeight, o
       const [x, y] = point as [number, number];
       ctx.beginPath();
       ctx.arc(x * scale, y * scale, 6, 0, Math.PI * 2);
-      ctx.fillStyle = "#4fd1a5";
+      ctx.fillStyle = "#00d4a4";
       ctx.fill();
-      ctx.strokeStyle = "#04231a";
+      ctx.strokeStyle = "#080c10";
       ctx.lineWidth = 2;
       ctx.stroke();
-      ctx.fillStyle = "#e6edf3";
-      ctx.font = "12px sans-serif";
+      ctx.fillStyle = "#dce4ed";
+      ctx.font = "12px 'Inter', sans-serif";
       ctx.fillText(key.replace("_", " "), x * scale + 10, y * scale - 10);
     });
   }
@@ -108,12 +108,19 @@ export default function CalibrationCanvas({ frameUrl, frameWidth, frameHeight, o
       <canvas
         ref={canvasRef}
         onClick={handleClick}
-        style={{ cursor: nextStep ? "crosshair" : "default", maxWidth: "100%", border: "1px solid #263241" }}
+        style={{
+          cursor: nextStep ? "crosshair" : "default",
+          maxWidth: "100%",
+          border: "1px solid var(--border-default)",
+          borderRadius: "var(--radius-lg)",
+        }}
       />
       <div style={{ marginTop: 10 }}>
-        <button onClick={reset}>Reset points</button>
+        <button className="btn btn-secondary" onClick={reset}>
+          Reset points
+        </button>
       </div>
-      <p style={{ fontSize: 12, color: "#8b96a3" }}>
+      <p style={{ fontSize: 12, color: "var(--text-muted)" }}>
         Displayed at {(displayScale * 100).toFixed(0)}% - clicks are mapped back to the original{" "}
         {frameWidth}×{frameHeight} frame.
       </p>

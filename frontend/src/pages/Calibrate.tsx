@@ -42,8 +42,8 @@ export default function Calibrate() {
 
   return (
     <div className="card">
-      <h2>Calibrate the court</h2>
-      <p>
+      <h3 className="card-title">Calibrate the court</h3>
+      <p style={{ fontSize: 14, color: "var(--text-body)", lineHeight: 1.5 }}>
         Click the four near-camera court corners on the frame below, in order. This builds a fixed
         mapping from pixels to real court coordinates (meters), used for real-world shot speed (km/h)
         and the bounce landing heatmap.
@@ -60,7 +60,7 @@ export default function Calibrate() {
         </select>
       </div>
       {error && <p className="error-text">{error}</p>}
-      {submitting && <p>Saving calibration and starting the job...</p>}
+      {submitting && <p style={{ color: "var(--text-muted)" }}>Saving calibration and starting the job...</p>}
       {frame && !submitting && (
         <CalibrationCanvas
           frameUrl={frame.frame_url}
@@ -69,7 +69,7 @@ export default function Calibrate() {
           onComplete={handleComplete}
         />
       )}
-      {!frame && !error && <p>Loading a frame from the video...</p>}
+      {!frame && !error && <p style={{ color: "var(--text-muted)" }}>Loading a frame from the video...</p>}
     </div>
   );
 }

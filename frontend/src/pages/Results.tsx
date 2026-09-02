@@ -5,6 +5,7 @@ import type { JobResult } from "../api/types";
 import ShotStatsTable from "../components/ShotStatsTable";
 import ShotSpeedChart from "../components/ShotSpeedChart";
 import BounceHeatmap from "../components/BounceHeatmap";
+import StatTile from "../components/StatTile";
 
 export default function Results() {
   const { jobId } = useParams<{ jobId: string }>();
@@ -37,40 +38,47 @@ export default function Results() {
 
   return (
     <div>
-      <div className="card">
-        <h2>Annotated video</h2>
+      <div className="card" style={{ padding: 0, overflow: "hidden" }}>
         {result.video_url ? (
-          <>
-            <video src={result.video_url} controls style={{ width: "100%", borderRadius: 8 }} />
-            <p style={{ marginTop: 10 }}>
-              <a href={result.video_url} download>
-                Download video
-              </a>
-            </p>
-          </>
+          <video src={result.video_url} controls style={{ width: "100%", display: "block", background: "var(--tva-black)" }} />
         ) : (
-          <p>No video available.</p>
+          <div style={{ padding: "var(--card-padding)" }}>
+            <h3 className="card-title" style={{ margin: 0 }}>
+              Annotated video
+            </h3>
+            <p style={{ color: "var(--text-muted)" }}>No video available.</p>
+          </div>
         )}
       </div>
+      {result.video_url && (
+        <p style={{ marginTop: -12, marginBottom: 20, fontSize: 13 }}>
+          <a href={result.video_url} download>
+            Download video
+          </a>
+        </p>
+      )}
 
       {stats && (
         <>
           <div className="card">
-            <h2>Shot speeds</h2>
+            <h3 className="card-title">Shot speeds</h3>
             <ShotSpeedChart shots={stats.shot_speeds} />
-            <ShotStatsTable shots={stats.shot_speeds} />
+            <div style={{ marginTop: 12 }}>
+              <ShotStatsTable shots={stats.shot_speeds} />
+            </div>
           </div>
 
           <div className="card">
-            <h2>Match summary</h2>
-            <p>
-              {stats.rally_count} rally/rallies, {stats.total_bounces} bounces, {stats.total_contacts}{" "}
-              contacts
-            </p>
+            <h3 className="card-title">Match summary</h3>
+            <div style={{ display: "flex", gap: 32 }}>
+              <StatTile label="Rallies" value={stats.rally_count} />
+              <StatTile label="Bounces" value={stats.total_bounces} />
+              <StatTile label="Contacts" value={stats.total_contacts} />
+            </div>
           </div>
 
           <div className="card">
-            <h2>Bounce landing heatmap</h2>
+            <h3 className="card-title">Bounce landing heatmap</h3>
             <BounceHeatmap locations={stats.bounce_locations} />
           </div>
         </>

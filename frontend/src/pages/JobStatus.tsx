@@ -39,22 +39,27 @@ export default function JobStatus() {
   }, [jobId, navigate]);
 
   return (
-    <div className="card">
-      <h2>Processing your video</h2>
-      {!job && <p>Loading job status...</p>}
+    <div className="card" style={{ marginTop: 32 }}>
+      <h3 className="card-title">Processing your video</h3>
+      {!job && <p style={{ color: "var(--text-muted)" }}>Loading job status...</p>}
       {job && (
         <>
-          <p>
-            Status: <span className={`badge ${job.status}`}>{job.status}</span>
+          <p style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 13, color: "var(--text-muted)" }}>Status</span>
+            <span className={`badge ${job.status}`}>{job.status}</span>
           </p>
           <div className="progress-track">
             <div className="progress-fill" style={{ width: `${job.progress}%` }} />
           </div>
-          <p>{job.progress}%</p>
+          <p style={{ fontFamily: "var(--font-mono)", fontSize: 13, color: "var(--text-accent)" }}>
+            {job.progress}%
+          </p>
           {job.status === "failed" && (
             <p className="error-text">{job.error_message ?? "Processing failed."}</p>
           )}
-          {job.status === "queued" && <p>Waiting for a worker to pick this up...</p>}
+          {job.status === "queued" && (
+            <p style={{ color: "var(--text-muted)", fontSize: 14 }}>Waiting for a worker to pick this up...</p>
+          )}
         </>
       )}
       <p style={{ marginTop: 16 }}>

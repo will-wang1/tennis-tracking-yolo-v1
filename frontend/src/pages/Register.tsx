@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, ApiError } from "../api/client";
 import { useAuth } from "../context/AuthContext";
+import Logo from "../components/Logo";
 
 export default function Register() {
   const [email, setEmail] = useState("");
@@ -27,32 +28,57 @@ export default function Register() {
   }
 
   return (
-    <div className="card" style={{ maxWidth: 380, margin: "48px auto" }}>
-      <h2>Create an account</h2>
-      <form onSubmit={handleSubmit}>
-        <div className="form-field">
-          <label htmlFor="email">Email</label>
-          <input id="email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+    <div style={{ maxWidth: 380, margin: "64px auto 0", padding: "0 20px" }}>
+      <div style={{ textAlign: "center", marginBottom: 32 }}>
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}>
+          <Logo size={40} />
         </div>
-        <div className="form-field">
-          <label htmlFor="password">Password (min 8 characters)</label>
-          <input
-            id="password"
-            type="password"
-            required
-            minLength={8}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
+        <div className="brand-wordmark" style={{ fontSize: 28 }}>
+          Tennis<span className="accent">VA</span>
         </div>
-        {error && <p className="error-text">{error}</p>}
-        <button className="primary" type="submit" disabled={submitting}>
-          {submitting ? "Creating account..." : "Register"}
-        </button>
-      </form>
-      <p style={{ marginTop: 16 }}>
-        Already have an account? <Link to="/login">Log in</Link>
-      </p>
+        <div
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: 11,
+            letterSpacing: "var(--tracking-eyebrow)",
+            textTransform: "uppercase",
+            color: "var(--text-muted)",
+            marginTop: 6,
+          }}
+        >
+          Match video analysis
+        </div>
+      </div>
+
+      <div className="card">
+        <h3 style={{ fontFamily: "var(--font-sans)", fontWeight: 600, fontSize: 16 }}>
+          Create an account
+        </h3>
+        <form onSubmit={handleSubmit} style={{ marginTop: 16 }}>
+          <div className="form-field">
+            <label htmlFor="email">Email</label>
+            <input id="email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+          </div>
+          <div className="form-field">
+            <label htmlFor="password">Password (min 8 characters)</label>
+            <input
+              id="password"
+              type="password"
+              required
+              minLength={8}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </div>
+          {error && <p className="error-text">{error}</p>}
+          <button className="btn btn-primary" style={{ width: "100%" }} type="submit" disabled={submitting}>
+            {submitting ? "Creating account..." : "Register"}
+          </button>
+        </form>
+        <p style={{ marginTop: 20, textAlign: "center", fontSize: 13, color: "var(--text-muted)" }}>
+          Already have an account? <Link to="/login">Log in</Link>
+        </p>
+      </div>
     </div>
   );
 }
