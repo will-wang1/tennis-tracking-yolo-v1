@@ -1,0 +1,64 @@
+name: Deploy frontend to GitHub Pages
+
+# Builds frontend/ (Vite + React) and publishes frontend/dist as a GitHub
+# Pages site. This deploys the static UI shell only - there is no backend
+# here, so every API call (login, upload, everything) will fail until a
+# real backend is hosted elsewhere and the frontend is pointed at it (see
+# frontend/vite.config.ts's /api proxy, and README.md's "Web UI" section).
+
+on:
+  push:
+    branches:
+      - claude/tennis-ball-yolo-tracking-p8ntwh
+    paths:
+      - "frontend/**"
+      - ".github/workflows/deploy-pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm install
+      - name: Build
+        working-directory: frontend
+        # --base matches this repo's Pages URL (a project page is served
+        # from /<repo>/, not domain root) - only for this workflow, so the
+        # docker-compose/nginx deployment's root-relative build is untouched.
+        run: npm run build -- --base=/${{ github.event.repository.name }}/
+      - name: Add SPA fallback for client-side routing
+        # GitHub Pages has no server-side rewrites, so a deep link (e.g.
+        # /jobs/abc) 404s on refresh unless 404.html is the same SPA shell -
+        # GitHub Pages serves 404.html for any unmatched path, and
+        # react-router then takes over client-side.
+        run: cp frontend/dist/index.html frontend/dist/404.html
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: frontend/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
