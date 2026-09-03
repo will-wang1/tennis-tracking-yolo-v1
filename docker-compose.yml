@@ -48,6 +48,11 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile.worker
+      args:
+        # Set TORCH_INDEX_URL in .env (e.g. to
+        # https://download.pytorch.org/whl/cpu) on a machine with no NVIDIA
+        # GPU; leave unset on a real GPU machine to keep CUDA support.
+        TORCH_INDEX_URL: "${TORCH_INDEX_URL:-}"
     env_file: .env
     environment:
       DATABASE_URL: postgresql+psycopg2://tennis:tennis@postgres:5432/tennis
