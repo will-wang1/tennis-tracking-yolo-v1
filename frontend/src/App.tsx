@@ -24,7 +24,7 @@ function AppRoutes() {
 
   return (
     <>
-      <NavBar />
+      {!isLanding && <NavBar />}
       <main className={isLanding ? undefined : "page"}>
         <Routes>
           <Route path="/" element={<Landing />} />

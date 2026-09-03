@@ -494,3 +494,15 @@ h3 {
   letter-spacing: -0.01em;
   margin: 0 0 4px;
 }
+
+/* ── Landing page motion ── */
+
+@keyframes tvaPulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
