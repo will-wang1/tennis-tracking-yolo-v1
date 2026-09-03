@@ -1,7 +1,8 @@
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { BrowserRouter } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import NavBar from "./components/NavBar";
+import Landing from "./pages/Landing";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import Upload from "./pages/Upload";
@@ -16,15 +17,21 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 }
 
 function AppRoutes() {
+  const { pathname } = useLocation();
+  // The landing page lays out its own full-width sections; every other
+  // route uses the shared narrow, padded app column.
+  const isLanding = pathname === "/";
+
   return (
     <>
       <NavBar />
-      <main className="page">
+      <main className={isLanding ? undefined : "page"}>
         <Routes>
+          <Route path="/" element={<Landing />} />
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
           <Route
-            path="/"
+            path="/app"
             element={
               <ProtectedRoute>
                 <Upload />

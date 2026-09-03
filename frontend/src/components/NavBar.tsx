@@ -8,13 +8,13 @@ export default function NavBar() {
 
   return (
     <nav className="navbar">
-      <Link className="brand" to="/">
+      <Link className="brand" to={isAuthenticated ? "/app" : "/"}>
         <Logo size={20} />
         <span className="brand-wordmark">
           Tennis<span className="accent">VA</span>
         </span>
       </Link>
-      {isAuthenticated && (
+      {isAuthenticated ? (
         <button
           className="btn-ghost"
           onClick={() => {
@@ -24,6 +24,15 @@ export default function NavBar() {
         >
           Sign out
         </button>
+      ) : (
+        <div style={{ display: "flex", gap: 8 }}>
+          <Link className="btn-ghost" to="/login">
+            Log in
+          </Link>
+          <Link className="btn btn-secondary" to="/register">
+            Register
+          </Link>
+        </div>
       )}
     </nav>
   );

@@ -19,7 +19,7 @@ export default function Register() {
     try {
       const { access_token } = await api.register(email, password);
       login(access_token);
-      navigate("/");
+      navigate("/app");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Registration failed");
     } finally {
