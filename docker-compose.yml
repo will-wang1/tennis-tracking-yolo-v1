@@ -89,6 +89,32 @@ services:
     ports:
       - "5173:80"
 
+  # Publishes the app to the internet over Tailscale Funnel, with nothing
+  # installed on the host - no macOS installer, no sudo. Needs no host
+  # networking either: it reaches the frontend container over the compose
+  # network as http://frontend:80. Opt-in only (see README "Public access
+  # over Tailscale"): `docker compose --profile tunnel up -d`.
+  tailscale:
+    image: tailscale/tailscale:latest
+    hostname: tennisva
+    environment:
+      # Left blank here (rather than a hard-required var) so that plain
+      # `docker compose up` for everyone NOT using the tunnel doesn't break -
+      # profiles only gate which services *start*, not env interpolation,
+      # which docker compose validates for every service regardless. The
+      # container itself fails fast with a clear error if this is empty.
+      TS_AUTHKEY: ${TS_AUTHKEY:-}
+      TS_STATE_DIR: /var/lib/tailscale
+    volumes:
+      - tailscale_state:/var/lib/tailscale
+    cap_add:
+      - NET_ADMIN
+    depends_on:
+      - frontend
+    profiles:
+      - tunnel
+
 volumes:
   postgres_data:
   minio_data:
+  tailscale_state:
