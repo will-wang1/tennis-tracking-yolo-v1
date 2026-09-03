@@ -1,7 +1,8 @@
 FROM node:20-slim AS build
 WORKDIR /app
+ENV NODE_ENV=development
 COPY package.json package-lock.json* ./
-RUN npm install
+RUN npm install --include=dev
 COPY . .
 RUN npm run build
 
