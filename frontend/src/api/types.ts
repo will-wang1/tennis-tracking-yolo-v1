@@ -87,4 +87,5 @@ export interface JobResult {
 
 export interface PublicConfig {
   minimap_available: boolean;
+  invite_required: boolean;
 }
