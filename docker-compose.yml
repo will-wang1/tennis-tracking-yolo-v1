@@ -114,6 +114,23 @@ services:
     profiles:
       - tunnel
 
+  # Alternative to the tailscale service above: a free, anonymous Cloudflare
+  # "quick tunnel" - no account, no signup, nothing downloaded to the host
+  # (cloudflared runs only inside this container). Trade-off vs Tailscale:
+  # no stable URL (a new https://<random>.trycloudflare.com is assigned
+  # each time this restarts) and Cloudflare's edge caps request bodies
+  # around 100MB, which large match-video uploads will exceed - fine for a
+  # quick demo, not for real use. Opt-in: `docker compose --profile
+  # cloudflare up -d`, then find the assigned URL with
+  # `docker compose logs cloudflared`.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --url http://frontend:80
+    depends_on:
+      - frontend
+    profiles:
+      - cloudflare
+
 volumes:
   postgres_data:
   minio_data:

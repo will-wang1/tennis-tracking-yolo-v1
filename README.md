@@ -430,3 +430,21 @@ other config changes are needed: the frontend already proxies `/api/` to
 the backend over a relative same-origin path, and nginx's
 `client_max_body_size 2G` (in `frontend/nginx.conf`) already covers large
 video uploads through the tunnel.
+
+#### Even quicker: Cloudflare "quick tunnel" (no account at all)
+
+If you don't want to sign up for anything - not even Tailscale - the
+`cloudflared` service does the same trick with Cloudflare's free, anonymous
+quick tunnels: no login, no key, nothing downloaded to the host (it only
+runs inside the container).
+
+```
+docker compose --profile cloudflare up -d
+docker compose logs cloudflared   # prints the assigned https://<random>.trycloudflare.com URL
+```
+
+Trade-offs vs Tailscale: the URL is random and changes every time the
+container restarts (fine for "check this out right now", not for a link
+you hand out long-term), and Cloudflare's edge caps request bodies around
+100MB - large match-video uploads will get rejected through this route.
+Use Tailscale Funnel above once uploads matter.
