@@ -32,3 +32,34 @@ def test_login_success_round_trip(client):
 def test_protected_route_requires_token(client):
     res = client.get("/videos")
     assert res.status_code == 401
+
+
+def test_registration_open_by_default(client):
+    res = client.get("/config")
+    assert res.json()["invite_required"] is False
+
+
+def test_registration_requires_invite_code_when_configured(client, monkeypatch):
+    from app.config import get_settings
+
+    monkeypatch.setenv("INVITE_CODE", "letmein")
+    get_settings.cache_clear()
+    try:
+        assert client.get("/config").json()["invite_required"] is True
+
+        no_code = client.post("/auth/register", json={"email": "nc@example.com", "password": "hunter2pass"})
+        assert no_code.status_code == 403
+
+        wrong_code = client.post(
+            "/auth/register",
+            json={"email": "wc@example.com", "password": "hunter2pass", "invite_code": "nope"},
+        )
+        assert wrong_code.status_code == 403
+
+        right_code = client.post(
+            "/auth/register",
+            json={"email": "rc@example.com", "password": "hunter2pass", "invite_code": "letmein"},
+        )
+        assert right_code.status_code == 201
+    finally:
+        get_settings.cache_clear()

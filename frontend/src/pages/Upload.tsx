@@ -31,7 +31,7 @@ function PlayIcon() {
 
 export default function Upload() {
   const [videos, setVideos] = useState<Video[]>([]);
-  const [config, setConfig] = useState<PublicConfig>({ minimap_available: false });
+  const [config, setConfig] = useState<PublicConfig>({ minimap_available: false, invite_required: false });
   const [uploading, setUploading] = useState(false);
   const [uploadFraction, setUploadFraction] = useState(0);
   const [error, setError] = useState<string | null>(null);

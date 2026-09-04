@@ -52,10 +52,10 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
-  register: (email: string, password: string) =>
+  register: (email: string, password: string, inviteCode?: string) =>
     request<{ access_token: string }>("/auth/register", {
       method: "POST",
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ email, password, invite_code: inviteCode || undefined }),
     }),
 
   login: (email: string, password: string) =>

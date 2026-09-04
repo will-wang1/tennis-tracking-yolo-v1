@@ -9,7 +9,7 @@ name: Deploy frontend to GitHub Pages
 on:
   push:
     branches:
-      - claude/tennis-ball-yolo-tracking-p8ntwh
+      - main
     paths:
       - "frontend/**"
       - ".github/workflows/deploy-pages.yml"

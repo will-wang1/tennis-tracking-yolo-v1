@@ -9,23 +9,14 @@ const SERVICE_LINE_M = 5.485;
 const NET_Y_M = COURT_LENGTH_M / 2;
 
 const PADDING_PX = 16;
-const COURT_WIDTH_PX = 260;
-const SCALE = COURT_WIDTH_PX / COURT_WIDTH_M;
-const COURT_LENGTH_PX = COURT_LENGTH_M * SCALE;
-const SVG_WIDTH = COURT_WIDTH_PX + PADDING_PX * 2;
-const SVG_HEIGHT = COURT_LENGTH_PX + PADDING_PX * 2;
 
-function toSvg(xMeters: number, yMeters: number): [number, number] {
-  return [PADDING_PX + xMeters * SCALE, PADDING_PX + yMeters * SCALE];
-}
-
-function Line({ x1, y1, x2, y2 }: { x1: number; y1: number; x2: number; y2: number }) {
-  const [px1, py1] = toSvg(x1, y1);
-  const [px2, py2] = toSvg(x2, y2);
-  return <line x1={px1} y1={py1} x2={px2} y2={py2} stroke="rgba(255,255,255,0.45)" strokeWidth={1.5} />;
-}
-
-export default function BounceHeatmap({ locations }: { locations: [number, number][] }) {
+export default function BounceHeatmap({
+  locations,
+  widthPx = 260,
+}: {
+  locations: [number, number][];
+  widthPx?: number;
+}) {
   if (locations.length === 0) {
     return (
       <p style={{ color: "var(--text-muted)" }}>
@@ -34,11 +25,28 @@ export default function BounceHeatmap({ locations }: { locations: [number, numbe
     );
   }
 
+  const courtWidthPx = widthPx;
+  const scale = courtWidthPx / COURT_WIDTH_M;
+  const courtLengthPx = COURT_LENGTH_M * scale;
+  const svgWidth = courtWidthPx + PADDING_PX * 2;
+  const svgHeight = courtLengthPx + PADDING_PX * 2;
+
+  const toSvg = (xMeters: number, yMeters: number): [number, number] => [
+    PADDING_PX + xMeters * scale,
+    PADDING_PX + yMeters * scale,
+  ];
+
+  const Line = ({ x1, y1, x2, y2 }: { x1: number; y1: number; x2: number; y2: number }) => {
+    const [px1, py1] = toSvg(x1, y1);
+    const [px2, py2] = toSvg(x2, y2);
+    return <line x1={px1} y1={py1} x2={px2} y2={py2} stroke="rgba(255,255,255,0.45)" strokeWidth={1.5} />;
+  };
+
   const [courtX, courtY] = toSvg(0, 0);
 
   return (
-    <svg width={SVG_WIDTH} height={SVG_HEIGHT} style={{ background: "var(--tva-black)", borderRadius: "var(--radius-md)" }}>
-      <rect x={courtX} y={courtY} width={COURT_WIDTH_PX} height={COURT_LENGTH_PX} fill="#1e5c40" rx={3} />
+    <svg width={svgWidth} height={svgHeight} style={{ background: "var(--tva-black)", borderRadius: "var(--radius-md)" }}>
+      <rect x={courtX} y={courtY} width={courtWidthPx} height={courtLengthPx} fill="#1e5c40" rx={3} />
       {/* doubles sidelines + baselines */}
       <Line x1={0} y1={0} x2={COURT_WIDTH_M} y2={0} />
       <Line x1={0} y1={COURT_LENGTH_M} x2={COURT_WIDTH_M} y2={COURT_LENGTH_M} />

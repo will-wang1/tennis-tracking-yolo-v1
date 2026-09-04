@@ -63,7 +63,7 @@ export default function JobStatus() {
         </>
       )}
       <p style={{ marginTop: 16 }}>
-        <Link to="/">Back to videos</Link>
+        <Link to="/app">Back to videos</Link>
       </p>
     </div>
   );

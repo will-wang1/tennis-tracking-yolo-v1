@@ -398,3 +398,53 @@ Postgres/Redis/MinIO yourself (or point `DATABASE_URL`/`REDIS_URL`/
 `PYTHONPATH=.. python -m uvicorn app.main:app --reload` and, in another
 shell, `PYTHONPATH=.. python -m celery -A app.celery_app worker --loglevel=info`.
 `cd frontend && npm install && npm run dev` for the UI.
+
+### Public access over Tailscale
+
+Before sharing this beyond your own machine: set `INVITE_CODE` and rotate
+`JWT_SECRET`/`POSTGRES_PASSWORD`/`S3_SECRET_KEY` in `.env` away from their
+placeholder values (see the comments in `.env.example`) - the app logs a
+warning at startup if you forget.
+
+To actually put it on the internet without touching your router, buying a
+domain, or installing anything on the host (no `.pkg`, no `sudo`): the
+`tailscale` service in `docker-compose.yml` runs Tailscale Funnel inside a
+container, reaching the `frontend` container over the compose network.
+
+1. Create a free account at [tailscale.com](https://tailscale.com) and
+   generate an auth key at
+   [login.tailscale.com/admin/settings/keys](https://login.tailscale.com/admin/settings/keys)
+   (a reusable, non-ephemeral key is easiest if you'll restart the
+   container). Set `TS_AUTHKEY` in `.env` to it.
+2. In the Tailscale admin console, confirm **HTTPS Certificates** and
+   **Funnel** are enabled for your tailnet (on by default for most personal
+   accounts).
+3. `docker compose --profile tunnel up -d` (the `tunnel` profile keeps this
+   service out of a normal `docker compose up` for anyone not using it).
+4. `docker compose exec tailscale tailscale funnel --bg --https=443 http://frontend:80`
+   (flags vary by Tailscale version - run
+   `docker compose exec tailscale tailscale funnel --help` if this errors).
+
+That gives you a stable `https://<name>.<your-tailnet>.ts.net` URL. No
+other config changes are needed: the frontend already proxies `/api/` to
+the backend over a relative same-origin path, and nginx's
+`client_max_body_size 2G` (in `frontend/nginx.conf`) already covers large
+video uploads through the tunnel.
+
+#### Even quicker: Cloudflare "quick tunnel" (no account at all)
+
+If you don't want to sign up for anything - not even Tailscale - the
+`cloudflared` service does the same trick with Cloudflare's free, anonymous
+quick tunnels: no login, no key, nothing downloaded to the host (it only
+runs inside the container).
+
+```
+docker compose --profile cloudflare up -d
+docker compose logs cloudflared   # prints the assigned https://<random>.trycloudflare.com URL
+```
+
+Trade-offs vs Tailscale: the URL is random and changes every time the
+container restarts (fine for "check this out right now", not for a link
+you hand out long-term), and Cloudflare's edge caps request bodies around
+100MB - large match-video uploads will get rejected through this route.
+Use Tailscale Funnel above once uploads matter.

@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     jwt_secret: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"
     jwt_expires_minutes: int = 60 * 24 * 7
+    # When set, /auth/register requires this value in the request body -
+    # the simplest way to keep registration closed to people you've shared
+    # the code with. Leave unset for open registration (the local-dev/test
+    # default).
+    invite_code: Optional[str] = None
 
     # Database
     database_url: str = "postgresql+psycopg2://tennis:tennis@localhost:5432/tennis"

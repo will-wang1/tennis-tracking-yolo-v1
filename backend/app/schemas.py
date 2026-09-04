@@ -7,6 +7,9 @@ from pydantic import BaseModel, EmailStr, Field
 class UserCreate(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
+    # Required only when the server has INVITE_CODE configured - see
+    # app.config.Settings.invite_code.
+    invite_code: Optional[str] = None
 
 
 class UserLogin(BaseModel):
@@ -104,3 +107,4 @@ class JobResultOut(BaseModel):
 
 class PublicConfigOut(BaseModel):
     minimap_available: bool
+    invite_required: bool

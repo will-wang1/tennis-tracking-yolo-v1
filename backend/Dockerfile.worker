@@ -12,12 +12,35 @@ RUN apt-get update \
 WORKDIR /app
 COPY requirements.txt requirements.txt
 COPY backend/requirements.txt backend/requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt -r backend/requirements.txt
+
+# TORCH_INDEX_URL lets a machine without an NVIDIA GPU (a Mac, say) build a
+# CPU-only torch/torchvision instead of the default CUDA-enabled wheels -
+# smaller, faster to pull, and avoids a native-library conflict that's been
+# reproduced crashing this exact torch+tensorflow+opencv combination with a
+# segfault on some platforms. Set it in .env (see .env.example); leave unset
+# on a real GPU machine (the RTX 2050 laptop, the friend's rig) to keep CUDA
+# support.
+ARG TORCH_INDEX_URL=
+RUN if [ -n "$TORCH_INDEX_URL" ]; then \
+        pip install --no-cache-dir torch torchvision --index-url "$TORCH_INDEX_URL"; \
+    fi \
+    && pip install --no-cache-dir -r requirements.txt -r backend/requirements.txt
 
 COPY src src
 COPY backend backend
 
 WORKDIR /app/backend
 ENV PYTHONPATH=/app
+# A known mitigation for native segfaults from multiple numeric libraries
+# (torch, tensorflow, OpenCV) each spinning up their own thread pools /
+# OpenMP runtime in the same process - forces them all to single-threaded
+# BLAS/OpenMP instead of racing to initialize.
+ENV OMP_NUM_THREADS=1 \
+    OPENBLAS_NUM_THREADS=1 \
+    MKL_NUM_THREADS=1 \
+    VECLIB_MAXIMUM_THREADS=1 \
+    NUMEXPR_NUM_THREADS=1 \
+    KMP_DUPLICATE_LIB_OK=TRUE \
+    TF_ENABLE_ONEDNN_OPTS=0
 
 CMD ["python", "-m", "celery", "-A", "app.celery_app", "worker", "--loglevel=info", "--concurrency=1"]

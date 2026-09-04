@@ -85,7 +85,7 @@ export default function Results() {
       )}
 
       <p>
-        <Link to="/">Back to videos</Link>
+        <Link to="/app">Back to videos</Link>
       </p>
     </div>
   );

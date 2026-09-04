@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, ApiError } from "../api/client";
 import { useAuth } from "../context/AuthContext";
@@ -7,19 +7,28 @@ import Logo from "../components/Logo";
 export default function Register() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [inviteCode, setInviteCode] = useState("");
+  const [inviteRequired, setInviteRequired] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const { login } = useAuth();
   const navigate = useNavigate();
+
+  useEffect(() => {
+    api
+      .publicConfig()
+      .then((config) => setInviteRequired(config.invite_required))
+      .catch(() => undefined);
+  }, []);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setError(null);
     setSubmitting(true);
     try {
-      const { access_token } = await api.register(email, password);
+      const { access_token } = await api.register(email, password, inviteCode);
       login(access_token);
-      navigate("/");
+      navigate("/app");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Registration failed");
     } finally {
@@ -70,6 +79,18 @@ export default function Register() {
               onChange={(e) => setPassword(e.target.value)}
             />
           </div>
+          {inviteRequired && (
+            <div className="form-field">
+              <label htmlFor="invite-code">Invite code</label>
+              <input
+                id="invite-code"
+                type="text"
+                required
+                value={inviteCode}
+                onChange={(e) => setInviteCode(e.target.value)}
+              />
+            </div>
+          )}
           {error && <p className="error-text">{error}</p>}
           <button className="btn btn-primary" style={{ width: "100%" }} type="submit" disabled={submitting}>
             {submitting ? "Creating account..." : "Register"}

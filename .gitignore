@@ -39,6 +39,9 @@ graphify-out/
 .env
 backend/.env
 frontend/node_modules/
-frontend/dist/
 frontend/tsconfig.tsbuildinfo
+# frontend/dist/ is intentionally committed (not ignored) - see frontend/Dockerfile's
+# comment: it lets `docker compose build` work without npm/Node reachable at all,
+# for environments where the npm registry is blocked. Rebuild it after any
+# frontend source change: cd frontend && npm run build
 
