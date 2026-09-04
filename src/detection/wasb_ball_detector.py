@@ -147,7 +147,13 @@ class WASBBallDetector:
         self.max_candidates = self._MAX_CANDIDATES if max_candidates is None else max_candidates
 
         self.model = HRNet(_HRNET_CONFIG)
-        checkpoint = torch.load(str(weights_path), map_location=self.device, weights_only=True)
+        # weights_only=True breaks loading this checkpoint's legacy (.pth.tar,
+        # pre-zipfile) format - a PyTorch bug where the restricted unpickler's
+        # location-tag lookup comes back empty regardless of map_location,
+        # raising "don't know how to restore data location ... (tagged with
+        # )". False is safe here: this is a local file you supplied yourself,
+        # not an untrusted download fetched at request time.
+        checkpoint = torch.load(str(weights_path), map_location=self.device, weights_only=False)
         self.model.load_state_dict(checkpoint["model_state_dict"])
         self.model.to(self.device)
         self.model.eval()

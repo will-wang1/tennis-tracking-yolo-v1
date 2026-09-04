@@ -55,7 +55,9 @@ class TennisCourtNetDetector:
         self.refine = refine
 
         self.model = TrackNetArch(in_channels=3, out_channels=15)
-        state_dict = torch.load(str(weights_path), map_location=self.device, weights_only=True)
+        # See wasb_ball_detector.py's comment on this same line - weights_only=True
+        # breaks loading legacy-format checkpoints regardless of map_location.
+        state_dict = torch.load(str(weights_path), map_location=self.device, weights_only=False)
         self.model.load_state_dict(state_dict)
         self.model.to(self.device)
         self.model.eval()
