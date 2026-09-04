@@ -15,6 +15,7 @@ from typing import Optional
 
 import numpy as np
 import torch
+import torch.hub
 import torchvision
 from torchvision.models.detection import FasterRCNN_ResNet50_FPN_Weights
 
@@ -43,9 +44,21 @@ class PlayerDetector:
     def __init__(self, device: Optional[str] = None, min_score: float = 0.85):
         self.device = resolve_device(device)
         self.min_score = min_score
-        self.model = torchvision.models.detection.fasterrcnn_resnet50_fpn(
-            weights=FasterRCNN_ResNet50_FPN_Weights.DEFAULT
-        )
+        weights = FasterRCNN_ResNet50_FPN_Weights.DEFAULT
+        # weights_backbone defaults to a *separate* pretrained download (the
+        # ImageNet-only backbone) even with weights=None - skip it too since
+        # the full checkpoint loaded below already includes trained backbone
+        # weights, and it would otherwise hit the same loading issue during
+        # construction, before our own weights_only=False load ever runs.
+        self.model = torchvision.models.detection.fasterrcnn_resnet50_fpn(weights=None, weights_backbone=None)
+        # Fetching the pretrained COCO checkpoint via weights=... above lets
+        # torchvision pick whatever weights_only default its torch.hub
+        # loader has - which, like the checkpoints in wasb_ball_detector.py
+        # etc, can break on this particular hosted file. Downloading and
+        # loading it ourselves with weights_only=False sidesteps that
+        # regardless of torch/torchvision version.
+        state_dict = torch.hub.load_state_dict_from_url(weights.url, progress=True, weights_only=False)
+        self.model.load_state_dict(state_dict)
         self.model.to(self.device)
         self.model.eval()
 
