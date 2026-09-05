@@ -68,6 +68,9 @@ export const api = {
 
   listVideos: () => request<Video[]>("/videos"),
 
+  listJobs: (activeOnly = false) =>
+    request<Job[]>(`/jobs${activeOnly ? "?active=true" : ""}`),
+
   getVideo: (videoId: string) => request<Video>(`/videos/${videoId}`),
 
   uploadVideo: (file: File, onProgress?: (fraction: number) => void) =>

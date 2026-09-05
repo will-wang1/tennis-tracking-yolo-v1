@@ -111,3 +111,58 @@ def test_create_job_rejects_unknown_calibration(client, uploaded_video):
         json={**_job_options(), "calibration_id": "does-not-exist"},
     )
     assert res.status_code == 404
+
+
+def _set_job(job_id: str, **fields) -> None:
+    db = SessionLocal()
+    try:
+        job = db.get(Job, job_id)
+        for key, value in fields.items():
+            setattr(job, key, value)
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_video_list_carries_the_latest_job_for_background_progress(client, uploaded_video):
+    """The home screen shows analysis progress per video without a request
+    per video, so the video list has to carry each video's newest job."""
+    headers, video = uploaded_video
+
+    before = client.get("/videos", headers=headers).json()
+    assert before[0]["latest_job"] is None
+
+    created = client.post(f"/videos/{video['id']}/jobs", headers=headers, json=_job_options()).json()
+    _set_job(created["id"], status="running", progress=37)
+
+    listed = client.get("/videos", headers=headers).json()
+    assert listed[0]["latest_job"]["id"] == created["id"]
+    assert listed[0]["latest_job"]["status"] == "running"
+    assert listed[0]["latest_job"]["progress"] == 37
+
+    # A second run on the same video supersedes the first.
+    newer = client.post(f"/videos/{video['id']}/jobs", headers=headers, json=_job_options()).json()
+    listed = client.get("/videos", headers=headers).json()
+    assert listed[0]["latest_job"]["id"] == newer["id"]
+
+
+def test_list_jobs_can_narrow_to_active_ones(client, uploaded_video):
+    headers, video = uploaded_video
+    finished = client.post(f"/videos/{video['id']}/jobs", headers=headers, json=_job_options()).json()
+    _set_job(finished["id"], status="done", progress=100)
+    running = client.post(f"/videos/{video['id']}/jobs", headers=headers, json=_job_options()).json()
+    _set_job(running["id"], status="running", progress=10)
+
+    all_ids = {job["id"] for job in client.get("/jobs", headers=headers).json()}
+    assert all_ids == {finished["id"], running["id"]}
+
+    active = client.get("/jobs?active=true", headers=headers).json()
+    assert [job["id"] for job in active] == [running["id"]]
+
+
+def test_list_jobs_only_shows_your_own(client, uploaded_video, auth_headers):
+    headers, video = uploaded_video
+    client.post(f"/videos/{video['id']}/jobs", headers=headers, json=_job_options())
+
+    other_headers = auth_headers(email="someone-else-jobs@example.com")
+    assert client.get("/jobs", headers=other_headers).json() == []

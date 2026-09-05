@@ -3,9 +3,17 @@ import { useNavigate } from "react-router-dom";
 import { api, ApiError } from "../api/client";
 import type { JobOptions, PublicConfig, Video } from "../api/types";
 import FeatureToggles from "../components/FeatureToggles";
+import JobProgress, { isActive } from "../components/JobProgress";
 import { DEFAULT_JOB_OPTIONS, PENDING_JOB_KEY } from "../constants";
 
 const DEFAULT_OPTIONS: JobOptions = DEFAULT_JOB_OPTIONS;
+const POLL_INTERVAL_MS = 2500;
+
+function formatDuration(seconds: number): string {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+}
 
 function UploadIcon() {
   return (
@@ -42,8 +50,34 @@ export default function Upload() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    api.listVideos().then(setVideos).catch(() => undefined);
     api.publicConfig().then(setConfig).catch(() => undefined);
+  }, []);
+
+  // Keep the list fresh while anything is still analysing, so progress keeps
+  // updating here after leaving the job's own page. Stops polling once
+  // nothing is in flight.
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+
+    async function poll() {
+      let keepPolling = true;
+      try {
+        const latest = await api.listVideos();
+        if (cancelled) return;
+        setVideos(latest);
+        keepPolling = latest.some((video) => isActive(video.latest_job));
+      } catch {
+        // Transient failure - try again rather than giving up on a live job.
+      }
+      if (!cancelled && keepPolling) timer = setTimeout(poll, POLL_INTERVAL_MS);
+    }
+
+    poll();
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, []);
 
   async function handleUpload() {
@@ -133,38 +167,43 @@ export default function Upload() {
         )}
         <ul className="video-list">
           {videos.map((video) => (
-            <li key={video.id}>
-              <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <span
-                  style={{
-                    width: 28,
-                    height: 28,
-                    borderRadius: "var(--radius-sm)",
-                    background: "var(--surface-inset)",
-                    color: "var(--text-accent)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    flexShrink: 0,
-                  }}
-                >
-                  <PlayIcon />
-                </span>
-                <span>
-                  <span className="filename">{video.filename}</span>
-                  {video.duration_s && (
-                    <span className="meta" style={{ marginLeft: 8 }}>
-                      {Math.floor(video.duration_s / 60)}h {Math.round(video.duration_s % 60)}m
-                    </span>
-                  )}
-                </span>
-              </span>
-              <button
-                className="btn btn-secondary"
-                onClick={() => setSelectedVideoId(video.id === selectedVideoId ? null : video.id)}
+            <li key={video.id} style={{ display: "block" }}>
+              <div
+                style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}
               >
-                {selectedVideoId === video.id ? "Close" : "Analyze"}
-              </button>
+                <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <span
+                    style={{
+                      width: 28,
+                      height: 28,
+                      borderRadius: "var(--radius-sm)",
+                      background: "var(--surface-inset)",
+                      color: "var(--text-accent)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      flexShrink: 0,
+                    }}
+                  >
+                    <PlayIcon />
+                  </span>
+                  <span>
+                    <span className="filename">{video.filename}</span>
+                    {video.duration_s && (
+                      <span className="meta" style={{ marginLeft: 8 }}>
+                        {formatDuration(video.duration_s)}
+                      </span>
+                    )}
+                  </span>
+                </span>
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => setSelectedVideoId(video.id === selectedVideoId ? null : video.id)}
+                >
+                  {selectedVideoId === video.id ? "Close" : "Analyze"}
+                </button>
+              </div>
+              {video.latest_job && <JobProgress job={video.latest_job} />}
             </li>
           ))}
         </ul>

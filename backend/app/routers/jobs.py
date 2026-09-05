@@ -61,6 +61,20 @@ def create_job(
     return job
 
 
+@router.get("/jobs", response_model=list[JobOut])
+def list_jobs(
+    active: bool = False,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """This user's jobs, newest first. `active=true` narrows to the ones still
+    working, which is what a progress indicator outside the job page needs."""
+    query = db.query(Job).filter(Job.user_id == user.id)
+    if active:
+        query = query.filter(Job.status.in_(("queued", "running")))
+    return query.order_by(Job.created_at.desc()).all()
+
+
 @router.get("/jobs/{job_id}", response_model=JobOut)
 def get_job(job_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     job = db.get(Job, job_id)

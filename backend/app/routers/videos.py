@@ -9,12 +9,34 @@ from app.config import get_settings
 from app.db import get_db
 from app import ffmpeg_utils, storage
 from app.ffmpeg_utils import FFmpegError
-from app.models import User, Video
-from app.schemas import VideoOut
+from app.models import Job, User, Video
+from app.schemas import JobOut, VideoOut
 
 router = APIRouter(prefix="/videos", tags=["videos"])
 
 _ALLOWED_SUFFIXES = {".mp4", ".mov", ".m4v", ".avi", ".mkv"}
+
+
+def _latest_jobs_by_video(db: Session, video_ids: list[str]) -> dict[str, Job]:
+    """Newest job per video, in one query rather than one per video."""
+    if not video_ids:
+        return {}
+    jobs = (
+        db.query(Job)
+        .filter(Job.video_id.in_(video_ids))
+        .order_by(Job.created_at.desc())
+        .all()
+    )
+    latest: dict[str, Job] = {}
+    for job in jobs:
+        latest.setdefault(job.video_id, job)
+    return latest
+
+
+def _with_latest_job(video: Video, job: Job | None) -> VideoOut:
+    out = VideoOut.model_validate(video)
+    out.latest_job = JobOut.model_validate(job) if job is not None else None
+    return out
 
 
 @router.post("", response_model=VideoOut, status_code=status.HTTP_201_CREATED)
@@ -70,7 +92,9 @@ def upload_video(
 
 @router.get("", response_model=list[VideoOut])
 def list_videos(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    return db.query(Video).filter(Video.user_id == user.id).order_by(Video.created_at.desc()).all()
+    videos = db.query(Video).filter(Video.user_id == user.id).order_by(Video.created_at.desc()).all()
+    latest = _latest_jobs_by_video(db, [video.id for video in videos])
+    return [_with_latest_job(video, latest.get(video.id)) for video in videos]
 
 
 @router.get("/{video_id}", response_model=VideoOut)
@@ -78,4 +102,4 @@ def get_video(video_id: str, db: Session = Depends(get_db), user: User = Depends
     video = db.get(Video, video_id)
     if video is None or video.user_id != user.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found")
-    return video
+    return _with_latest_job(video, _latest_jobs_by_video(db, [video.id]).get(video.id))

@@ -7,6 +7,7 @@ export interface Video {
   height: number | null;
   status: string;
   created_at: string;
+  latest_job: Job | null;
 }
 
 export interface CalibrationFrame {

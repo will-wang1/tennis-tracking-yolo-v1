@@ -30,6 +30,20 @@ class UserOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class JobOut(BaseModel):
+    id: str
+    video_id: str
+    options: dict
+    status: str
+    progress: int
+    error_message: Optional[str]
+    created_at: datetime
+    started_at: Optional[datetime]
+    finished_at: Optional[datetime]
+
+    model_config = {"from_attributes": True}
+
+
 class VideoOut(BaseModel):
     id: str
     filename: str
@@ -39,6 +53,9 @@ class VideoOut(BaseModel):
     height: Optional[int]
     status: str
     created_at: datetime
+    # The most recently created job for this video, so the video list alone
+    # can show live analysis progress without a request per video.
+    latest_job: Optional[JobOut] = None
 
     model_config = {"from_attributes": True}
 
@@ -82,20 +99,6 @@ class JobCreate(BaseModel):
     sidebar: bool = False
     minimap: bool = False
     calibration_id: Optional[str] = None
-
-
-class JobOut(BaseModel):
-    id: str
-    video_id: str
-    options: dict
-    status: str
-    progress: int
-    error_message: Optional[str]
-    created_at: datetime
-    started_at: Optional[datetime]
-    finished_at: Optional[datetime]
-
-    model_config = {"from_attributes": True}
 
 
 class JobResultOut(BaseModel):
