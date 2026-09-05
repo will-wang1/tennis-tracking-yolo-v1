@@ -86,8 +86,13 @@ class TrackNetArch(nn.Module):
 
 
 def resolve_device(device: str | None) -> str:
-    if device is None:
+    # Empty/blank counts as unset, not as a device name: an unset-but-present
+    # env var (PIPELINE_DEVICE= in a .env) arrives as "", and passing that on
+    # as a torch map_location fails with "don't know how to restore data
+    # location ... (tagged with )".
+    if device is None or not device.strip():
         return "cuda" if torch.cuda.is_available() else "cpu"
+    device = device.strip()
     if device.isdigit():
         return f"cuda:{device}"
     return device

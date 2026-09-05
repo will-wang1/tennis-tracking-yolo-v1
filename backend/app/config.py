@@ -8,6 +8,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -15,6 +16,24 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    @field_validator(
+        "invite_code",
+        "s3_endpoint_url",
+        "s3_public_endpoint_url",
+        "court_weights_path",
+        "pipeline_device",
+        mode="before",
+    )
+    @classmethod
+    def _blank_is_unset(cls, value: object) -> object:
+        """A var written but left empty (`PIPELINE_DEVICE=` in a .env) arrives
+        as "", not None, so the None default never applies and the empty
+        string gets used as a real value downstream - as a torch device it
+        fails deep inside torch.load, far from the cause."""
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     # Auth
     jwt_secret: str = "change-me-in-production"
