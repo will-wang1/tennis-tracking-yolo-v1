@@ -484,6 +484,11 @@ table.stats-table td.numeric {
   color: var(--status-error-fg);
 }
 
+.badge.cancelled {
+  background: var(--surface-inset);
+  color: var(--text-muted);
+}
+
 /* ── Headings ── */
 
 h1,

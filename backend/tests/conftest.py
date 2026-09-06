@@ -76,13 +76,23 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(ffmpeg_utils, "probe_video", fake_probe_video)
     monkeypatch.setattr(ffmpeg_utils, "extract_frame", fake_extract_frame)
 
-    sent_tasks: list[tuple[str, list]] = []
+    sent_tasks: list[tuple[str, list, dict]] = []
     monkeypatch.setattr(
-        celery_app, "send_task", lambda name, args=None, **kw: sent_tasks.append((name, args))
+        celery_app,
+        "send_task",
+        lambda name, args=None, **kw: sent_tasks.append((name, args, kw)),
+    )
+
+    # Cancelling revokes via the broker; there isn't one here, and the real
+    # call would just block on a connection timeout.
+    revoked: list[str] = []
+    monkeypatch.setattr(
+        celery_app.control, "revoke", lambda task_id, **kw: revoked.append(task_id)
     )
 
     with TestClient(app) as test_client:
         test_client.sent_tasks = sent_tasks  # type: ignore[attr-defined]
+        test_client.revoked_tasks = revoked  # type: ignore[attr-defined]
         yield test_client
 
 

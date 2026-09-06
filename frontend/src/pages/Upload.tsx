@@ -46,6 +46,7 @@ export default function Upload() {
   const [selectedVideoId, setSelectedVideoId] = useState<string | null>(null);
   const [options, setOptions] = useState<JobOptions>(DEFAULT_OPTIONS);
   const [pendingFileName, setPendingFileName] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
 
@@ -55,7 +56,8 @@ export default function Upload() {
 
   // Keep the list fresh while anything is still analysing, so progress keeps
   // updating here after leaving the job's own page. Stops polling once
-  // nothing is in flight.
+  // nothing is in flight; bumping refreshKey restarts it for an immediate
+  // re-fetch (e.g. right after cancelling).
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
@@ -78,7 +80,7 @@ export default function Upload() {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, []);
+  }, [refreshKey]);
 
   async function handleUpload() {
     const file = fileInputRef.current?.files?.[0];
@@ -203,7 +205,12 @@ export default function Upload() {
                   {selectedVideoId === video.id ? "Close" : "Analyze"}
                 </button>
               </div>
-              {video.latest_job && <JobProgress job={video.latest_job} />}
+              {video.latest_job && (
+                <JobProgress
+                  job={video.latest_job}
+                  onCancelled={() => setRefreshKey((key) => key + 1)}
+                />
+              )}
             </li>
           ))}
         </ul>

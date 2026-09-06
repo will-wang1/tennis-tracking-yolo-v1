@@ -1,14 +1,31 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { api } from "../api/client";
+import { api, ApiError } from "../api/client";
 import type { Job } from "../api/types";
+import { isActive } from "../components/JobProgress";
 
 const POLL_INTERVAL_MS = 2000;
 
 export default function JobStatus() {
   const { jobId } = useParams<{ jobId: string }>();
   const [job, setJob] = useState<Job | null>(null);
+  const [cancelling, setCancelling] = useState(false);
   const navigate = useNavigate();
+
+  async function handleCancel() {
+    if (!jobId) return;
+    setCancelling(true);
+    try {
+      setJob(await api.cancelJob(jobId));
+    } catch (err) {
+      // 409 just means it finished first - re-read rather than reporting it.
+      if (err instanceof ApiError && err.status === 409) {
+        setJob(await api.getJob(jobId));
+      }
+    } finally {
+      setCancelling(false);
+    }
+  }
 
   useEffect(() => {
     if (!jobId) return;
@@ -24,7 +41,9 @@ export default function JobStatus() {
           navigate(`/jobs/${jobId}/results`);
           return;
         }
-        if (latest.status !== "failed") {
+        // Only keep polling while there's still something to wait for -
+        // failed and cancelled are both final.
+        if (isActive(latest)) {
           timer = setTimeout(poll, POLL_INTERVAL_MS);
         }
       } catch {
@@ -59,6 +78,14 @@ export default function JobStatus() {
           )}
           {job.status === "queued" && (
             <p style={{ color: "var(--text-muted)", fontSize: 14 }}>Waiting for a worker to pick this up...</p>
+          )}
+          {job.status === "cancelled" && (
+            <p style={{ color: "var(--text-muted)", fontSize: 14 }}>This job was cancelled.</p>
+          )}
+          {isActive(job) && (
+            <button className="btn btn-secondary" onClick={handleCancel} disabled={cancelling}>
+              {cancelling ? "Cancelling..." : "Cancel analysis"}
+            </button>
           )}
         </>
       )}

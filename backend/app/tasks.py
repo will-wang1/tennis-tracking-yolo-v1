@@ -38,6 +38,11 @@ def process_video_task(self, job_id: str) -> None:
         job = db.get(Job, job_id)
         if job is None:
             return
+        # Celery's revoke only reaches workers that are alive to hear it, so a
+        # job cancelled while nothing was running would otherwise start anyway
+        # once a worker came back. The row is the source of truth.
+        if job.status == "cancelled":
+            return
 
         job.status = "running"
         job.started_at = datetime.now(timezone.utc)

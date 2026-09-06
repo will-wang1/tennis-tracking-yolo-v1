@@ -40,7 +40,7 @@ export interface Job {
   id: string;
   video_id: string;
   options: JobOptions;
-  status: "queued" | "running" | "done" | "failed";
+  status: "queued" | "running" | "done" | "failed" | "cancelled";
   progress: number;
   error_message: string | null;
   created_at: string;

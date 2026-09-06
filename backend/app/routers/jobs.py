@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -57,7 +58,10 @@ def create_job(
     # stack (torch/tensorflow/ultralytics/catboost). The API container is
     # deliberately lightweight (see backend/Dockerfile) and must never import
     # that; only the worker container needs it.
-    celery_app.send_task("app.tasks.process_video_task", args=[job.id])
+    #
+    # task_id is pinned to the job id so cancelling only needs the job id -
+    # no second identifier to store and keep in sync.
+    celery_app.send_task("app.tasks.process_video_task", args=[job.id], task_id=job.id)
     return job
 
 
@@ -80,6 +84,36 @@ def get_job(job_id: str, db: Session = Depends(get_db), user: User = Depends(get
     job = db.get(Job, job_id)
     if job is None or job.user_id != user.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    return job
+
+
+@router.post("/jobs/{job_id}/cancel", response_model=JobOut)
+def cancel_job(job_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """Stop a queued or running job. Also the way out of a job left stuck in
+    `running` because its worker died mid-run - there's nothing left to
+    revoke there, but the row still needs moving to a terminal state."""
+    job = db.get(Job, job_id)
+    if job is None or job.user_id != user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    if job.status not in ("queued", "running"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Job is already {job.status}",
+        )
+
+    # Best effort: tells a live worker to drop it (or kill it mid-run). If the
+    # broker is unreachable or no worker is listening, the status change below
+    # still stands, and the task itself re-checks for cancellation before it
+    # starts doing any real work.
+    try:
+        celery_app.control.revoke(job.id, terminate=True, signal="SIGTERM")
+    except Exception:  # noqa: BLE001 - a broker hiccup must not block cancelling
+        pass
+
+    job.status = "cancelled"
+    job.finished_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(job)
     return job
 
 

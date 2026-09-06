@@ -17,7 +17,9 @@ def test_create_job_dispatches_celery_task_by_name(client, uploaded_video):
 
     # Dispatched by task name (not by importing the task function directly -
     # see routers/jobs.py) so the API process never needs the ML stack.
-    assert client.sent_tasks == [("app.tasks.process_video_task", [body["id"]])]
+    assert [(name, args) for name, args, _ in client.sent_tasks] == [
+        ("app.tasks.process_video_task", [body["id"]])
+    ]
 
 
 def test_minimap_rejected_when_no_court_weights_configured(client, uploaded_video):
@@ -166,3 +168,55 @@ def test_list_jobs_only_shows_your_own(client, uploaded_video, auth_headers):
 
     other_headers = auth_headers(email="someone-else-jobs@example.com")
     assert client.get("/jobs", headers=other_headers).json() == []
+
+
+def test_cancel_stops_a_queued_job(client, uploaded_video):
+    headers, video = uploaded_video
+    created = client.post(f"/videos/{video['id']}/jobs", headers=headers, json=_job_options()).json()
+
+    res = client.post(f"/jobs/{created['id']}/cancel", headers=headers)
+    assert res.status_code == 200
+    assert res.json()["status"] == "cancelled"
+    assert res.json()["finished_at"] is not None
+
+    # No longer counted as in-flight by the progress indicator.
+    assert client.get("/jobs?active=true", headers=headers).json() == []
+
+
+def test_cancel_rescues_a_job_stuck_running_after_its_worker_died(client, uploaded_video):
+    headers, video = uploaded_video
+    created = client.post(f"/videos/{video['id']}/jobs", headers=headers, json=_job_options()).json()
+    _set_job(created["id"], status="running", progress=20)
+
+    res = client.post(f"/jobs/{created['id']}/cancel", headers=headers)
+    assert res.status_code == 200
+    assert res.json()["status"] == "cancelled"
+
+
+def test_cancelling_a_finished_job_is_a_conflict(client, uploaded_video):
+    headers, video = uploaded_video
+    created = client.post(f"/videos/{video['id']}/jobs", headers=headers, json=_job_options()).json()
+    _set_job(created["id"], status="done", progress=100)
+
+    res = client.post(f"/jobs/{created['id']}/cancel", headers=headers)
+    assert res.status_code == 409
+    assert "done" in res.json()["detail"]
+
+
+def test_cannot_cancel_someone_elses_job(client, uploaded_video, auth_headers):
+    headers, video = uploaded_video
+    created = client.post(f"/videos/{video['id']}/jobs", headers=headers, json=_job_options()).json()
+
+    other = auth_headers(email="not-your-job@example.com")
+    assert client.post(f"/jobs/{created['id']}/cancel", headers=other).status_code == 404
+    # ...and it's untouched.
+    assert client.get(f"/jobs/{created['id']}", headers=headers).json()["status"] == "queued"
+
+
+def test_task_id_matches_job_id_so_cancel_can_revoke_it(client, uploaded_video):
+    headers, video = uploaded_video
+    created = client.post(f"/videos/{video['id']}/jobs", headers=headers, json=_job_options()).json()
+    name, args, kwargs = client.sent_tasks[-1]
+    assert name == "app.tasks.process_video_task"
+    assert args == [created["id"]]
+    assert kwargs.get("task_id") == created["id"]

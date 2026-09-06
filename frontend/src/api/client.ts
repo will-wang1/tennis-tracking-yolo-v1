@@ -71,6 +71,8 @@ export const api = {
   listJobs: (activeOnly = false) =>
     request<Job[]>(`/jobs${activeOnly ? "?active=true" : ""}`),
 
+  cancelJob: (jobId: string) => request<Job>(`/jobs/${jobId}/cancel`, { method: "POST" }),
+
   getVideo: (videoId: string) => request<Video>(`/videos/${videoId}`),
 
   uploadVideo: (file: File, onProgress?: (fraction: number) => void) =>
