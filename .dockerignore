@@ -1,0 +1,37 @@
+# Keeps the build context small and free of stale artifacts. Only
+# requirements.txt, backend/ and src/ are actually COPY'd (see
+# backend/Dockerfile and backend/Dockerfile.worker) - everything below is
+# either mounted at runtime, built separately, or purely local.
+
+.git
+.github
+
+# Compiled bytecode - never worth shipping, and one less thing to wonder
+# about when a rebuild doesn't seem to have picked up a code change.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Local environments
+.venv/
+venv/
+env/
+
+# Model checkpoints are supplied at runtime via the ./weights bind mount in
+# docker-compose.yml, never copied into the image - and they're big enough
+# that including them makes every build crawl.
+weights/
+
+# Built and served by its own Dockerfile with its own context (./frontend)
+frontend/
+
+# Local data, outputs and secrets
+data/
+outputs/
+*.db
+*.sqlite3
+.env
+.env.*
+!.env.example
