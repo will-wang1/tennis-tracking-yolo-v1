@@ -10,25 +10,6 @@ export interface Video {
   latest_job: Job | null;
 }
 
-export interface CalibrationFrame {
-  frame_url: string;
-  width: number;
-  height: number;
-}
-
-export interface CalibrationPoint {
-  x: number;
-  y: number;
-}
-
-export interface Calibration {
-  id: string;
-  video_id: string;
-  court_type: "singles" | "doubles";
-  pixel_points: Record<string, [number, number]>;
-  created_at: string;
-}
-
 export interface JobOptions {
   bounce: boolean;
   speed: boolean;

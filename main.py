@@ -227,6 +227,16 @@ def main() -> None:
         "numbers. Requires --court-weights.",
     )
     parser.add_argument(
+        "--court-interval",
+        type=int,
+        default=1,
+        help="Run the court-keypoint model every Nth frame instead of every frame, carrying "
+        "the last good calibration forward in between (the same carry-forward already used "
+        "for frames where detection fails). This model is the most expensive thing in the "
+        "loop on CPU, and a fixed camera barely moves between frames, so raising this is "
+        "close to free accuracy-wise and a large speedup. Only used with --show-court.",
+    )
+    parser.add_argument(
         "--court-weights", default=str(REPO_ROOT / "weights" / "court_net_pretrained.pt")
     )
     parser.add_argument(

@@ -4,7 +4,7 @@ import { api, ApiError } from "../api/client";
 import type { JobOptions, PublicConfig, Video } from "../api/types";
 import FeatureToggles from "../components/FeatureToggles";
 import JobProgress, { isActive } from "../components/JobProgress";
-import { DEFAULT_JOB_OPTIONS, PENDING_JOB_KEY } from "../constants";
+import { DEFAULT_JOB_OPTIONS } from "../constants";
 
 const DEFAULT_OPTIONS: JobOptions = DEFAULT_JOB_OPTIONS;
 const POLL_INTERVAL_MS = 2500;
@@ -101,12 +101,7 @@ export default function Upload() {
     }
   }
 
-  function goToCalibration(videoId: string) {
-    sessionStorage.setItem(PENDING_JOB_KEY, JSON.stringify(options));
-    navigate(`/videos/${videoId}/calibrate`);
-  }
-
-  async function runWithoutCalibration(videoId: string) {
+  async function runAnalysis(videoId: string) {
     setError(null);
     try {
       const job = await api.createJob(videoId, options);
@@ -220,15 +215,15 @@ export default function Upload() {
         <div className="card">
           <h3 className="card-title">Choose analysis options</h3>
           <FeatureToggles value={options} onChange={setOptions} minimapAvailable={config.minimap_available} />
-          <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
-            <button className="btn btn-primary" onClick={() => runWithoutCalibration(selectedVideoId)}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 16 }}>
+            <button className="btn btn-primary" onClick={() => runAnalysis(selectedVideoId)}>
               Run now
             </button>
-            {options.speed && (
-              <button className="btn btn-secondary" onClick={() => goToCalibration(selectedVideoId)}>
-                Calibrate court first (for real km/h + landing heatmap)
-              </button>
-            )}
+            <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+              {config.minimap_available
+                ? "Court is calibrated automatically — speeds in km/h."
+                : "No court model configured — speeds in px/s, no landing heatmap."}
+            </span>
           </div>
         </div>
       )}

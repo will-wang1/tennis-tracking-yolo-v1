@@ -1,6 +1,4 @@
 import type {
-  Calibration,
-  CalibrationFrame,
   Job,
   JobOptions,
   JobResult,
@@ -103,34 +101,10 @@ export const api = {
       xhr.send(formData);
     }),
 
-  createCalibrationFrame: (videoId: string) =>
-    request<CalibrationFrame>(`/videos/${videoId}/calibration-frame`, { method: "POST" }),
-
-  createCalibration: (
-    videoId: string,
-    points: {
-      baseline_left: [number, number];
-      baseline_right: [number, number];
-      service_left: [number, number];
-      service_right: [number, number];
-    },
-    courtType: "singles" | "doubles"
-  ) =>
-    request<Calibration>(`/videos/${videoId}/calibration`, {
-      method: "POST",
-      body: JSON.stringify({
-        baseline_left: { x: points.baseline_left[0], y: points.baseline_left[1] },
-        baseline_right: { x: points.baseline_right[0], y: points.baseline_right[1] },
-        service_left: { x: points.service_left[0], y: points.service_left[1] },
-        service_right: { x: points.service_right[0], y: points.service_right[1] },
-        court_type: courtType,
-      }),
-    }),
-
-  createJob: (videoId: string, options: JobOptions, calibrationId?: string) =>
+  createJob: (videoId: string, options: JobOptions) =>
     request<Job>(`/videos/${videoId}/jobs`, {
       method: "POST",
-      body: JSON.stringify({ ...options, calibration_id: calibrationId ?? null }),
+      body: JSON.stringify(options),
     }),
 
   getJob: (jobId: string) => request<Job>(`/jobs/${jobId}`),

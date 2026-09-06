@@ -32,7 +32,7 @@ export default function FeatureToggles({ value, onChange, minimapAvailable }: Pr
           onChange={(e) => set("speed", e.target.checked)}
         />
         <label htmlFor="toggle-speed">
-          Shot speed <small>- px/s, or km/h if you calibrate the court</small>
+          Shot speed <small>- km/h when a court model is configured, px/s otherwise</small>
         </label>
       </div>
       <div className="toggle-row">

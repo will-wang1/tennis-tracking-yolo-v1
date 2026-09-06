@@ -66,6 +66,12 @@ def process_video_task(self, job_id: str) -> None:
 
             settings = get_settings()
             minimap = bool(job.options.get("minimap"))
+            # Calibrate automatically from the court-keypoint model whenever
+            # one is configured - no clicking four corners by hand. It also
+            # tracks a camera that pans, which a one-off fixed homography
+            # can't. Without the model there's simply no calibration, and
+            # speeds come back in px/s rather than km/h.
+            auto_court = bool(settings.court_weights_path)
             options = PipelineOptions(
                 input=str(source_path),
                 output=str(raw_output_path),
@@ -79,9 +85,14 @@ def process_video_task(self, job_id: str) -> None:
                 speed=bool(job.options.get("speed")),
                 sidebar=bool(job.options.get("sidebar")),
                 minimap=minimap,
-                show_court=minimap,
+                show_court=auto_court,
                 court_weights=settings.court_weights_path or "",
-                calibration=str(calibration_path) if calibration_path else None,
+                court_interval=settings.court_interval,
+                # Mutually exclusive with show_court (see pipeline._validate):
+                # a per-frame detected court supersedes a fixed homography.
+                calibration=(
+                    str(calibration_path) if calibration_path and not auto_court else None
+                ),
                 stats=str(stats_path),
             )
 

@@ -72,6 +72,10 @@ class Settings(BaseSettings):
     tracknet_weights_path: str = str(REPO_ROOT / "weights" / "tracknet_pretrained.pt")
     bounce_weights_path: str = str(REPO_ROOT / "weights" / "bounce_catboost_pretrained.cbm")
     court_weights_path: Optional[str] = None
+    # Run the court-keypoint model every Nth frame rather than every frame
+    # (see src/pipeline.py's court_interval). It's the most expensive model
+    # in the loop, and a fixed camera barely moves between frames.
+    court_interval: int = 30
     pipeline_device: Optional[str] = None  # e.g. "cuda:0"; None lets each model pick its own default
 
     # Uploads

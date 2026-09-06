@@ -6,7 +6,6 @@ import Landing from "./pages/Landing";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import Upload from "./pages/Upload";
-import Calibrate from "./pages/Calibrate";
 import JobStatus from "./pages/JobStatus";
 import Results from "./pages/Results";
 
@@ -35,14 +34,6 @@ function AppRoutes() {
             element={
               <ProtectedRoute>
                 <Upload />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/videos/:videoId/calibrate"
-            element={
-              <ProtectedRoute>
-                <Calibrate />
               </ProtectedRoute>
             }
           />

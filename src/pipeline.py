@@ -100,6 +100,11 @@ class PipelineOptions:
     speed: bool = False
     show_court: bool = False
     court_weights: str = str(REPO_ROOT / "weights" / "court_net_pretrained.pt")
+    # Run the court-keypoint model every Nth frame instead of every frame,
+    # carrying the last good calibration forward in between. A fixed camera
+    # barely moves, and this model is the most expensive thing in the loop on
+    # CPU. 1 = every frame (the original behaviour).
+    court_interval: int = 1
     minimap: bool = False
     speed_window: int = 1
     net_speed_min_frames: int = 4
@@ -146,6 +151,8 @@ def _validate(options: PipelineOptions) -> None:
         )
     if options.bounce_method == "velocity" and not (options.show_court or options.calibration):
         raise ValueError("bounce_method velocity requires show_court or calibration")
+    if options.court_interval < 1:
+        raise ValueError("court_interval must be at least 1 (1 = detect the court every frame)")
 
 
 def run_pipeline(
@@ -223,10 +230,12 @@ def run_pipeline(
             # A frame where the detector doesn't find enough confident
             # keypoints (motion blur, court briefly out of frame) carries
             # forward the last good calibration rather than leaving a gap -
-            # the camera can't have moved far in one missed frame.
-            named_points = court_detector.detect(frame) or {}
-            if len(named_points) >= 4:
-                last_good_calibration = CourtCalibration.from_keypoints(named_points)
+            # the camera can't have moved far in one missed frame. The same
+            # carry-forward is what lets court_interval skip frames outright.
+            if i % options.court_interval == 0:
+                named_points = court_detector.detect(frame) or {}
+                if len(named_points) >= 4:
+                    last_good_calibration = CourtCalibration.from_keypoints(named_points)
             if last_good_calibration is not None:
                 calibrations_by_frame[i] = last_good_calibration
             if options.minimap:
@@ -314,28 +323,37 @@ def run_pipeline(
             use_flight_segments=not options.no_flight_segments,
         )
         impacts = analysis.impacts
+        # Which frames are bounces is decided by the parabolic detector in
+        # every case. It used to be decided by the touchdown classifier
+        # whenever a calibration existed, which meant calibrating a video
+        # silently swapped the bounce detector for a different one - and
+        # without player boxes (i.e. unless --minimap is on) that classifier
+        # falls back to its direction rule alone and disagrees badly. The
+        # calibration's job here is only to say WHERE each bounce landed in
+        # metres, not WHICH frames count as bounces. Racket contacts still
+        # come from the classifier, via analysis.contacts under --contacts.
+        bounces = detect_bounces_parabolic(
+            analysis.positions,
+            calibrations_by_frame=calibrations_by_frame if have_calibration else None,
+        )
         if have_calibration:
-            # The bounce's world position is reprojected from the MAIN
-            # (smoothed) trajectory's position at that frame - the same
-            # position the minimap's live ball dot and the on-screen trail
-            # are drawn from - rather than from the impact's own unsmoothed
-            # x/y. Using the displayed position instead means the landing
-            # mark always sits on top of the visible ball, at the cost of a
-            # little precision in exchange for a picture that agrees with
-            # itself. Classification (is_bounce, kind, timing) is untouched
-            # - only where the result is DRAWN changes.
-            def _bounce_event(impact):
-                shown = positions_by_frame.get(impact.frame_idx)
-                x, y = (shown.x, shown.y) if shown is not None else (impact.x, impact.y)
-                calibration = calibrations_by_frame.get(impact.frame_idx)
-                world_x, world_y = calibration.pixel_to_world(x, y) if calibration else (None, None)
-                return BounceEvent(
-                    frame_idx=impact.frame_idx, x=x, y=y, world_x=world_x, world_y=world_y
-                )
+            # Re-seat each landing mark on the MAIN (smoothed) trajectory's
+            # position for that frame - the same position the visible trail
+            # and the minimap's ball dot are drawn from - so the mark sits on
+            # top of the ball the viewer can actually see, and re-project
+            # from there. Costs a little precision for a picture that agrees
+            # with itself; which frames are bounces is untouched.
+            def _redrawn(bounce: BounceEvent) -> BounceEvent:
+                shown = positions_by_frame.get(bounce.frame_idx)
+                if shown is None:
+                    return bounce
+                calibration = calibrations_by_frame.get(bounce.frame_idx)
+                if calibration is None:
+                    return replace(bounce, x=shown.x, y=shown.y)
+                world_x, world_y = calibration.pixel_to_world(shown.x, shown.y)
+                return replace(bounce, x=shown.x, y=shown.y, world_x=world_x, world_y=world_y)
 
-            bounces = [_bounce_event(impact) for impact in impacts if impact.is_bounce]
-        else:
-            bounces = detect_bounces_parabolic(analysis.positions)
+            bounces = [_redrawn(bounce) for bounce in bounces]
         print(f"Detected {len(bounces)} bounces")
         if options.contacts:
             contacts = analysis.contacts
