@@ -13,15 +13,35 @@ straight from FEATURE_NAMES-named columns rather than recomputing anything.
         --labels outputs/hardcourt/bounce_candidates_labeled.csv \
                  outputs/grasscourt/bounce_candidates_labeled.csv \
                  outputs/bigDF_reference_labeled.csv \
+                 outputs/tracknet_bounce_labeled.csv \
         --out weights/bounce_classifier.pkl
 
-Our own two clips contribute only a couple dozen labeled candidates -
-nowhere near enough on their own for a train/test split to mean anything,
-which is exactly why scripts/import_reference_bounce_dataset.py's ~150
-additional rows matter here. This still reports StratifiedKFold
-cross-validation instead of a single holdout accuracy, and the result
-should be read as directional, not a certified accuracy figure - same
-honesty caveat as train_stroke_classifier.py.
+INCLUDE THE TRACKNET CSV. It is by far the largest source (1,064 of the
+1,230 rows) and was for a while left out by accident: the shipped
+weights/bounce_classifier.pkl was fitted on 2026-08-08 from the three
+smaller files, nine days BEFORE
+scripts/import_tracknet_bounce_dataset.py produced
+outputs/tracknet_bounce_labeled.csv, and was never refitted.
+
+What adding it is worth, measured on a HELD-OUT-BY-CLIP split rather than
+cross-validation (train on TrackNet games 1-8, test on games 9-10, 193
+events from two clips the model never saw):
+
+    original three files only (166 rows) : 0.839
+    + TrackNet games 1-8 (871 rows)      : 0.964
+    difference                           : +0.124, 95% CI [+0.073, +0.181]
+
+The confidence interval excludes zero, so that is a real gain rather than
+a lucky split. Note what it took to SEE it: scored instead against this
+repo's three hand-labelled clips - 31 bounce-vs-contact events in total -
+the same two models tie at 24/31, because a 2-event difference on n=31
+carries a ~+/-0.16 binomial interval, wider than the effect. Evaluation
+data, not training data, is now the scarce thing here.
+
+StratifiedKFold cross-validation is still what this script prints, and it
+should still be read as directional rather than a certified accuracy -
+same honesty caveat as train_stroke_classifier.py. The held-out figures
+above are the ones to trust.
 """
 
 import argparse
