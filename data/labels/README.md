@@ -44,3 +44,19 @@ sit a few frames from the true impact even where the event is certain;
 `9.67` in `video_input2` is flagged that way in its note. Where a marker
 was corrected rather than volunteered ("3.73 is actually contact but
 labelled bounce"), the time is the marker's, not an independent reading.
+
+`alcaraz_djokovic_impacts.csv` covers the first 2:29 of a real (non-cropped)
+broadcast clip, `alcaraz_djokovic_trim229.mp4` - the first labelled clip
+that is a genuine multi-rally excerpt rather than a single pre-cropped
+point, and the first sourced from a hand-written free-text labelling
+message rather than a live back-and-forth. Timestamps for events the
+labeller called out explicitly (a wrong bounce, a wrong contact, a wrong
+kind) are exact, read off the same render's own printed timestamps. Rows
+noted "currently missing entirely (recall gap)" are DIFFERENT: the
+labeller gave only an approximate time or range ("around 27.1", "from 32
+to 42"), because nothing was detected there to correct - `seconds` for
+those is this project's own best placement within the range given, not an
+independently pinned instant, and `tolerance_s` is set wider (0.35s)
+accordingly. The 143.26s row is a rare CONFIRMATION rather than a
+correction - the labeller described what a nearby event should be, and it
+turned out to already be exactly that.

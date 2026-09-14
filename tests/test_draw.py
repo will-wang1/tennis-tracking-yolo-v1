@@ -7,12 +7,15 @@ from src.analysis.court_calibration import FULL_COURT_REFERENCE_POINTS, CourtCal
 from src.analysis.flight_segmenter import find_flight_segments
 from src.analysis.parabolic_bounce_detector import BounceCandidate
 from src.tracking.ball_tracker import TrackedPosition
+from src.analysis.speed_estimator import ShotSpeed
 from src.visualize.draw import (
     ARC_COLOR,
     BounceMarkerDrawer,
     CourtOverlayDrawer,
     ImpactMarkerDrawer,
     ShotArcDrawer,
+    StatsPanelDrawer,
+    TrailDrawer,
 )
 
 
@@ -203,9 +206,9 @@ class ShotArcDrawerTest(unittest.TestCase):
         self.assertEqual(frame.shape, (400, 640, 3))
 
 
-def _impact(frame_idx, kind):
+def _impact(frame_idx, kind, x=0.0, y=0.0):
     return BounceCandidate(
-        frame_idx=frame_idx, t=float(frame_idx), x=0.0, y=0.0,
+        frame_idx=frame_idx, t=float(frame_idx), x=x, y=y,
         restitution=0.5, horizontal_ratio=0.8, speed_ratio=0.7, rmse=1.0,
         is_bounce=kind == "bounce", kind=kind,
     )
@@ -335,6 +338,62 @@ class WorldToPixelTest(unittest.TestCase):
         self.assertNotEqual(narrow.world_to_pixel(5.0, 10.0), wide.world_to_pixel(5.0, 10.0))
 
 
+def _impact_for_trail(t, frame_idx=None, kind="contact"):
+    return BounceCandidate(
+        frame_idx=frame_idx if frame_idx is not None else int(round(t)),
+        t=float(t), x=0.0, y=0.0,
+        restitution=0.0, horizontal_ratio=0.0, speed_ratio=0.0, rmse=0.0,
+        kind=kind,
+    )
+
+
+class TrailDrawerTest(unittest.TestCase):
+    def setUp(self):
+        self.drawer = TrailDrawer(trail_length=15, fps=30.0)
+
+    def _position(self, frame_idx, x=100.0, y=100.0):
+        return TrackedPosition(frame_idx=frame_idx, x=x, y=y, interpolated=False)
+
+    def test_a_position_is_drawn(self):
+        frame = _blank(300, 300)
+        self.drawer.draw(frame, self._position(0))
+        self.assertTrue(frame.any())
+
+    def test_no_impact_data_behaves_exactly_as_before(self):
+        # fps=None means impact-based clearing is inert - the plain sliding
+        # trail keeps working with no impact argument at all
+        drawer = TrailDrawer(trail_length=15)
+        frame = _blank(300, 300)
+        drawer.draw(frame, self._position(0))
+        self.assertTrue(frame.any())
+
+    def test_a_rally_gap_clears_the_trail(self):
+        # 30fps, default rally_gap_seconds=4.0 -> anything past 120 frames
+        self.drawer.draw(_blank(300, 300), self._position(0), _impact_for_trail(0, frame_idx=0))
+        far_frame = _blank(300, 300)
+        # no new position this frame (tracking hasn't resumed yet) - only
+        # the new rally's impact arrives
+        self.drawer.draw(far_frame, None, _impact_for_trail(500, frame_idx=500))
+
+        self.assertEqual(len(self.drawer.trail), 0)
+        self.assertFalse(far_frame.any())
+
+    def test_within_the_rally_gap_the_trail_is_not_cleared(self):
+        self.drawer.draw(_blank(300, 300), self._position(0), _impact_for_trail(0, frame_idx=0))
+        self.drawer.draw(_blank(300, 300), self._position(30), _impact_for_trail(30, frame_idx=30))
+
+        self.assertEqual(len(self.drawer.trail), 2)
+
+    def test_the_new_rallys_position_still_draws_after_clearing(self):
+        self.drawer.draw(_blank(300, 300), self._position(0, x=50.0, y=50.0), _impact_for_trail(0, frame_idx=0))
+        frame = _blank(300, 300)
+        self.drawer.draw(frame, self._position(500, x=200.0, y=200.0), _impact_for_trail(500, frame_idx=500))
+
+        self.assertEqual(len(self.drawer.trail), 1)
+        self.assertTrue(frame[200, 200].any())
+        self.assertFalse(frame[50, 50].any())
+
+
 class BounceMarkerDrawerTest(unittest.TestCase):
     """A bounce is a fixed spot on the COURT, so its marker must track the
     court as the camera pans/zooms, not stay fixed on screen."""
@@ -343,7 +402,7 @@ class BounceMarkerDrawerTest(unittest.TestCase):
         self.narrow = scaled_calibration(scale=1.0)
         self.wide = scaled_calibration(scale=2.0)
         self.bounce = BounceEvent(frame_idx=10, x=999.0, y=999.0, world_x=5.0, world_y=10.0)
-        self.drawer = BounceMarkerDrawer()
+        self.drawer = BounceMarkerDrawer(fps=30.0)
 
     def test_draws_at_the_reprojected_world_position_not_the_stored_pixel(self):
         frame = _blank(1200, 1200)
@@ -360,7 +419,7 @@ class BounceMarkerDrawerTest(unittest.TestCase):
         # calibration, must land somewhere else - never at a fixed pixel
         narrow_frame, wide_frame = _blank(600, 1200), _blank(600, 1200)
         self.drawer.draw(narrow_frame, self.bounce, self.narrow)
-        second = BounceMarkerDrawer()
+        second = BounceMarkerDrawer(fps=30.0)
         second.draw(wide_frame, self.bounce, self.wide)
 
         self.assertFalse(np.array_equal(narrow_frame, wide_frame))
@@ -383,9 +442,31 @@ class BounceMarkerDrawerTest(unittest.TestCase):
     def test_falls_back_to_the_stored_pixel_when_the_bounce_has_no_world_position(self):
         undated = BounceEvent(frame_idx=10, x=999.0, y=999.0, world_x=None, world_y=None)
         frame = _blank(1200, 1200)
-        BounceMarkerDrawer().draw(frame, undated, self.narrow)
+        BounceMarkerDrawer(fps=30.0).draw(frame, undated, self.narrow)
 
         self.assertTrue(frame[999, 999].any())
+
+    def test_a_gap_beyond_the_rally_threshold_clears_earlier_markers(self):
+        early = BounceEvent(frame_idx=10, x=100.0, y=100.0, world_x=5.0, world_y=10.0)
+        # 30fps, gap_seconds default 4.0 -> anything more than 120 frames later
+        later = BounceEvent(frame_idx=500, x=200.0, y=200.0, world_x=80.0, world_y=90.0)
+
+        self.drawer.draw(_blank(600, 1200), early, self.narrow)
+        frame = _blank(600, 1200)
+        self.drawer.draw(frame, later, self.narrow)
+
+        self.assertEqual(self.drawer.markers, [later])
+        x, y = self.narrow.world_to_pixel(5.0, 10.0)
+        self.assertFalse(frame[int(y) - 5:int(y) + 5, int(x) - 5:int(x) + 5].any())
+
+    def test_a_gap_within_the_rally_threshold_keeps_earlier_markers(self):
+        early = BounceEvent(frame_idx=10, x=100.0, y=100.0, world_x=5.0, world_y=10.0)
+        soon_after = BounceEvent(frame_idx=40, x=200.0, y=200.0, world_x=6.0, world_y=11.0)  # 1s later
+
+        self.drawer.draw(_blank(600, 1200), early, self.narrow)
+        self.drawer.draw(_blank(600, 1200), soon_after, self.narrow)
+
+        self.assertEqual(self.drawer.markers, [early, soon_after])
 
 
 class ImpactMarkerDrawerBounceTrackingTest(unittest.TestCase):
@@ -437,6 +518,133 @@ class ImpactMarkerDrawerBounceTrackingTest(unittest.TestCase):
         self.drawer.draw(frame, 10, {10: self._bounce(kind="unknown")}, self.narrow)
 
         self.assertEqual(self.drawer.bounces, [])
+
+    def test_a_rally_gap_clears_earlier_bounce_markers(self):
+        # 30fps, default rally_gap_seconds=4.0 -> anything past 120 frames
+        first = self._bounce(frame_idx=10)
+        later = self._bounce(frame_idx=500, x=50.0, y=50.0)
+        self.drawer.draw(_blank(600, 1200), 10, {10: first}, self.narrow)
+
+        self.drawer.draw(_blank(600, 1200), 500, {500: later}, self.narrow)
+
+        self.assertEqual(len(self.drawer.bounces), 1)
+        self.assertEqual(self.drawer.bounces[0][2:4], (50.0, 50.0))
+
+    def test_a_contact_still_resets_the_gap_even_though_it_draws_no_marker(self):
+        # the rally-gap clock has to track ANY impact, not just bounces -
+        # otherwise a rally with contacts spaced under the threshold, but
+        # with no bounce in between for a long stretch, would wrongly clear
+        first = self._bounce(frame_idx=10)
+        contact_mid_rally = self._bounce(frame_idx=100, kind="contact")
+        second_bounce = self._bounce(frame_idx=150, x=50.0, y=50.0)
+        self.drawer.draw(_blank(600, 1200), 10, {10: first}, self.narrow)
+        self.drawer.draw(_blank(600, 1200), 100, {100: contact_mid_rally}, self.narrow)
+
+        self.drawer.draw(_blank(600, 1200), 150, {150: second_bounce}, self.narrow)
+
+        # gap from the contact (frame 100) to this bounce (frame 150) is
+        # well under the threshold, so the frame-10 bounce should survive
+        self.assertEqual(len(self.drawer.bounces), 2)
+
+    def test_within_the_rally_gap_earlier_bounce_markers_survive(self):
+        first = self._bounce(frame_idx=10)
+        soon_after = self._bounce(frame_idx=40, x=50.0, y=50.0)  # 1s later at 30fps
+        self.drawer.draw(_blank(600, 1200), 10, {10: first}, self.narrow)
+
+        self.drawer.draw(_blank(600, 1200), 40, {40: soon_after}, self.narrow)
+
+        self.assertEqual(len(self.drawer.bounces), 2)
+
+
+class StatsPanelDrawerTest(unittest.TestCase):
+    def setUp(self):
+        self.narrow = scaled_calibration(scale=1.0)
+        self.drawer = StatsPanelDrawer(fps=30.0, width=100)
+
+    def test_widens_the_frame_by_its_own_width(self):
+        frame = _blank(400, 640)
+        result = self.drawer.draw(frame, 0)
+
+        self.assertEqual(result.shape, (400, 740, 3))
+
+    def test_no_rally_yet_before_any_impact(self):
+        self.drawer.draw(_blank(), 0)
+        self.assertEqual(self.drawer.rally_count, 0)
+
+    def test_first_impact_starts_rally_one(self):
+        self.drawer.draw(_blank(), 5, impact=_impact(5, "contact"))
+        self.assertEqual(self.drawer.rally_count, 1)
+        self.assertEqual(self.drawer.total_contacts, 1)
+        self.assertEqual(self.drawer.current_rally_shots, 1)
+
+    def test_a_close_impact_stays_in_the_same_rally(self):
+        self.drawer.draw(_blank(), 0, impact=_impact(0, "contact"))
+        self.drawer.draw(_blank(), 30, impact=_impact(30, "bounce"))  # 1s later
+
+        self.assertEqual(self.drawer.rally_count, 1)
+        self.assertEqual(self.drawer.total_bounces, 1)
+        self.assertEqual(self.drawer.current_rally_shots, 1)
+        self.assertEqual(self.drawer.current_rally_bounces, 1)
+
+    def test_a_long_gap_starts_a_new_rally_and_resets_the_current_tally(self):
+        self.drawer.draw(_blank(), 0, impact=_impact(0, "contact"))
+        self.drawer.draw(_blank(), 30, impact=_impact(30, "bounce"))
+        far_frame = int(30 + self.drawer.rally_gap_seconds * 30 * 2)  # well past the gap
+        self.drawer.draw(_blank(), far_frame, impact=_impact(far_frame, "contact"))
+
+        self.assertEqual(self.drawer.rally_count, 2)
+        # totals still remember the first rally's bounce...
+        self.assertEqual(self.drawer.total_bounces, 1)
+        # ...but the CURRENT rally's tally starts over
+        self.assertEqual(self.drawer.current_rally_shots, 1)
+        self.assertEqual(self.drawer.current_rally_bounces, 0)
+
+    def test_unknown_impacts_count_toward_the_total_but_not_shots_or_bounces(self):
+        self.drawer.draw(_blank(), 0, impact=_impact(0, "unknown"))
+
+        self.assertEqual(self.drawer.total_unattributed, 1)
+        self.assertEqual(self.drawer.total_contacts, 0)
+        self.assertEqual(self.drawer.total_bounces, 0)
+
+    def test_contact_side_is_attributed_from_the_calibration_at_its_own_frame(self):
+        # world (5, 2) is on the far half - see classify_court_half
+        far_contact = _impact(0, "contact", x=5.0, y=2.0)
+        self.drawer.draw(_blank(), 0, impact=far_contact, calibration=self.narrow)
+
+        self.assertEqual(self.drawer.far_contacts, 1)
+        self.assertEqual(self.drawer.near_contacts, 0)
+
+    def test_no_calibration_leaves_the_side_split_at_zero(self):
+        self.drawer.draw(_blank(), 0, impact=_impact(0, "contact"), calibration=None)
+
+        self.assertEqual(self.drawer.near_contacts, 0)
+        self.assertEqual(self.drawer.far_contacts, 0)
+
+    def test_peak_speed_tracks_the_fastest_completed_shot_so_far(self):
+        slower = ShotSpeed(start_frame=0, end_frame=10, peak_frame=5, peak_speed=80.0, unit="km/h")
+        faster = ShotSpeed(start_frame=11, end_frame=20, peak_frame=15, peak_speed=120.0, unit="km/h")
+
+        self.drawer.draw(_blank(), 10, completed_shot=slower)
+        self.assertEqual(self.drawer.peak_speed, (80.0, "km/h"))
+
+        self.drawer.draw(_blank(), 20, completed_shot=faster)
+        self.assertEqual(self.drawer.peak_speed, (120.0, "km/h"))
+
+    def test_a_slower_completed_shot_does_not_lower_the_running_peak(self):
+        faster = ShotSpeed(start_frame=0, end_frame=10, peak_frame=5, peak_speed=120.0, unit="km/h")
+        slower = ShotSpeed(start_frame=11, end_frame=20, peak_frame=15, peak_speed=80.0, unit="km/h")
+
+        self.drawer.draw(_blank(), 10, completed_shot=faster)
+        self.drawer.draw(_blank(), 20, completed_shot=slower)
+
+        self.assertEqual(self.drawer.peak_speed, (120.0, "km/h"))
+
+    def test_a_frame_with_nothing_new_still_draws_the_current_totals(self):
+        self.drawer.draw(_blank(), 0, impact=_impact(0, "contact"))
+        result = self.drawer.draw(_blank(400, 640), 1)  # no impact, no completed shot
+
+        self.assertTrue(_painted(result) > 0)  # the panel text is still drawn
+        self.assertEqual(self.drawer.total_contacts, 1)  # state carried over
 
 
 if __name__ == "__main__":

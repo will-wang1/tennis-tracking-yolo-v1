@@ -15,7 +15,11 @@ import numpy as np
 
 from src.analysis.bounce_detector import BounceEvent
 from src.analysis.court_calibration import CourtCalibration, FULL_COURT_REFERENCE_POINTS
+from src.analysis.court_zones import classify_court_half
 from src.analysis.flight_segmenter import FlightSegment, find_segment_impacts
+from src.analysis.match_stats import DEFAULT_RALLY_GAP_SECONDS
+from src.analysis.parabolic_bounce_detector import BounceCandidate
+from src.analysis.speed_estimator import ShotSpeed
 from src.analysis.stroke_classifier import StrokePrediction
 from src.detection.pose_detector import PersonPose
 from src.tracking.ball_tracker import TrackedPosition
@@ -39,6 +43,8 @@ CONTACT_MARKER_COLOR = (0, 165, 255)  # orange, clearly not the bounce magenta
 
 SIDEBAR_BACKGROUND = (30, 30, 30)
 SIDEBAR_TEXT_COLOR = (255, 255, 255)
+STATS_PANEL_HEADER_COLOR = (0, 255, 255)  # yellow, matches the ball trail
+STATS_PANEL_MUTED_COLOR = (150, 150, 150)
 
 COURT_LINE_COLOR = (0, 200, 255)  # orange
 COURT_CORNER_COLOR = (0, 255, 255)  # yellow
@@ -59,10 +65,45 @@ COURT_CORNER_NAMES = ("baseline_far_left", "baseline_far_right", "baseline_near_
 
 
 class TrailDrawer:
-    def __init__(self, trail_length: int = 15):
-        self.trail: deque[TrackedPosition] = deque(maxlen=trail_length)
+    """A short, continuously-sliding trail of the ball's `trail_length` most
+    recent positions - self-clearing by construction on every ordinary
+    frame, since old points fall off the deque as new ones arrive. That
+    breaks down across a GAP in ball tracking, though: nothing arrives to
+    push old points out, so the trail freezes on wherever the ball last
+    was and stays drawn there, unmoving, for as long as tracking stays
+    lost - exactly what happens between rallies (see the "not enough
+    tracked positions either side" stretches spanning several seconds in
+    real multi-rally footage). `rally_gap_seconds` (the same threshold
+    match_stats.py's own rally grouping and the other drawers here use)
+    clears the trail outright the moment a gap that long passes since the
+    previous impact of ANY kind, so a new rally starts with a clean trail
+    instead of a stale clump of dots from the point before it.
+    """
 
-    def draw(self, frame: np.ndarray, position: Optional[TrackedPosition]) -> np.ndarray:
+    def __init__(self, trail_length: int = 15, fps: Optional[float] = None, rally_gap_seconds: float = DEFAULT_RALLY_GAP_SECONDS):
+        self.trail: deque[TrackedPosition] = deque(maxlen=trail_length)
+        self.fps = fps
+        self.rally_gap_seconds = rally_gap_seconds
+        self._last_impact_t: Optional[float] = None
+
+    def draw(
+        self,
+        frame: np.ndarray,
+        position: Optional[TrackedPosition],
+        impact: Optional[BounceCandidate] = None,
+    ) -> np.ndarray:
+        # `impact` is optional and only does anything when `fps` was given
+        # at construction - a caller with no impact data (--bounce off) or
+        # no fps simply gets the plain sliding trail, same as before this
+        # existed.
+        if impact is not None and self.fps is not None:
+            if (
+                self._last_impact_t is not None
+                and (impact.t - self._last_impact_t) / self.fps > self.rally_gap_seconds
+            ):
+                self.trail.clear()
+            self._last_impact_t = impact.t
+
         if position is not None:
             self.trail.append(position)
 
@@ -275,28 +316,51 @@ class PoseDrawer:
 
 
 class BounceMarkerDrawer:
-    """Every bounce detected so far stays drawn for the rest of the video -
-    a persistent landing map, not a transient flash.
+    """Every bounce in the CURRENT rally stays drawn as a persistent landing
+    map, not a transient flash - but only for the current rally. Markers
+    are cleared the moment a new rally starts (a gap of `rally_gap_seconds`
+    since the previous bounce this drawer saw), the same threshold
+    match_stats.py's own rally grouping uses. Without this, a multi-rally
+    clip accumulates every earlier point's landing spots on screen forever,
+    which is meaningless clutter once play has moved on - a real point
+    tracker gives you here you know it applies to, not the whole video.
 
-    A bounce is a fixed spot on the COURT, so each marker is reprojected
-    fresh from its `world_x`/`world_y` through the CURRENT frame's
-    `calibration` - not drawn at the pixel position it happened to occupy
-    the moment it was detected. A panning/zooming broadcast camera changes
-    the pixel<->world mapping frame to frame (see `CourtOverlayDrawer`,
-    which reprojects the court lines the same way), and a marker held fixed
-    in screen space drifts away from those lines as the camera moves -
-    measured on the zverev clip, up to 94px over 744 frames for a single
-    fixed court point. Falls back to the stored pixel position when no
-    world coordinate or no current calibration is available.
+    A bounce is a fixed spot on the COURT, so each STILL-VISIBLE marker is
+    reprojected fresh from its `world_x`/`world_y` through the CURRENT
+    frame's `calibration` - not drawn at the pixel position it happened to
+    occupy the moment it was detected. A panning/zooming broadcast camera
+    changes the pixel<->world mapping frame to frame (see
+    `CourtOverlayDrawer`, which reprojects the court lines the same way),
+    and a marker held fixed in screen space drifts away from those lines as
+    the camera moves - measured on the zverev clip, up to 94px over 744
+    frames for a single fixed court point. Falls back to the stored pixel
+    position when no world coordinate or no current calibration is
+    available.
+
+    This drawer only ever sees BOUNCE events (main.py never routes contacts
+    through it - see `ImpactMarkerDrawer` for that combined mode), so the
+    rally gap it tracks is "time since the last bounce", not the fuller
+    "time since any impact" match_stats.py uses. On a clip where `--bounce`
+    runs without `--contacts` there is nothing else to measure the gap
+    against anyway.
     """
 
-    def __init__(self):
+    def __init__(self, fps: float, rally_gap_seconds: float = DEFAULT_RALLY_GAP_SECONDS):
+        self.fps = fps
+        self.rally_gap_seconds = rally_gap_seconds
         self.markers: list[BounceEvent] = []
+        self._last_bounce_frame_idx: Optional[int] = None
 
     def draw(
         self, frame: np.ndarray, bounce: Optional[BounceEvent], calibration: Optional[CourtCalibration] = None
     ) -> np.ndarray:
         if bounce is not None:
+            if (
+                self._last_bounce_frame_idx is not None
+                and (bounce.frame_idx - self._last_bounce_frame_idx) / self.fps > self.rally_gap_seconds
+            ):
+                self.markers = []
+            self._last_bounce_frame_idx = bounce.frame_idx
             self.markers.append(bounce)
 
         for marker in self.markers:
@@ -314,12 +378,13 @@ class ImpactMarkerDrawer:
     so a run can be checked by eye rather than taken on trust.
 
     The two are drawn differently on purpose. A bounce is a magenta cross
-    that STAYS for the rest of the video, building up the landing map. A
-    contact is a transient orange circle, shown only for `hold_frames`
-    around the moment it happens - there are many more of them, and leaving
-    them all on screen would bury the landing map they are meant to give
-    context to. Both carry their timestamp, so what's on screen can be
-    matched against the impact list the run prints.
+    that STAYS for the CURRENT rally, building up that rally's landing map -
+    see `rally_gap_seconds` below. A contact is a transient orange circle,
+    shown only for `hold_frames` around the moment it happens - there are
+    many more of them, and leaving them all on screen would bury the
+    landing map they are meant to give context to. Both carry their
+    timestamp, so what's on screen can be matched against the impact list
+    the run prints.
 
     Impacts of kind "unknown" are drawn as NEITHER. They are real kinks in
     the trajectory that the classifier could not attribute, and marking them
@@ -327,21 +392,31 @@ class ImpactMarkerDrawer:
     and on a stray blob over the net. A marker is a claim; no evidence, no
     marker.
 
-    A bounce marks a fixed spot on the COURT and stays on screen for the
-    rest of the video, so it is reprojected fresh from its world position
-    through each frame's own `calibration` rather than held at a fixed
-    pixel - the same reasoning as `BounceMarkerDrawer`, which see. A
-    contact needs none of this: it is only ever drawn within `hold_frames`
-    of its own moment, looked up fresh from `impacts_by_frame` each time,
-    so it is never on screen long enough for camera drift to matter.
+    A bounce marks a fixed spot on the COURT, so while it's still on screen
+    it is reprojected fresh from its world position through each frame's
+    own `calibration` rather than held at a fixed pixel - the same
+    reasoning as `BounceMarkerDrawer`, which see. A contact needs none of
+    this: it is only ever drawn within `hold_frames` of its own moment,
+    looked up fresh from `impacts_by_frame` each time, so it is never on
+    screen long enough for camera drift to matter.
+
+    `rally_gap_seconds` (the same threshold match_stats.py's own rally
+    grouping uses) clears the bounce landing map the moment a gap that long
+    passes since the previous impact of ANY kind - a contact counts too,
+    unlike `BounceMarkerDrawer`, which never sees contacts at all and so can
+    only measure the gap between bounces. Without this a multi-rally clip
+    keeps every earlier point's bounces on screen forever, which stops
+    meaning anything once play has moved to a new point.
     """
 
-    def __init__(self, fps: float, hold_frames: int = 30):
+    def __init__(self, fps: float, hold_frames: int = 30, rally_gap_seconds: float = DEFAULT_RALLY_GAP_SECONDS):
         self.fps = fps
         self.hold_frames = hold_frames
+        self.rally_gap_seconds = rally_gap_seconds
         # world_x, world_y (None if no calibration was available at the
         # impact's own frame), x, y (pixel fallback), seconds
         self.bounces: list[tuple[Optional[float], Optional[float], float, float, float]] = []
+        self._last_impact_t: Optional[float] = None
 
     def draw(
         self,
@@ -351,6 +426,14 @@ class ImpactMarkerDrawer:
         calibration: Optional[CourtCalibration] = None,
     ) -> "np.ndarray":
         impact = impacts_by_frame.get(frame_idx)
+        if impact is not None:
+            if (
+                self._last_impact_t is not None
+                and (impact.t - self._last_impact_t) / self.fps > self.rally_gap_seconds
+            ):
+                self.bounces = []
+            self._last_impact_t = impact.t
+
         if impact is not None and impact.kind == "bounce":
             # `calibration` here is this call's, i.e. frame_idx's - the
             # impact's own frame, since this branch only runs the one time
@@ -487,3 +570,121 @@ class SidebarDrawer:
             )
 
         return np.hstack([frame, sidebar])
+
+
+class StatsPanelDrawer:
+    """Composites a running match-stats panel to the right of the frame -
+    cumulative totals AS OF the current playback frame, not the video's
+    final tally. Scrubbing to the middle of a render shows what a viewer
+    watching live would actually know at that point, the same reasoning
+    `ImpactMarkerDrawer` already applies to its contact markers.
+
+    Unlike `SidebarDrawer` (live instantaneous stroke + speed only, no
+    memory of anything earlier), this ACCUMULATES: rally count, shots and
+    bounces so far, and - given a court calibration - which player hit each
+    one. No detection of its own happens here; it folds over the same
+    `impacts`/`shots` `main.py`'s pipeline already produced, the same
+    numbers `match_stats.py` folds at the END of the video, just applied
+    one impact at a time so the running total can be drawn mid-render. The
+    rally-gap rule is intentionally the same constant match_stats.py uses
+    (`DEFAULT_RALLY_GAP_SECONDS`) so scrubbing to the end of a render agrees
+    with the `--stats` JSON's own rally count.
+
+    Stateful, like every other drawer in this module: construct once, then
+    call `.draw()` every frame. Call it LAST in the per-frame chain (like
+    `SidebarDrawer`) since it widens the frame.
+    """
+
+    def __init__(self, fps: float, width: int = 280, rally_gap_seconds: float = DEFAULT_RALLY_GAP_SECONDS):
+        self.fps = fps
+        self.width = width
+        self.rally_gap_seconds = rally_gap_seconds
+        self.rally_count = 0
+        self.total_bounces = 0
+        self.total_contacts = 0
+        self.total_unattributed = 0
+        self.near_contacts = 0
+        self.far_contacts = 0
+        self.current_rally_shots = 0
+        self.current_rally_bounces = 0
+        self.peak_speed: Optional[tuple[float, str]] = None
+        self._last_impact_t: Optional[float] = None
+
+    def _register_impact(self, impact: BounceCandidate, calibration: Optional[CourtCalibration]) -> None:
+        # Same rule match_stats.compute_match_stats groups rallies with,
+        # just applied incrementally: a gap bigger than the threshold since
+        # the last impact (of ANY kind - bounce, contact or unknown all
+        # count, see that module's docstring) starts a new rally.
+        if self._last_impact_t is None or (impact.t - self._last_impact_t) / self.fps > self.rally_gap_seconds:
+            self.rally_count += 1
+            self.current_rally_shots = 0
+            self.current_rally_bounces = 0
+        self._last_impact_t = impact.t
+
+        if impact.kind == "bounce":
+            self.total_bounces += 1
+            self.current_rally_bounces += 1
+        elif impact.kind == "contact":
+            self.total_contacts += 1
+            self.current_rally_shots += 1
+            if calibration is not None:
+                world_y = calibration.pixel_to_world(impact.x, impact.y)[1]
+                if classify_court_half(world_y) == "near":
+                    self.near_contacts += 1
+                else:
+                    self.far_contacts += 1
+        else:
+            self.total_unattributed += 1
+
+    def draw(
+        self,
+        frame: np.ndarray,
+        frame_idx: int,
+        impact: Optional[BounceCandidate] = None,
+        calibration: Optional[CourtCalibration] = None,
+        completed_shot: Optional[ShotSpeed] = None,
+    ) -> np.ndarray:
+        """`impact` is this exact frame's entry from `impacts_by_frame` (or
+        None most frames) - the same lookup `ImpactMarkerDrawer` uses, so
+        `calibration` here is already that impact's OWN frame's calibration
+        by construction. `completed_shot` is a `ShotSpeed` whose END frame
+        is this one (e.g. from a `shots_by_end_frame` lookup built the same
+        way `impacts_by_frame` is) - passed only once, the frame a shot's
+        peak becomes known, so the running peak can't be biased by how long
+        a shot happens to stay on screen elsewhere.
+        """
+        if impact is not None:
+            self._register_impact(impact, calibration)
+        if completed_shot is not None and (
+            self.peak_speed is None or completed_shot.peak_speed > self.peak_speed[0]
+        ):
+            self.peak_speed = (completed_shot.peak_speed, completed_shot.unit)
+
+        height = frame.shape[0]
+        panel = np.full((height, self.width, 3), SIDEBAR_BACKGROUND, dtype=np.uint8)
+
+        def put(y: int, text: str, color=SIDEBAR_TEXT_COLOR, scale: float = 0.55) -> None:
+            cv2.putText(panel, text, (14, y), cv2.FONT_HERSHEY_SIMPLEX, scale, color, 1, cv2.LINE_AA)
+
+        put(30, "MATCH STATS", STATS_PANEL_HEADER_COLOR, 0.65)
+        if self.rally_count == 0:
+            put(64, "no rally yet", STATS_PANEL_MUTED_COLOR)
+        else:
+            put(64, f"Rally {self.rally_count}")
+            put(90, f"  {self.current_rally_shots} shots, {self.current_rally_bounces} bounces", scale=0.5)
+
+        put(130, "TOTAL", STATS_PANEL_MUTED_COLOR, 0.45)
+        put(156, f"Shots: {self.total_contacts}")
+        put(182, f"Bounces: {self.total_bounces}")
+        if self.near_contacts or self.far_contacts:
+            put(208, f"Near/Far: {self.near_contacts}/{self.far_contacts}")
+            peak_y = 244
+        else:
+            peak_y = 218
+
+        if self.peak_speed is not None:
+            value, unit = self.peak_speed
+            put(peak_y + 26, "PEAK SPEED", STATS_PANEL_MUTED_COLOR, 0.45)
+            put(peak_y + 54, f"{value:.0f} {unit}", STATS_PANEL_HEADER_COLOR, 0.7)
+
+        return np.hstack([frame, panel])

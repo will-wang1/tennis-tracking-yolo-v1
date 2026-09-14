@@ -23,9 +23,14 @@ from src.analysis.bounce_ensemble import detect_bounces_ensemble
 from src.analysis.catboost_bounce_detector import CatBoostBounceDetector
 from src.analysis.geometric_bounce_detector import detect_bounces_geometric
 from src.analysis.flight_segmenter import find_flight_segments
+from src.analysis.html_report import clip_label_from_path, write_report_html
 from src.analysis.impact_pipeline import analyze_impacts
 from src.analysis.match_stats import compute_match_stats
+from src.analysis.match_log import build_match_log
 from src.analysis.parabolic_bounce_detector import detect_bounces_parabolic
+from src.analysis.player_identity import PlayerIdentityTracker
+from src.analysis.scene_cuts import detect_scene_cuts
+from src.analysis.serve_sequences import classify_serve_sequences
 from src.analysis.velocity_bounce_detector import detect_bounces_by_velocity
 from src.analysis.bounce_detector import BounceEvent, find_trajectory_breakpoints
 from src.analysis.court_calibration import CourtCalibration
@@ -52,6 +57,7 @@ from src.visualize.draw import (
     ShotArcDrawer,
     ShotLabelDrawer,
     SidebarDrawer,
+    StatsPanelDrawer,
     TrailDrawer,
 )
 from src.visualize.minimap import MinimapDrawer
@@ -169,6 +175,15 @@ def main() -> None:
         "finds impacts by intersecting fitted flights instead of scanning frame by frame. The "
         "scan needs detections either side of the impact, so it misses bounces hidden by a "
         "dropout; intersecting segments recovers those. Only used with --bounce-method parabolic.",
+    )
+    parser.add_argument(
+        "--no-scene-cuts",
+        action="store_true",
+        help="Skip detecting broadcast camera cuts (src/analysis/scene_cuts.py). On by default and "
+        "cheap (pure frame histograms, no model) because a cut invalidates the court calibration "
+        "carried forward from the frame before it - the whole point of the check is to reset that "
+        "rather than smear a stale wireframe/minimap across an unrelated shot. Disable only if it's "
+        "misfiring on unusually busy footage.",
     )
     parser.add_argument("--bounce", action="store_true", help="Detect + mark ball landing spots")
     parser.add_argument(
@@ -297,6 +312,19 @@ def main() -> None:
     parser.add_argument("--sidebar", action="store_true", help="Composite a speed sidebar panel")
     parser.add_argument("--sidebar-width", type=int, default=250)
     parser.add_argument(
+        "--stats-panel",
+        action="store_true",
+        help="Composite a running match-stats panel (rally count, shots/bounces so far, near/"
+        "far shot split, peak speed so far) - cumulative AS OF each frame, not the video's final "
+        "tally, so scrubbing mid-render shows what a live viewer would know at that point. "
+        "Requires --bounce. The near/far split needs --show-court; peak speed needs --speed. "
+        "Unlike --sidebar (current stroke + instantaneous speed only), this remembers everything "
+        "up to now - see src/visualize/draw.py's StatsPanelDrawer. Shot speeds are computed "
+        "automatically when this is on, same as --speed, so the peak-so-far line works without "
+        "passing --speed separately.",
+    )
+    parser.add_argument("--stats-panel-width", type=int, default=280)
+    parser.add_argument(
         "--stroke",
         action="store_true",
         help="Classify each player's shots as forehand/backhand/serve (MoveNet pose + a "
@@ -322,9 +350,20 @@ def main() -> None:
         "src/analysis/match_stats.py). Rally segmentation is a genuinely new inference on top "
         "of that, though, and an honestly untested one - see that module's docstring.",
     )
+    parser.add_argument(
+        "--report",
+        help="Write a self-contained HTML match report here (scoreboard, bounce map, shot-speed "
+        "chart, court-coverage comparison, stroke mix, serve-speed trend, rally log) - built "
+        "from the same MatchStats object --stats writes to JSON, so requires --stats too. "
+        "Opens directly in a browser, no server needed (see src/analysis/html_report.py).",
+    )
     args = parser.parse_args()
     if args.stats and not args.bounce:
         raise SystemExit("--stats needs --bounce")
+    if args.report and not args.stats:
+        raise SystemExit("--report needs --stats")
+    if args.stats_panel and not args.bounce:
+        raise SystemExit("--stats-panel needs --bounce")
 
     if args.minimap and not args.show_court:
         raise SystemExit("--minimap requires --show-court")
@@ -359,12 +398,28 @@ def main() -> None:
     near_shot_tracker = ShotEventTracker() if args.stroke else None
     far_shot_tracker = ShotEventTracker() if args.stroke else None
 
-    reader = VideoReader(args.input)
-    frames = list(reader.frames())
-    if not frames:
-        raise SystemExit(f"No frames read from {args.input}")
+    # THREE separate streaming passes over the video (scene cuts, then
+    # detection, then rendering below) rather than one shared list of
+    # decoded frames - `list(reader.frames())` used to be the approach, and
+    # it OOMs outright on anything longer than a short clip (measured: a
+    # 3-minute 1080p clip is ~28GB of raw frames, which is what actually
+    # crashed trying this against real footage). Each pass opens its own
+    # VideoReader and consumes it as a generator, so at most one raw frame
+    # is ever alive at a time; everything a later pass needs (detections,
+    # calibrations, boxes) is small derived data, not pixels, so re-decoding
+    # three times costs far less than holding the video in memory once.
+    cut_reader = VideoReader(args.input)
+    # Cheap (frame histograms only, no model) and run unconditionally unless
+    # opted out, because it feeds a correctness fix below (resetting the
+    # carried-forward court calibration at a cut), not just reporting - see
+    # scene_cuts.py for what this can and can't be trusted to catch.
+    cut_frames = [] if args.no_scene_cuts else detect_scene_cuts(cut_reader.frames())
+    if cut_frames:
+        print(f"Detected {len(cut_frames)} camera cut(s) at frame(s): {cut_frames}")
+    cut_frame_set = set(cut_frames)
 
-    print(f"Detecting ball in {len(frames)} frames...")
+    reader = VideoReader(args.input)
+    print(f"Detecting ball in {reader.frame_count_hint() or '?'} frames...")
     detections = []
     calibrations_by_frame: dict[int, CourtCalibration] = {}
     last_good_calibration: "CourtCalibration | None" = None
@@ -375,14 +430,25 @@ def main() -> None:
     far_shot_display_by_frame: dict[int, str] = {}
     near_player_bbox_by_frame: dict[int, tuple[float, float, float, float]] = {}
     far_player_bbox_by_frame: dict[int, tuple[float, float, float, float]] = {}
+    identity_by_frame: dict[int, dict[str, str]] = {}
+    identity_tracker = PlayerIdentityTracker() if args.minimap else None
     use_candidates = args.detector_backend == "wasb" and not args.no_candidate_tracking
     candidates_by_frame: list[list] = []
-    for i, frame in enumerate(tqdm(frames)):
+    num_frames = 0
+    for i, frame in enumerate(tqdm(reader.frames(), total=reader.frame_count_hint())):
+        num_frames = i + 1
         if use_candidates:
             candidates_by_frame.append(detector.detect_candidates(frame))
             detections.append(None)  # filled in below, once the whole path is known
         else:
             detections.append(detector.detect(frame))
+        if i in cut_frame_set:
+            # The camera itself changed - "the camera can't have moved far
+            # in one missed frame" (below) is exactly the assumption a cut
+            # breaks, so the carried-forward calibration must NOT survive
+            # into the new shot. A fresh one is picked up as soon as this
+            # frame's own court detection succeeds, same as any other gap.
+            last_good_calibration = None
         if args.show_court:
             # A frame where the detector doesn't find enough confident
             # keypoints (motion blur, court briefly out of frame) carries
@@ -390,7 +456,22 @@ def main() -> None:
             # the camera can't have moved far in one missed frame.
             named_points = court_detector.detect(frame) or {}
             if len(named_points) >= 4:
-                last_good_calibration = CourtCalibration.from_keypoints(named_points)
+                try:
+                    fitted = CourtCalibration.from_keypoints(named_points)
+                except ValueError:
+                    # No homography fits these keypoints at all. Same
+                    # situation as too few keypoints: carry the last good
+                    # calibration forward rather than fail the render.
+                    fitted = None
+                # Four matched keypoints are enough to FIT a homography but
+                # not enough to tell whether it describes a real view - a
+                # 4-point fit is exact, so it has no residual to check. A
+                # replay or closeup fits the wrong lines just as confidently
+                # as a live wide shot fits the right ones, so the result is
+                # checked against the court's own geometry before it is
+                # trusted (see CourtCalibration.is_plausible_view).
+                if fitted is not None and fitted.is_plausible_view(frame.shape[1], frame.shape[0]):
+                    last_good_calibration = fitted
             if last_good_calibration is not None:
                 calibrations_by_frame[i] = last_good_calibration
             if args.minimap:
@@ -400,13 +481,25 @@ def main() -> None:
                 far_players_by_frame[i] = [p.world_point for p in far]
                 near_players_by_frame[i] = [p.world_point for p in near]
                 player_boxes_by_frame[i] = [p.bbox for p in players]
+                if near:
+                    near_player_bbox_by_frame[i] = near[0].bbox
+                if far:
+                    far_player_bbox_by_frame[i] = far[0].bbox
+
+                # Cheap (histogram compares on boxes already computed above)
+                # and independent of --stroke - identity is useful for
+                # match_log's serve/point structure even when stroke type
+                # is never classified. force_reassign on a cut frame is
+                # what lets it recover from a camera change instead of
+                # blindly trusting position - see player_identity.py.
+                identity_by_frame[i] = identity_tracker.update(
+                    frame,
+                    near_bbox=near_player_bbox_by_frame.get(i),
+                    far_bbox=far_player_bbox_by_frame.get(i),
+                    force_reassign=i in cut_frame_set,
+                )
 
                 if args.stroke:
-                    if near:
-                        near_player_bbox_by_frame[i] = near[0].bbox
-                    if far:
-                        far_player_bbox_by_frame[i] = far[0].bbox
-
                     near_pose = pose_extractor.extract(frame, near[0].bbox) if near else None
                     near_prediction = near_shot_classifier.update(near_pose)
                     near_display_label = near_shot_tracker.update(i, near_prediction)
@@ -415,9 +508,24 @@ def main() -> None:
 
                     far_pose = pose_extractor.extract(frame, far[0].bbox) if far else None
                     far_prediction = far_shot_classifier.update(far_pose)
-                    far_display_label = far_shot_tracker.update(i, far_prediction)
-                    if far_display_label is not None:
-                        far_shot_display_by_frame[i] = far_display_label
+                    # far_shot_tracker.counts still accumulates (used by
+                    # --stats/far_shot_counts, already documented and shown
+                    # as unreliable there - see match_stats.py/report_
+                    # template.html's fallback). The DISPLAY label is
+                    # deliberately not written to far_shot_display_by_frame:
+                    # the pose classifier was trained only on the near
+                    # player's behind-baseline view (see shot_classifier.py)
+                    # and, on this camera's framing, was measured calling a
+                    # wrong type with real confidence rather than the
+                    # near-universal "neutral" it gives on other footage -
+                    # showing that guess on screen is worse than showing
+                    # nothing. Only the structural "serve" override below
+                    # (classify_serve_sequences, not pose) ever populates
+                    # this dict for the far player.
+                    far_shot_tracker.update(i, far_prediction)
+
+    if num_frames == 0:
+        raise SystemExit(f"No frames read from {args.input}")
 
     if args.stroke:
         print(
@@ -437,16 +545,16 @@ def main() -> None:
         detections = track_candidates(candidates_by_frame, max_pixels_per_frame=args.max_jump)
         kept = sum(1 for d in detections if d is not None)
         offered = sum(1 for row in candidates_by_frame if row)
-        print(f"Candidate tracking: {kept}/{len(frames)} frames tracked from {offered} frames offering candidates")
+        print(f"Candidate tracking: {kept}/{num_frames} frames tracked from {offered} frames offering candidates")
 
     positions = tracker.track(detections)
     positions_by_frame = {p.frame_idx: p for p in positions}
     detected = sum(1 for d in detections if d is not None)
     interpolated = sum(1 for p in positions if p.interpolated)
     print(
-        f"Raw detections: {detected}/{len(frames)} frames "
-        f"({detected / len(frames):.1%}). "
-        f"After interpolation: {len(positions)}/{len(frames)} frames have a "
+        f"Raw detections: {detected}/{num_frames} frames "
+        f"({detected / num_frames:.1%}). "
+        f"After interpolation: {len(positions)}/{num_frames} frames have a "
         f"tracked position ({interpolated} interpolated)."
     )
 
@@ -549,7 +657,7 @@ def main() -> None:
         bounces = detect_bounces_ensemble(
             positions,
             bounce_model,
-            num_frames=len(frames),
+            num_frames=num_frames,
             calibrations_by_frame=calibrations_by_frame if args.show_court else None,
             player_boxes_by_frame=player_boxes_by_frame if args.minimap else None,
             fps=reader.fps if args.show_court else None,
@@ -564,6 +672,34 @@ def main() -> None:
     bounces_by_frame = {b.frame_idx: b for b in bounces}
     impacts_by_frame = {impact.frame_idx: impact for impact in impacts}
     minimap_bounce_points = [(b.world_x, b.world_y) for b in bounces if b.world_x is not None]
+
+    # Computed here rather than inside the --stats block below: the
+    # structural "serve" label override just after needs it whenever
+    # --stroke is on too, independent of whether --stats was requested.
+    serve_attempts = (
+        classify_serve_sequences(impacts, calibrations_by_frame, identity_by_frame, reader.fps)
+        if args.show_court and args.minimap
+        else []
+    )
+    if args.stroke and serve_attempts:
+        # A serve is always the first contact of a new point - a fact
+        # classify_serve_sequences reads from timing/identity structure
+        # alone, independent of pose. Overriding the DISPLAYED label with
+        # it (for every attempt, fault retries included - a faulted first
+        # serve is still a serve) fixes a real, measured pose-classifier
+        # miss found by hand-labelling this project's own footage: a
+        # genuine serve shown as "FOREHAND". This never invents a serve
+        # that didn't structurally happen, only relabels one the pose
+        # model already had a swing to react to.
+        for attempt in serve_attempts:
+            target = {"near": near_shot_display_by_frame, "far": far_shot_display_by_frame}.get(attempt.side)
+            if target is None:
+                continue
+            # 30 frames matches ShotEventTracker's own default
+            # display_recency - how long a label stays up after the frame
+            # it was actually detected on.
+            for frame_idx in range(attempt.frame_idx, attempt.frame_idx + 30):
+                target[frame_idx] = "serve"
 
     # One flight segmentation, used for both the speed readings and the arc
     # overlay, so the number reported and the curve drawn describe the same
@@ -591,7 +727,7 @@ def main() -> None:
     # merge_with_net_crossing_speeds swaps in the sharper number by tier.
     shot_speed_by_frame = {}
     shots: list = []
-    if args.speed or args.sidebar or args.stats:
+    if args.speed or args.sidebar or args.stats or args.stats_panel:
         # Segmenting at every direction-reversal (find_trajectory_breakpoints)
         # over-splits a single real shot whenever detector jitter or a
         # mid-flight wobble looks like a local max. detect_bounces_ensemble's
@@ -643,8 +779,31 @@ def main() -> None:
         for shot in shots:
             for frame_idx in range(shot.start_frame, shot.end_frame + 1):
                 shot_speed_by_frame[frame_idx] = (shot.peak_speed, shot.unit)
+    # Keyed by end_frame rather than folded into shot_speed_by_frame: a shot
+    # spans a whole range of frames, but StatsPanelDrawer wants to fold a
+    # shot's peak into the running total exactly ONCE, the frame it becomes
+    # known - not on every frame the shot happens to be displayed on.
+    shots_by_end_frame = {shot.end_frame: shot for shot in shots}
 
     if args.stats:
+        # world_points -> a single point per frame: the primary (first)
+        # detection - split_top_bottom can return more than one box per
+        # half (a stray line-judge/ball-kid detection, or doubles), and
+        # match_stats.compute_player_movement wants one trajectory, not a
+        # list to disambiguate itself.
+        near_player_positions = {
+            i: points[0] for i, points in near_players_by_frame.items() if points
+        }
+        far_player_positions = {
+            i: points[0] for i, points in far_players_by_frame.items() if points
+        }
+        # serve_attempts was already computed above (needed there
+        # regardless of --stats, for the stroke-label override) - reused
+        # rather than recomputed. Needs a court calibration (to attribute
+        # each contact to a side) and identity tracking (to tell "the same
+        # server again" from "the other player now serving"), which is
+        # exactly what gated computing it in the first place.
+        match_log = build_match_log(serve_attempts) if serve_attempts else None
         match_stats = compute_match_stats(
             impacts,
             shots,
@@ -652,14 +811,42 @@ def main() -> None:
             reader.fps,
             near_shot_counts=near_shot_tracker.counts if args.stroke else None,
             far_shot_counts=far_shot_tracker.counts if args.stroke else None,
+            near_player_positions_by_frame=near_player_positions if args.minimap else None,
+            far_player_positions_by_frame=far_player_positions if args.minimap else None,
+            near_shot_events=near_shot_tracker.events if args.stroke else None,
+            far_shot_events=far_shot_tracker.events if args.stroke else None,
+            calibrations_by_frame=calibrations_by_frame if args.show_court else None,
+            scene_cuts=cut_frames,
+            match_log=match_log,
         )
         match_stats.write_json(args.stats)
         print(
             f"Wrote {args.stats}: {len(match_stats.rallies)} rally/rallies, "
             f"{match_stats.total_bounces} bounces, {match_stats.total_contacts} contacts"
         )
+        if match_stats.contact_side_counts:
+            counts = match_stats.contact_side_counts
+            print(
+                f"Contacts by court half (from contact position, not pose - "
+                f"covers both players): near={counts.get('near', 0)}, far={counts.get('far', 0)}"
+            )
+        if match_stats.match_log is not None and match_stats.match_log.points:
+            log = match_stats.match_log
+            print(
+                f"Serve/point structure (structural, no ball landing spot used - see "
+                f"serve_sequences.py): {len(log.points)} point(s), "
+                f"faults={log.fault_counts_by}, double_faults={log.double_fault_counts_by}, "
+                f"first_serve_in_rate={log.first_serve_in_rate_by}"
+            )
+        if args.report:
+            write_report_html(match_stats, clip_label_from_path(args.input), args.report)
+            print(f"Wrote {args.report}")
 
-    output_width = reader.width + (args.sidebar_width if args.sidebar else 0)
+    output_width = (
+        reader.width
+        + (args.sidebar_width if args.sidebar else 0)
+        + (args.stats_panel_width if args.stats_panel else 0)
+    )
     writer = VideoWriter(args.output, reader.fps, output_width, reader.height)
     # The arc comes from the same flight segmentation the speed readings
     # use, so what is drawn and what is reported cannot disagree.
@@ -668,15 +855,22 @@ def main() -> None:
     if args.ball_overlay == "arc":
         arc_drawer = ShotArcDrawer(flight_segments, impacts)
     else:
-        trail = TrailDrawer(trail_length=args.trail_length)
-    bounce_drawer = BounceMarkerDrawer() if args.bounce and not args.contacts else None
+        trail = TrailDrawer(trail_length=args.trail_length, fps=reader.fps)
+    bounce_drawer = BounceMarkerDrawer(fps=reader.fps) if args.bounce and not args.contacts else None
     impact_drawer = ImpactMarkerDrawer(reader.fps) if args.contacts else None
     sidebar_drawer = SidebarDrawer(width=args.sidebar_width) if args.sidebar else None
+    stats_panel_drawer = (
+        StatsPanelDrawer(fps=reader.fps, width=args.stats_panel_width) if args.stats_panel else None
+    )
     court_drawer = CourtOverlayDrawer() if args.show_court else None
     minimap_drawer = MinimapDrawer() if args.minimap else None
     shot_label_drawer = ShotLabelDrawer() if args.stroke else None
 
-    for i, frame in enumerate(frames):
+    # A fresh reader (re-decoding from the start) rather than reusing
+    # `frames` - that list was never kept around in the first place, see
+    # this function's earlier comment on why detection is a streaming pass.
+    render_reader = VideoReader(args.input)
+    for i, frame in enumerate(render_reader.frames()):
         annotated = frame
         calibration = calibrations_by_frame.get(i) if args.show_court else None
         if args.show_court:
@@ -684,7 +878,7 @@ def main() -> None:
         if arc_drawer is not None:
             annotated = arc_drawer.draw(annotated, i)
         else:
-            annotated = trail.draw(annotated, positions_by_frame.get(i))
+            annotated = trail.draw(annotated, positions_by_frame.get(i), impacts_by_frame.get(i))
         if args.contacts:
             annotated = impact_drawer.draw(annotated, i, impacts_by_frame, calibration)
         elif args.bounce:
@@ -704,6 +898,14 @@ def main() -> None:
             annotated = shot_label_drawer.draw(annotated, far_player_bbox_by_frame.get(i), far_shot_display_by_frame.get(i))
         if args.sidebar:
             annotated = sidebar_drawer.draw(annotated, near_shot_display_by_frame.get(i), shot_speed_by_frame.get(i))
+        if args.stats_panel:
+            annotated = stats_panel_drawer.draw(
+                annotated,
+                i,
+                impact=impacts_by_frame.get(i),
+                calibration=calibration,
+                completed_shot=shots_by_end_frame.get(i),
+            )
         writer.write(annotated)
     writer.close()
 

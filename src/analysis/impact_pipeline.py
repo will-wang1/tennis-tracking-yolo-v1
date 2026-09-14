@@ -29,6 +29,7 @@ from typing import Optional
 from src.analysis.court_calibration import CourtCalibration
 from src.analysis.flight_segmenter import segment_impacts_as_candidates
 from src.analysis.parabolic_bounce_detector import BounceCandidate, find_impacts
+from src.analysis.rally_clusters import filter_excess_bounces_between_contacts, filter_non_rally_clusters
 from src.analysis.touchdown_detector import Touchdown, classify_touchdowns
 from src.detection.ball_detector import Detection
 from src.tracking.ball_tracker import BallTracker, TrackedPosition
@@ -113,6 +114,7 @@ def analyze_impacts(
     static_lockon_radius: float = 20.0,
     use_flight_segments: bool = True,
     merge_window_seconds: float = 0.2,
+    filter_clusters: bool = True,
     **classifier_kwargs,
 ) -> ImpactAnalysis:
     """Find the ball's impacts and attribute each to the court or a racket.
@@ -123,6 +125,19 @@ def analyze_impacts(
     scan's own screen-space guess as the verdict. `player_boxes_by_frame`
     is optional even then - it only ever WITHHOLDS a contact verdict, never
     creates one (see touchdown_detector.classify_touchdowns).
+
+    `filter_clusters` runs `rally_clusters.filter_non_rally_clusters` over
+    the result (only when a calibration is available, same requirement as
+    `touchdowns` itself) - catches a player bouncing the ball before
+    serving, which `classify_touchdowns` has no way to see since the
+    signal only shows up ACROSS several impacts, not in any one impact's
+    own motion. Off by default only makes sense for comparing against a
+    run from before this existed; leave it on otherwise.
+
+    (rally_clusters.py also has `filter_excess_bounces_between_contacts`,
+    which is NOT run here - it regressed a real bounce on video_input2, see
+    its own docstring. Not wired in until it has a spatial-plausibility
+    check to go with the count-based one it has now.)
 
     `**classifier_kwargs` are passed through to `classify_touchdowns`.
     """
@@ -154,11 +169,33 @@ def analyze_impacts(
         player_boxes_by_frame=player_boxes_by_frame,
         **classifier_kwargs,
     )
+    reclassified = [
+        replace(td.impact, is_bounce=td.is_bounce, kind=td.kind, reason=td.reason)
+        for td in touchdowns
+    ]
+    if filter_clusters:
+        # Two passes classify_touchdowns structurally can't do itself - see
+        # rally_clusters.py. Run after, not folded into that function,
+        # because the signal in both cases is only visible ACROSS several
+        # impacts (a same-spot run; more than one bounce between two
+        # contacts), not in any one impact's own before/after motion,
+        # which is all classify_touchdowns ever looks at.
+        #
+        # Cluster-filtering runs FIRST: a bounce absorbed into a same-spot
+        # ball-handling cluster must not still compete as a candidate in
+        # the excess-bounce rule that follows - it was never a real bounce
+        # in the point to begin with, so it shouldn't cost a REAL bounce
+        # its "best fit" comparison there.
+        reclassified = filter_non_rally_clusters(reclassified, calibrations_by_frame)
+        # filter_excess_bounces_between_contacts is NOT wired in here - see
+        # its own docstring's "REGRESSION FOUND" note. It broke a real,
+        # validated video_input2 bounce (measured ~15m from the OTHER
+        # "extra" bounce it was compared against, at opposite ends of the
+        # court - unmistakably two real events, not a duplicate detection
+        # of one). The rule needs a spatial-plausibility check before it's
+        # safe to run by default; it doesn't have one yet.
     return ImpactAnalysis(
         positions=positions,
-        impacts=[
-            replace(td.impact, is_bounce=td.is_bounce, kind=td.kind, reason=td.reason)
-            for td in touchdowns
-        ],
+        impacts=reclassified,
         touchdowns=touchdowns,
     )

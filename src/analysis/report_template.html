@@ -1,0 +1,821 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__CLIP_LABEL__ Report</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --court: #eaf1f3;
+    --court-deep: #ffffff;
+    --surface: #ffffff;
+    --surround: #dfeae4;
+    --ink: #0f2c3f;
+    --ink-soft: #4d6675;
+    --ash: #7791a0;
+    --line: #c9d8de;
+    --accent: #8a9400;
+    --accent-fill: #dff227;
+    --net: #0f2c3f;
+    --shadow: 0 1px 2px rgba(15, 44, 63, 0.06), 0 8px 24px rgba(15, 44, 63, 0.06);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --court: #0a2740;
+      --court-deep: #0f3550;
+      --surface: #123a56;
+      --surround: #163f34;
+      --ink: #f2f6f1;
+      --ink-soft: #b9cdd6;
+      --ash: #7f9aa8;
+      --line: #24506e;
+      --accent: #dff227;
+      --accent-fill: #dff227;
+      --net: #f2f6f1;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 32px rgba(0, 0, 0, 0.35);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --court: #0a2740;
+    --court-deep: #0f3550;
+    --surface: #123a56;
+    --surround: #163f34;
+    --ink: #f2f6f1;
+    --ink-soft: #b9cdd6;
+    --ash: #7f9aa8;
+    --line: #24506e;
+    --accent: #dff227;
+    --accent-fill: #dff227;
+    --net: #f2f6f1;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 32px rgba(0, 0, 0, 0.35);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--court);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", system-ui, sans-serif;
+    padding: clamp(16px, 4vw, 48px);
+  }
+
+  .page {
+    max-width: 1080px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .display {
+    font-family: "Big Shoulders Display", "Arial Narrow", sans-serif;
+    font-weight: 800;
+    text-transform: uppercase;
+  }
+
+  .mono {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ---------- header / scoreboard ---------- */
+
+  .scoreboard {
+    background: var(--court-deep);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 24px clamp(18px, 4vw, 36px);
+    box-shadow: var(--shadow);
+  }
+
+  .scoreboard-top {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 18px;
+  }
+
+  .scoreboard-title {
+    font-size: clamp(28px, 5vw, 40px);
+    letter-spacing: 0.02em;
+    line-height: 1;
+  }
+
+  .scoreboard-title span { color: var(--accent); }
+
+  .scoreboard-sub {
+    color: var(--ash);
+    font-size: 13px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .stat-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+
+  .stat {
+    background: var(--surface);
+    padding: 14px 12px;
+    text-align: center;
+  }
+
+  .stat-value {
+    font-size: clamp(26px, 4vw, 38px);
+    line-height: 1;
+  }
+
+  .stat-value.accent { color: var(--accent); }
+
+  .stat-label {
+    margin-top: 6px;
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ash);
+  }
+
+  /* ---------- generic card ---------- */
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 20px clamp(16px, 3vw, 28px) 24px;
+    box-shadow: var(--shadow);
+  }
+
+  .card h2 {
+    font-family: "Big Shoulders Display", "Arial Narrow", sans-serif;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    font-size: 20px;
+    margin: 0 0 4px;
+  }
+
+  .card .card-note {
+    color: var(--ash);
+    font-size: 12.5px;
+    margin: 0 0 16px;
+  }
+
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+
+  @media (max-width: 760px) {
+    .grid-2 { grid-template-columns: 1fr; }
+  }
+
+  /* ---------- court diagram ---------- */
+
+  .court-wrap {
+    display: flex;
+    justify-content: center;
+  }
+
+  #court-svg {
+    width: 100%;
+    max-width: 320px;
+    height: auto;
+  }
+
+  .zone-legend {
+    display: flex;
+    justify-content: center;
+    gap: 18px;
+    margin-top: 14px;
+    flex-wrap: wrap;
+  }
+
+  .zone-legend .item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--ink-soft);
+  }
+
+  .zone-legend .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--accent-fill);
+  }
+
+  .zone-legend .dot.far { background: #6fb7ff; }
+
+  /* ---------- speed chart ---------- */
+
+  #speed-chart {
+    width: 100%;
+    height: 220px;
+    display: block;
+  }
+
+  .speed-peak-line {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 10px;
+    font-size: 12px;
+    color: var(--ash);
+  }
+
+  .speed-peak-line .peak-value {
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  /* ---------- player movement ---------- */
+
+  .coverage-table {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+
+  .coverage-row {
+    display: grid;
+    grid-template-columns: 1fr 110px 1fr;
+    align-items: center;
+    background: var(--surface);
+  }
+
+  .coverage-value {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: clamp(16px, 3vw, 20px);
+    font-weight: 600;
+    padding: 13px 16px;
+  }
+
+  .coverage-value.near { text-align: right; color: var(--accent); }
+  .coverage-value.far { text-align: left; color: #6fb7ff; }
+
+  .coverage-label {
+    text-align: center;
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ash);
+    padding: 4px;
+  }
+
+  .player-key {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: var(--ink-soft);
+    margin-bottom: 4px;
+  }
+
+  .player-key .near-key { color: var(--accent); }
+  .player-key .far-key { color: #6fb7ff; }
+
+  /* ---------- stroke mix ---------- */
+
+  .stroke-columns {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+  }
+
+  @media (max-width: 560px) {
+    .stroke-columns { grid-template-columns: 1fr; }
+  }
+
+  .stroke-col h3 {
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ash);
+    margin: 0 0 10px;
+    font-weight: 500;
+  }
+
+  .stroke-item {
+    display: grid;
+    grid-template-columns: 70px 1fr 28px;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+    font-size: 12.5px;
+  }
+
+  .stroke-item .stroke-bar-track {
+    height: 10px;
+    background: var(--court);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+
+  .stroke-item .stroke-bar-fill {
+    height: 100%;
+    background: var(--accent-fill);
+    border-radius: 3px;
+  }
+
+  .stroke-item .stroke-count {
+    text-align: right;
+    font-family: "IBM Plex Mono", monospace;
+    color: var(--ink-soft);
+  }
+
+  .stroke-empty-note {
+    font-size: 12px;
+    color: var(--ash);
+    font-style: italic;
+    margin-top: 8px;
+  }
+
+  .stroke-fallback-value {
+    font-size: 28px;
+    color: var(--accent);
+    line-height: 1;
+  }
+
+  .stroke-fallback-label {
+    margin-top: 4px;
+    font-size: 11px;
+    letter-spacing: 0.05em;
+    color: var(--ink-soft);
+  }
+
+  /* ---------- serve trend ---------- */
+
+  .serve-columns {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+  }
+
+  @media (max-width: 560px) {
+    .serve-columns { grid-template-columns: 1fr; }
+  }
+
+  .serve-col h3 {
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ash);
+    margin: 0 0 10px;
+    font-weight: 500;
+  }
+
+  .serve-item {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12.5px;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .serve-item .serve-speed {
+    font-family: "IBM Plex Mono", monospace;
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  /* ---------- rally log ---------- */
+
+  table.rally-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+
+  .rally-table-wrap { overflow-x: auto; }
+
+  table.rally-table th,
+  table.rally-table td {
+    text-align: left;
+    padding: 9px 10px;
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+  }
+
+  table.rally-table th {
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ash);
+    font-weight: 500;
+  }
+
+  table.rally-table td.num { font-family: "IBM Plex Mono", monospace; }
+  table.rally-table td.peak { color: var(--accent); font-family: "IBM Plex Mono", monospace; font-weight: 600; }
+
+  footer {
+    text-align: center;
+    color: var(--ash);
+    font-size: 11.5px;
+    padding: 8px 0 4px;
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header class="scoreboard">
+    <div class="scoreboard-top">
+      <div>
+        <div class="display scoreboard-title">Match <span>Report</span></div>
+        <div class="scoreboard-sub" id="clip-sub">—</div>
+      </div>
+    </div>
+    <div class="stat-row" id="stat-row"></div>
+  </header>
+
+  <div class="grid-2">
+    <section class="card">
+      <h2>Bounce Map</h2>
+      <p class="card-note" id="bounce-note">Where the ball landed, plotted to scale.</p>
+      <div class="court-wrap">
+        <svg id="court-svg" viewBox="0 0 219.4 475.4"></svg>
+      </div>
+      <div class="zone-legend">
+        <div class="item"><span class="dot far"></span>Far-half bounce</div>
+        <div class="item"><span class="dot"></span>Near-half bounce</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Shot Speed</h2>
+      <p class="card-note" id="speed-note">Peak speed, shot by shot.</p>
+      <canvas id="speed-chart"></canvas>
+      <div class="speed-peak-line">
+        <span>Rally peak</span>
+        <span class="peak-value mono" id="peak-value">—</span>
+      </div>
+    </section>
+  </div>
+
+  <section class="card">
+    <h2>Court Coverage</h2>
+    <p class="card-note">Distance covered and pace, near vs. far player.</p>
+    <div class="player-key">
+      <span class="near-key">● Near player</span>
+      <span class="far-key">● Far player</span>
+    </div>
+    <div class="coverage-table" id="movement-rows"></div>
+  </section>
+
+  <section class="card">
+    <h2>Stroke Mix</h2>
+    <p class="card-note">Counted swings by type, per player.</p>
+    <div class="stroke-columns" id="stroke-columns"></div>
+  </section>
+
+  <section class="card" id="serve-card">
+    <h2>Serve Speed Trend</h2>
+    <p class="card-note">Peak speed reading at each classified serve, in order.</p>
+    <div class="serve-columns" id="serve-columns"></div>
+  </section>
+
+  <section class="card">
+    <h2>Rally Log</h2>
+    <div class="rally-table-wrap">
+      <table class="rally-table">
+        <thead>
+          <tr><th>#</th><th>Start</th><th>Duration</th><th>Shots</th><th>Bounces</th><th>Peak</th></tr>
+        </thead>
+        <tbody id="rally-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>Generated from a court-calibrated ball/court/player tracking pipeline — timings and speeds derive from the video's own frame rate and homography, not a live feed.</footer>
+
+</div>
+
+<script>
+const DATA = __DATA_JSON__;
+const CLIP_LABEL = __CLIP_LABEL_JSON__;
+
+const COURT = { width: 10.97, length: 23.77, singlesInset: 1.37, serviceFromBaseline: 5.485 };
+const SCALE = 20; // meters -> svg units
+
+function fmtTime(frame) {
+  const s = frame / DATA.fps;
+  const m = Math.floor(s / 60);
+  const rem = (s - m * 60).toFixed(1);
+  return m > 0 ? `${m}:${rem.padStart(4, "0")}` : `${rem}s`;
+}
+
+function svgEl(tag, attrs = {}) {
+  const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+  return node;
+}
+
+/* ---------- scoreboard ---------- */
+
+function renderScoreboard() {
+  document.getElementById("clip-sub").textContent =
+    `${CLIP_LABEL} · ${DATA.rallies.length} ${DATA.rallies.length === 1 ? "rally" : "rallies"}, ${DATA.rallies.reduce((a, r) => a + r.duration_s, 0).toFixed(1)}s of play`;
+
+  const totalShots = DATA.total_contacts;
+  const peak = Math.max(0, ...DATA.shot_speeds.map((s) => s.peak_speed));
+  const stats = [
+    { value: DATA.rally_count, label: "Rallies" },
+    { value: totalShots, label: "Shots" },
+    { value: DATA.total_bounces, label: "Bounces" },
+    { value: peak.toFixed(0), label: "Peak km/h", accent: true },
+    { value: DATA.total_unattributed, label: "Unresolved" },
+  ];
+
+  const row = document.getElementById("stat-row");
+  for (const s of stats) {
+    const cell = document.createElement("div");
+    cell.className = "stat";
+    cell.innerHTML = `<div class="stat-value display${s.accent ? " accent" : ""}">${s.value}</div><div class="stat-label">${s.label}</div>`;
+    row.appendChild(cell);
+  }
+}
+
+/* ---------- court diagram ---------- */
+
+function renderCourt() {
+  const svg = document.getElementById("court-svg");
+  const W = COURT.width * SCALE;
+  const L = COURT.length * SCALE;
+  const pad = 14;
+  svg.setAttribute("viewBox", `${-pad} ${-pad} ${W + pad * 2} ${L + pad * 2}`);
+
+  if (!DATA.bounce_locations.length) {
+    document.getElementById("bounce-note").textContent = "No calibrated bounce locations for this clip.";
+  }
+
+  const lineColor = getComputedStyle(document.body).getPropertyValue("--net").trim() || "#0f2c3f";
+  const singlesInset = COURT.singlesInset * SCALE;
+  const serviceFar = COURT.serviceFromBaseline * SCALE;
+  const serviceNear = L - COURT.serviceFromBaseline * SCALE;
+  const net = L / 2;
+
+  const lines = [
+    // outer doubles rectangle
+    [0, 0, W, 0], [0, L, W, L], [0, 0, 0, L], [W, 0, W, L],
+    // singles sidelines
+    [singlesInset, 0, singlesInset, L], [W - singlesInset, 0, W - singlesInset, L],
+    // service lines
+    [singlesInset, serviceFar, W - singlesInset, serviceFar],
+    [singlesInset, serviceNear, W - singlesInset, serviceNear],
+    // center service line
+    [W / 2, serviceFar, W / 2, serviceNear],
+  ];
+  for (const [x1, y1, x2, y2] of lines) {
+    svg.appendChild(svgEl("line", { x1, y1, x2, y2, stroke: lineColor, "stroke-width": 0.9, opacity: 0.55 }));
+  }
+  // net
+  svg.appendChild(svgEl("line", { x1: 0, y1: net, x2: W, y2: net, stroke: lineColor, "stroke-width": 2.2, opacity: 0.8 }));
+
+  DATA.bounce_locations.forEach(([x, y], i) => {
+    const cx = x * SCALE, cy = y * SCALE;
+    const far = y < COURT.length / 2;
+    const color = far ? "#6fb7ff" : "#dff227";
+    const halo = svgEl("circle", { cx, cy, r: 7, fill: color, opacity: 0.18 });
+    const dot = svgEl("circle", { cx, cy, r: 3, fill: color, stroke: "#0f2c3f", "stroke-width": 0.4 });
+    const title = svgEl("title", {});
+    title.textContent = `${DATA.bounce_zone_labels[i] || ""} · (${x.toFixed(1)}, ${y.toFixed(1)}) m`;
+    dot.appendChild(title);
+    svg.appendChild(halo);
+    svg.appendChild(dot);
+  });
+}
+
+/* ---------- speed chart ---------- */
+
+function renderSpeedChart() {
+  const canvas = document.getElementById("speed-chart");
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  const w = rect.width || 480, h = 220;
+  canvas.width = w * dpr;
+  canvas.height = h * dpr;
+  canvas.style.height = h + "px";
+  const ctx = canvas.getContext("2d");
+  ctx.scale(dpr, dpr);
+
+  const shots = DATA.shot_speeds;
+  if (!shots.length) {
+    ctx.fillStyle = "#7791a0";
+    ctx.font = "13px 'IBM Plex Sans'";
+    ctx.fillText("No tracked shot speeds", 12, h / 2);
+    return;
+  }
+
+  const times = shots.map((s) => (s.start_frame + s.end_frame) / 2 / DATA.fps);
+  const speeds = shots.map((s) => s.peak_speed);
+  const maxSpeed = Math.max(...speeds) * 1.15;
+  const minTime = Math.min(...times), maxTime = Math.max(...times);
+  const padL = 34, padR = 12, padT = 16, padB = 22;
+  const plotW = w - padL - padR, plotH = h - padT - padB;
+
+  const xAt = (t) => padL + ((t - minTime) / Math.max(maxTime - minTime, 0.001)) * plotW;
+  const yAt = (v) => padT + plotH - (v / maxSpeed) * plotH;
+
+  // grid
+  ctx.strokeStyle = "rgba(127,154,168,0.25)";
+  ctx.lineWidth = 1;
+  const gridSteps = 4;
+  ctx.font = "10px 'IBM Plex Mono'";
+  ctx.fillStyle = "#7791a0";
+  for (let i = 0; i <= gridSteps; i++) {
+    const v = (maxSpeed / gridSteps) * i;
+    const y = yAt(v);
+    ctx.beginPath();
+    ctx.moveTo(padL, y);
+    ctx.lineTo(w - padR, y);
+    ctx.stroke();
+    ctx.fillText(v.toFixed(0), 2, y + 3);
+  }
+
+  // area fill
+  const accent = getComputedStyle(document.body).getPropertyValue("--accent-fill").trim() || "#dff227";
+  const grad = ctx.createLinearGradient(0, padT, 0, padT + plotH);
+  grad.addColorStop(0, accent + "aa");
+  grad.addColorStop(1, accent + "05");
+  ctx.beginPath();
+  ctx.moveTo(xAt(times[0]), yAt(0));
+  times.forEach((t, i) => ctx.lineTo(xAt(t), yAt(speeds[i])));
+  ctx.lineTo(xAt(times[times.length - 1]), yAt(0));
+  ctx.closePath();
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // line
+  ctx.beginPath();
+  times.forEach((t, i) => {
+    const x = xAt(t), y = yAt(speeds[i]);
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  });
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // points, emphasize the peak
+  const peakIdx = speeds.indexOf(Math.max(...speeds));
+  times.forEach((t, i) => {
+    const x = xAt(t), y = yAt(speeds[i]);
+    ctx.beginPath();
+    ctx.arc(x, y, i === peakIdx ? 4.5 : 2.5, 0, Math.PI * 2);
+    ctx.fillStyle = i === peakIdx ? accent : "#0f3550";
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = 1.2;
+    ctx.fill();
+    ctx.stroke();
+  });
+
+  document.getElementById("peak-value").textContent = `${Math.max(...speeds).toFixed(0)} km/h`;
+}
+
+/* ---------- player movement ---------- */
+
+function renderMovement() {
+  const wrap = document.getElementById("movement-rows");
+  const near = DATA.near_player_movement;
+  const far = DATA.far_player_movement;
+  if (!near && !far) {
+    wrap.innerHTML = '<p class="card-note">No player-tracking data available for this clip.</p>';
+    return;
+  }
+  const rows = [
+    { label: "Distance", near: near?.distance_m, far: far?.distance_m, unit: "m" },
+    { label: "Avg pace", near: near?.average_speed_mps, far: far?.average_speed_mps, unit: "m/s" },
+    { label: "Top speed", near: near?.max_speed_mps, far: far?.max_speed_mps, unit: "m/s" },
+  ];
+  for (const r of rows) {
+    const row = document.createElement("div");
+    row.className = "coverage-row";
+    row.innerHTML = `
+      <div class="coverage-value near">${r.near != null ? r.near.toFixed(1) + " " + r.unit : "—"}</div>
+      <div class="coverage-label">${r.label}</div>
+      <div class="coverage-value far">${r.far != null ? r.far.toFixed(1) + " " + r.unit : "—"}</div>`;
+    wrap.appendChild(row);
+  }
+}
+
+/* ---------- stroke mix ---------- */
+
+function renderStrokes() {
+  const wrap = document.getElementById("stroke-columns");
+  const contactCounts = DATA.contact_side_counts || {};
+  const cols = [
+    { title: "Near player", counts: DATA.near_shot_counts, side: "near" },
+    { title: "Far player", counts: DATA.far_shot_counts, side: "far" },
+  ];
+  for (const col of cols) {
+    const div = document.createElement("div");
+    div.className = "stroke-col";
+    const total = col.counts ? Object.values(col.counts).reduce((a, b) => a + b, 0) : 0;
+    let html = `<h3>${col.title}</h3>`;
+    if (!col.counts || total === 0) {
+      // The pose classifier only reads the near player reliably (see
+      // shot_classifier.py) - contact_side_counts fills the gap with a
+      // count derived from WHERE the ball was struck instead, which works
+      // for either player but can't say what kind of shot it was.
+      const contactCount = contactCounts[col.side] || 0;
+      if (contactCount > 0) {
+        html += `<div>
+          <div class="stroke-fallback-value display">${contactCount}</div>
+          <div class="stroke-fallback-label">${contactCount === 1 ? "shot" : "shots"} detected by contact position</div>
+          <div class="stroke-empty-note">Type (forehand/backhand/serve) not classified${col.side === "far" ? " — the pose model only reads the near player from this camera angle" : ""}.</div>
+        </div>`;
+      } else {
+        html += `<div class="stroke-empty-note">No swings detected.</div>`;
+      }
+    } else {
+      const max = Math.max(...Object.values(col.counts));
+      for (const [type, count] of Object.entries(col.counts)) {
+        const pct = max ? (count / max) * 100 : 0;
+        html += `<div class="stroke-item">
+          <span>${type}</span>
+          <span class="stroke-bar-track"><span class="stroke-bar-fill" style="width:${pct}%"></span></span>
+          <span class="stroke-count">${count}</span>
+        </div>`;
+      }
+    }
+    div.innerHTML = html;
+    wrap.appendChild(div);
+  }
+}
+
+/* ---------- serve trend ---------- */
+
+function renderServes() {
+  const wrap = document.getElementById("serve-columns");
+  const card = document.getElementById("serve-card");
+  const cols = [
+    { title: "Near player", readings: DATA.near_serve_speeds },
+    { title: "Far player", readings: DATA.far_serve_speeds },
+  ];
+  const anyServes = cols.some((c) => c.readings && c.readings.length);
+  if (!anyServes) {
+    card.style.display = "none";
+    return;
+  }
+  for (const col of cols) {
+    const div = document.createElement("div");
+    div.className = "serve-col";
+    let html = `<h3>${col.title}</h3>`;
+    if (!col.readings || col.readings.length === 0) {
+      html += `<div class="stroke-empty-note">No serves classified.</div>`;
+    } else {
+      col.readings.forEach((r, i) => {
+        html += `<div class="serve-item">
+          <span>Serve ${i + 1} · ${fmtTime(r.frame_idx)}</span>
+          <span class="serve-speed mono">${r.peak_speed != null ? r.peak_speed.toFixed(0) + " " + r.unit : "—"}</span>
+        </div>`;
+      });
+    }
+    div.innerHTML = html;
+    wrap.appendChild(div);
+  }
+}
+
+/* ---------- rally log ---------- */
+
+function renderRallies() {
+  const body = document.getElementById("rally-body");
+  DATA.rallies.forEach((r, i) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td class="num">${i + 1}</td>
+      <td class="num">${fmtTime(r.start_frame)}</td>
+      <td class="num">${r.duration_s.toFixed(1)}s</td>
+      <td class="num">${r.shot_count}</td>
+      <td class="num">${r.bounce_count}</td>
+      <td class="peak">${r.peak_speed != null ? r.peak_speed.toFixed(0) + " km/h" : "—"}</td>`;
+    body.appendChild(tr);
+  });
+}
+
+renderScoreboard();
+renderCourt();
+renderSpeedChart();
+renderMovement();
+renderStrokes();
+renderServes();
+renderRallies();
+window.addEventListener("resize", renderSpeedChart);
+</script>
+</body>
+</html>

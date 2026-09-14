@@ -24,6 +24,16 @@ class VideoReader:
             yield frame
         self.cap.release()
 
+    def frame_count_hint(self) -> "int | None":
+        """The container's own frame count metadata, if it reports one -
+        COSMETIC only (a progress bar's `total=`), never a substitute for
+        actually counting frames as they're decoded. Some containers
+        (variable frame rate especially) report this inaccurately or not
+        at all, which is fine for a progress bar and would not be fine for
+        anything that has to be right."""
+        count = self.cap.get(cv2.CAP_PROP_FRAME_COUNT)
+        return int(count) if count and count > 0 else None
+
 
 class VideoWriter:
     def __init__(self, path: str | Path, fps: float, width: int, height: int):
