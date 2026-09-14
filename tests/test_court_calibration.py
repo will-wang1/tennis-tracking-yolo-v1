@@ -2,10 +2,23 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import numpy as np
+
 from src.analysis.court_calibration import FULL_COURT_REFERENCE_POINTS, CourtCalibration
 
 PIXEL_POINTS = [(340.0, 980.0), (1580.0, 980.0), (1400.0, 650.0), (520.0, 650.0)]
 WORLD_POINTS = [(0.0, 0.0), (8.23, 0.0), (8.23, 5.485), (0.0, 5.485)]
+
+# The court's four outer corners as a typical behind-the-baseline broadcast
+# camera sees them on a 1920x1080 frame: a trapezoid, far baseline narrower
+# than the near one. Covers ~27% of frame, matching the ~25.6% median
+# measured across real footage.
+REALISTIC_KEYPOINTS = {
+    "baseline_far_left": (700.0, 300.0),
+    "baseline_far_right": (1220.0, 300.0),
+    "baseline_near_right": (1570.0, 950.0),
+    "baseline_near_left": (350.0, 950.0),
+}
 
 
 class CourtCalibrationTest(unittest.TestCase):
@@ -89,6 +102,61 @@ class CourtCalibrationTest(unittest.TestCase):
         pixel_points = {"baseline_far_left": (0.0, 0.0), "baseline_far_right": (100.0, 0.0)}
         with self.assertRaises(ValueError):
             CourtCalibration.from_keypoints(pixel_points)
+
+    def test_unfittable_keypoints_raise_rather_than_return_none(self):
+        # cv2.findHomography returns None (not a matrix) when RANSAC finds no
+        # consensus - five exactly-collinear points here. This crashed a real
+        # cache build partway through a clip with an AttributeError on None;
+        # callers handle ValueError, so that is what it must raise.
+        collinear = {
+            name: (100.0 + 10 * i, 100.0 + 10 * i)
+            for i, name in enumerate(list(FULL_COURT_REFERENCE_POINTS)[:5])
+        }
+        with self.assertRaises(ValueError):
+            CourtCalibration.from_keypoints(collinear)
+
+    def test_a_normal_broadcast_view_is_plausible(self):
+        calibration = CourtCalibration.from_keypoints(REALISTIC_KEYPOINTS)
+        self.assertTrue(calibration.is_plausible_view(1920, 1080))
+
+    def test_a_near_degenerate_fit_is_rejected(self):
+        # All four points nearly collinear - the court plane seen edge-on,
+        # which throws the reprojected corners towards infinity. This is the
+        # shape of the real failure: on the Alcaraz-Djokovic clip a replay
+        # shot produced a fit reprojecting court corners 260,000px away.
+        collapsed = {
+            "baseline_far_left": (900.0, 500.0),
+            "baseline_far_right": (1000.0, 500.4),
+            "baseline_near_right": (1100.0, 500.8),
+            "baseline_near_left": (1200.0, 501.2),
+        }
+        calibration = CourtCalibration.from_keypoints(collapsed)
+        self.assertFalse(calibration.is_plausible_view(1920, 1080))
+
+    def test_a_court_reprojecting_to_a_sliver_is_rejected(self):
+        # A fit that maps the whole court into a few thousand square pixels.
+        # Measured margin on real footage: the smallest genuine court view
+        # covered 6.1% of frame, slivers like this covered 0.10-0.56%.
+        sliver = {
+            "baseline_far_left": (900.0, 500.0),
+            "baseline_far_right": (930.0, 500.0),
+            "baseline_near_right": (930.0, 530.0),
+            "baseline_near_left": (900.0, 530.0),
+        }
+        calibration = CourtCalibration.from_keypoints(sliver)
+        self.assertFalse(calibration.is_plausible_view(1920, 1080))
+
+    def test_plausibility_is_relative_to_frame_size(self):
+        # The same homography judged against a much smaller frame: the court
+        # now covers a large share of it, so an area rule expressed in
+        # absolute pixels would flip the verdict. It must not.
+        calibration = CourtCalibration.from_keypoints(REALISTIC_KEYPOINTS)
+        self.assertTrue(calibration.is_plausible_view(1920, 1080))
+        self.assertTrue(calibration.is_plausible_view(960, 540))
+
+    def test_a_singular_homography_is_rejected_rather_than_raising(self):
+        calibration = CourtCalibration(homography=np.zeros((3, 3), dtype=np.float64))
+        self.assertFalse(calibration.is_plausible_view(1920, 1080))
 
     def test_save_and_load_round_trip(self):
         with tempfile.TemporaryDirectory() as tmp:
