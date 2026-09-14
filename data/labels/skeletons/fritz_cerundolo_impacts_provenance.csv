@@ -1,0 +1,84 @@
+seconds,frame,proposed_by
+0.28,7,trajectory_scan
+0.68,17,trajectory_scan
+1.04,26,pipeline:unknown
+1.12,28,trajectory_scan
+1.96,49,pipeline:unknown trajectory_scan
+2.60,65,pipeline:unknown trajectory_scan
+3.32,83,trajectory_scan
+3.40,85,pipeline:unknown
+5.32,133,pipeline:unknown
+5.68,142,pipeline:unknown
+6.04,151,pipeline:contact trajectory_scan
+6.64,166,pipeline:unknown
+6.96,174,trajectory_scan
+7.12,178,pipeline:bounce
+7.72,193,pipeline:contact trajectory_scan
+8.12,203,pipeline:unknown
+10.96,274,trajectory_scan
+11.20,280,pipeline:unknown
+11.84,296,pipeline:unknown
+12.08,302,pipeline:unknown
+23.24,581,trajectory_scan
+23.36,584,pipeline:bounce
+23.84,596,pipeline:bounce
+25.68,642,trajectory_scan
+25.96,649,pipeline:unknown
+26.20,655,trajectory_scan
+26.64,666,pipeline:unknown
+26.68,667,trajectory_scan
+30.56,764,trajectory_scan
+30.64,766,pipeline:bounce
+31.04,776,pipeline:bounce trajectory_scan
+31.88,797,trajectory_scan
+31.96,799,pipeline:contact
+32.76,819,pipeline:unknown
+33.08,827,pipeline:unknown
+33.12,828,trajectory_scan
+33.60,840,pipeline:unknown
+34.16,854,pipeline:unknown
+35.24,881,pipeline:unknown
+35.60,890,pipeline:unknown
+35.64,891,trajectory_scan
+36.20,905,pipeline:unknown
+36.64,916,pipeline:unknown
+36.88,922,pipeline:contact
+37.64,941,pipeline:bounce
+38.08,952,pipeline:contact trajectory_scan
+38.56,964,pipeline:unknown
+38.92,973,pipeline:bounce
+39.24,981,pipeline:contact
+39.64,991,pipeline:unknown
+40.12,1003,pipeline:bounce trajectory_scan
+43.36,1084,trajectory_scan
+46.72,1168,pipeline:unknown
+47.84,1196,pipeline:unknown
+48.76,1219,pipeline:bounce
+59.44,1486,pipeline:contact trajectory_scan
+59.76,1494,pipeline:bounce
+60.08,1502,pipeline:unknown
+60.40,1510,pipeline:contact
+61.12,1528,pipeline:bounce
+61.64,1541,pipeline:contact trajectory_scan
+62.16,1554,pipeline:unknown
+62.64,1566,pipeline:unknown
+63.76,1594,pipeline:unknown
+63.80,1595,trajectory_scan
+64.24,1606,trajectory_scan
+64.28,1607,pipeline:unknown
+71.52,1788,pipeline:unknown
+72.12,1803,trajectory_scan
+79.36,1984,trajectory_scan
+79.44,1986,pipeline:unknown
+79.84,1996,trajectory_scan
+79.92,1998,pipeline:unknown
+80.24,2006,pipeline:unknown
+80.88,2022,pipeline:unknown trajectory_scan
+81.24,2031,pipeline:unknown
+82.00,2050,pipeline:unknown
+86.68,2167,pipeline:unknown
+87.16,2179,pipeline:unknown trajectory_scan
+87.56,2189,pipeline:unknown
+88.52,2213,pipeline:unknown
+89.20,2230,pipeline:unknown
+89.32,2233,trajectory_scan

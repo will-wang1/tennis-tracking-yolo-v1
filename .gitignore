@@ -34,3 +34,9 @@ tennis_tracking_transfer/
 
 # graphify knowledge-graph build output (regenerate with /graphify)
 graphify-out/
+
+# Thumbnail strips for label candidates: ~340MB of JPEGs for eight clips,
+# and fully regenerable from the clip plus its replay cache with
+# scripts/extract_label_candidates.py. The label CSVs beside them ARE
+# tracked - those hold the human judgements, which nothing can regenerate.
+data/labels/skeletons/*_thumbs/

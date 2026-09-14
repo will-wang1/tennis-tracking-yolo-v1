@@ -1,0 +1,179 @@
+seconds,frame,proposed_by
+1.36,34,trajectory_scan
+1.64,41,pipeline:unknown
+1.84,46,trajectory_scan
+2.08,52,pipeline:unknown
+2.28,57,trajectory_scan
+2.56,64,pipeline:unknown
+2.60,65,trajectory_scan
+3.64,91,pipeline:unknown
+3.68,92,trajectory_scan
+4.08,102,pipeline:unknown
+4.28,107,trajectory_scan
+4.52,113,pipeline:unknown
+4.84,121,trajectory_scan
+5.16,129,pipeline:unknown
+5.36,134,pipeline:unknown trajectory_scan
+5.56,139,pipeline:unknown
+6.20,155,trajectory_scan
+6.24,156,pipeline:unknown
+6.76,169,trajectory_scan
+6.80,170,pipeline:unknown
+10.36,259,pipeline:unknown
+11.04,276,pipeline:bounce trajectory_scan
+11.48,287,trajectory_scan
+11.68,292,pipeline:unknown
+12.60,315,pipeline:unknown
+13.08,327,pipeline:unknown trajectory_scan
+13.56,339,pipeline:unknown trajectory_scan
+14.80,370,pipeline:unknown
+15.28,382,trajectory_scan
+15.56,389,pipeline:unknown
+15.76,394,pipeline:unknown
+16.16,404,pipeline:unknown
+16.20,405,trajectory_scan
+16.56,414,trajectory_scan
+16.80,420,pipeline:unknown
+17.48,437,trajectory_scan
+17.52,438,pipeline:bounce
+18.04,451,pipeline:unknown trajectory_scan
+18.64,466,pipeline:unknown trajectory_scan
+18.92,473,pipeline:unknown
+19.36,484,pipeline:contact trajectory_scan
+19.92,498,trajectory_scan
+21.40,535,pipeline:unknown
+22.16,554,pipeline:contact
+22.28,557,trajectory_scan
+23.20,580,pipeline:unknown
+23.24,581,trajectory_scan
+23.72,593,pipeline:bounce
+23.76,594,trajectory_scan
+25.32,633,trajectory_scan
+25.56,639,pipeline:bounce
+25.76,644,trajectory_scan
+26.24,656,pipeline:unknown
+26.68,667,pipeline:unknown trajectory_scan
+27.68,692,pipeline:unknown
+41.72,1043,trajectory_scan
+46.60,1165,trajectory_scan
+47.44,1186,trajectory_scan
+47.60,1190,pipeline:bounce
+47.96,1199,trajectory_scan
+48.48,1212,trajectory_scan
+52.44,1311,trajectory_scan
+52.68,1317,pipeline:unknown
+52.72,1318,trajectory_scan
+53.20,1330,pipeline:unknown
+54.60,1365,pipeline:unknown trajectory_scan
+55.12,1378,pipeline:unknown
+55.16,1379,trajectory_scan
+56.08,1402,pipeline:unknown trajectory_scan
+56.76,1419,trajectory_scan
+56.92,1423,pipeline:unknown
+57.04,1426,trajectory_scan
+57.36,1434,trajectory_scan
+57.92,1448,pipeline:unknown
+58.28,1457,trajectory_scan
+58.80,1470,pipeline:unknown trajectory_scan
+59.36,1484,pipeline:unknown trajectory_scan
+60.08,1502,pipeline:bounce trajectory_scan
+60.60,1515,pipeline:unknown
+60.68,1517,trajectory_scan
+63.28,1582,pipeline:unknown
+63.64,1591,pipeline:unknown
+63.92,1598,pipeline:unknown
+63.96,1599,trajectory_scan
+64.36,1609,pipeline:bounce
+64.40,1610,trajectory_scan
+64.84,1621,pipeline:contact
+65.72,1643,pipeline:bounce
+66.20,1655,pipeline:contact trajectory_scan
+66.92,1673,pipeline:bounce
+67.00,1675,trajectory_scan
+68.40,1710,pipeline:bounce trajectory_scan
+74.16,1854,pipeline:unknown
+90.84,2271,trajectory_scan
+91.12,2278,pipeline:unknown
+91.40,2285,trajectory_scan
+91.72,2293,pipeline:unknown
+91.92,2298,trajectory_scan
+95.24,2381,pipeline:unknown
+95.96,2399,pipeline:bounce trajectory_scan
+96.32,2408,pipeline:bounce
+97.08,2427,pipeline:bounce
+98.56,2464,pipeline:bounce
+98.72,2468,trajectory_scan
+99.16,2479,pipeline:unknown
+99.28,2482,trajectory_scan
+99.72,2493,pipeline:unknown
+99.80,2495,trajectory_scan
+100.20,2505,pipeline:bounce trajectory_scan
+100.92,2523,pipeline:contact
+101.24,2531,pipeline:unknown trajectory_scan
+101.44,2536,pipeline:unknown
+101.76,2544,trajectory_scan
+102.04,2551,pipeline:unknown
+102.32,2558,trajectory_scan
+102.56,2564,pipeline:unknown
+103.08,2577,pipeline:unknown trajectory_scan
+103.40,2585,pipeline:unknown
+103.64,2591,trajectory_scan
+106.44,2661,pipeline:unknown
+107.08,2677,pipeline:unknown
+107.56,2689,pipeline:bounce trajectory_scan
+108.20,2705,pipeline:bounce
+108.40,2710,trajectory_scan
+108.56,2714,pipeline:unknown
+109.16,2729,pipeline:unknown trajectory_scan
+110.00,2750,pipeline:unknown trajectory_scan
+116.88,2922,pipeline:unknown
+117.32,2933,pipeline:unknown
+117.52,2938,pipeline:unknown
+118.92,2973,pipeline:unknown
+119.20,2980,pipeline:unknown
+122.08,3052,pipeline:unknown
+123.28,3082,pipeline:unknown
+124.20,3105,trajectory_scan
+140.96,3524,trajectory_scan
+141.20,3530,pipeline:bounce
+141.64,3541,pipeline:contact
+142.60,3565,pipeline:bounce trajectory_scan
+144.84,3621,trajectory_scan
+152.80,3820,trajectory_scan
+153.08,3827,pipeline:bounce
+153.28,3832,trajectory_scan
+153.44,3836,pipeline:bounce
+154.00,3850,pipeline:contact
+154.88,3872,pipeline:bounce trajectory_scan
+155.44,3886,pipeline:contact trajectory_scan
+155.92,3898,pipeline:unknown
+156.20,3905,trajectory_scan
+156.24,3906,pipeline:bounce
+156.56,3914,pipeline:contact
+157.48,3937,trajectory_scan
+157.64,3941,pipeline:contact
+157.80,3945,trajectory_scan
+158.52,3963,pipeline:bounce
+158.60,3965,trajectory_scan
+159.00,3975,pipeline:contact
+159.84,3996,pipeline:unknown
+160.28,4007,pipeline:unknown trajectory_scan
+160.72,4018,pipeline:unknown
+160.96,4024,pipeline:unknown
+161.24,4031,pipeline:unknown
+162.32,4058,pipeline:unknown
+162.52,4063,trajectory_scan
+162.88,4072,pipeline:unknown
+163.20,4080,pipeline:bounce
+163.72,4093,pipeline:unknown
+164.24,4106,pipeline:unknown
+165.08,4127,pipeline:bounce trajectory_scan
+165.52,4138,pipeline:unknown trajectory_scan
+165.92,4148,pipeline:unknown
+166.24,4156,pipeline:bounce trajectory_scan
+167.40,4185,pipeline:contact
+167.60,4190,pipeline:contact
+167.68,4192,trajectory_scan
+168.72,4218,pipeline:unknown
+169.76,4244,trajectory_scan
+170.16,4254,trajectory_scan

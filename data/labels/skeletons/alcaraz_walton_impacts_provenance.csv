@@ -1,0 +1,132 @@
+seconds,frame,proposed_by
+0.20,5,trajectory_scan
+0.48,12,pipeline:bounce
+0.56,14,trajectory_scan
+2.56,64,trajectory_scan
+3.16,79,trajectory_scan
+5.28,132,trajectory_scan
+5.92,148,pipeline:unknown
+7.52,188,pipeline:unknown
+8.16,204,pipeline:contact trajectory_scan
+8.48,212,pipeline:bounce
+9.92,248,pipeline:bounce
+10.04,251,trajectory_scan
+11.00,275,pipeline:bounce trajectory_scan
+11.48,287,pipeline:unknown trajectory_scan
+11.88,297,pipeline:unknown
+12.04,301,trajectory_scan
+12.28,307,pipeline:unknown
+12.64,316,trajectory_scan
+13.12,328,pipeline:unknown
+13.20,330,trajectory_scan
+13.52,338,trajectory_scan
+13.76,344,trajectory_scan
+13.84,346,pipeline:unknown
+14.40,360,trajectory_scan
+14.48,362,pipeline:bounce
+16.44,411,trajectory_scan
+16.80,420,trajectory_scan
+17.00,425,pipeline:unknown
+17.20,430,trajectory_scan
+17.60,440,pipeline:bounce
+18.60,465,pipeline:unknown
+19.12,478,pipeline:unknown
+19.36,484,pipeline:bounce
+19.40,485,trajectory_scan
+19.88,497,trajectory_scan
+20.00,500,pipeline:contact
+20.40,510,trajectory_scan
+21.28,532,pipeline:bounce trajectory_scan
+43.48,1087,pipeline:bounce
+43.92,1098,pipeline:unknown
+43.96,1099,trajectory_scan
+45.00,1125,pipeline:bounce trajectory_scan
+45.72,1143,pipeline:contact trajectory_scan
+46.20,1155,pipeline:unknown
+46.40,1160,trajectory_scan
+46.56,1164,pipeline:bounce
+47.16,1179,pipeline:contact
+48.24,1206,pipeline:contact
+48.76,1219,pipeline:unknown
+49.20,1230,pipeline:bounce
+49.32,1233,trajectory_scan
+49.64,1241,pipeline:contact
+50.36,1259,pipeline:bounce
+50.76,1269,pipeline:contact trajectory_scan
+51.20,1280,pipeline:unknown
+51.64,1291,pipeline:unknown trajectory_scan
+53.08,1327,pipeline:contact
+53.28,1332,trajectory_scan
+53.32,1333,pipeline:unknown
+54.44,1361,pipeline:unknown
+54.84,1371,pipeline:bounce trajectory_scan
+77.28,1932,pipeline:contact
+77.64,1941,pipeline:contact
+78.32,1958,trajectory_scan
+78.36,1959,pipeline:unknown
+79.88,1997,pipeline:unknown
+80.20,2005,pipeline:unknown
+80.64,2016,pipeline:contact trajectory_scan
+81.00,2025,pipeline:bounce
+81.44,2036,pipeline:unknown
+81.88,2047,pipeline:unknown
+83.12,2078,pipeline:bounce trajectory_scan
+83.76,2094,pipeline:bounce trajectory_scan
+84.24,2106,pipeline:bounce
+84.64,2116,pipeline:unknown
+84.92,2123,pipeline:bounce
+86.16,2154,pipeline:bounce
+86.28,2157,trajectory_scan
+110.00,2750,pipeline:unknown
+110.28,2757,pipeline:contact
+110.32,2758,trajectory_scan
+110.72,2768,pipeline:bounce
+111.60,2790,pipeline:contact
+112.48,2812,pipeline:bounce
+113.24,2831,trajectory_scan
+113.52,2838,pipeline:unknown
+113.88,2847,trajectory_scan
+114.20,2855,trajectory_scan
+116.16,2904,pipeline:unknown
+116.40,2910,trajectory_scan
+116.56,2914,pipeline:unknown
+117.04,2926,pipeline:unknown trajectory_scan
+117.48,2937,pipeline:unknown
+118.00,2950,trajectory_scan
+118.08,2952,pipeline:unknown
+118.36,2959,pipeline:unknown
+118.64,2966,trajectory_scan
+118.84,2971,pipeline:unknown
+120.12,3003,pipeline:unknown
+120.56,3014,pipeline:unknown
+120.84,3021,trajectory_scan
+120.96,3024,pipeline:bounce
+121.24,3031,trajectory_scan
+121.52,3038,pipeline:contact
+122.56,3064,pipeline:bounce
+122.60,3065,trajectory_scan
+135.84,3396,pipeline:bounce trajectory_scan
+136.48,3412,pipeline:unknown
+140.08,3502,pipeline:bounce
+140.12,3503,trajectory_scan
+141.28,3532,trajectory_scan
+149.92,3748,pipeline:bounce
+149.96,3749,trajectory_scan
+150.24,3756,trajectory_scan
+150.40,3760,pipeline:bounce
+151.08,3777,pipeline:unknown trajectory_scan
+151.36,3784,pipeline:unknown
+151.64,3791,trajectory_scan
+152.44,3811,trajectory_scan
+152.48,3812,pipeline:contact
+153.32,3833,pipeline:bounce
+153.44,3836,trajectory_scan
+155.20,3880,pipeline:contact trajectory_scan
+160.24,4006,pipeline:contact trajectory_scan
+160.68,4017,pipeline:bounce trajectory_scan
+161.16,4029,pipeline:unknown
+162.48,4062,pipeline:bounce trajectory_scan
+163.08,4077,pipeline:bounce
+163.12,4078,trajectory_scan
+163.76,4094,pipeline:bounce
+164.60,4115,pipeline:bounce trajectory_scan
