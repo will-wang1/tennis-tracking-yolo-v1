@@ -295,9 +295,15 @@ def main() -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     with open(out, "w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
-        writer.writerow(["seconds", "kind", "tolerance_s", "note"])
+        # `strip` is navigational only - the strips are named by FRAME while
+        # the labels are in SECONDS, and converting between them by hand 900
+        # times is exactly the kind of friction that produces mislabelled
+        # rows. read_labels() reads seconds/kind/tolerance_s/note by name and
+        # ignores anything else, so carrying it costs nothing. It deliberately
+        # says nothing about what the pipeline thought.
+        writer.writerow(["seconds", "strip", "kind", "tolerance_s", "note"])
         for frame in sorted(sources):
-            writer.writerow([f"{frame / fps:.2f}", "", DEFAULT_TOLERANCE_S, ""])
+            writer.writerow([f"{frame / fps:.2f}", f"{frame:06d}.jpg", "", DEFAULT_TOLERANCE_S, ""])
 
     # The guide lives next to the CSV, not only in this file's docstring -
     # labelling happens in a spreadsheet, where a script docstring is
