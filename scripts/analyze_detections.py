@@ -50,16 +50,23 @@ def main() -> None:
         args.weights, confidence=args.confidence, imgsz=args.imgsz, device=args.device
     )
     reader = VideoReader(args.input)
-    frames = list(reader.frames())
-    if not frames:
-        raise SystemExit(f"No frames read from {args.input}")
 
-    print(f"Running detector on {len(frames)} frames (no tracker filtering)...")
+    print("Running detector on every frame (no tracker filtering)...")
     rows = []
-    for i, frame in enumerate(tqdm(frames)):
+    first_frame = None
+    # Streamed rather than `list(reader.frames())`, which held every decoded
+    # frame at once (~5.9MB each at 1080p - ~16GB for a 2,700-frame clip)
+    # and is what had been killing long jobs in this repo for memory with no
+    # error. Only the first frame is kept, as a backdrop for the heatmap.
+    for i, frame in enumerate(tqdm(reader.frames(), total=reader.frame_count_hint())):
+        if first_frame is None:
+            first_frame = frame.copy()
         det = detector.detect(frame)
         if det is not None:
             rows.append((i, det.x, det.y, det.confidence))
+
+    if first_frame is None:
+        raise SystemExit(f"No frames read from {args.input}")
 
     csv_path = Path(args.csv_out)
     csv_path.parent.mkdir(parents=True, exist_ok=True)
@@ -79,7 +86,7 @@ def main() -> None:
 
     normalized = (255 * heat / heat.max()).astype(np.uint8)
     colored = cv2.applyColorMap(normalized, cv2.COLORMAP_JET)
-    overlay = cv2.addWeighted(frames[0], 0.6, colored, 0.4, 0)
+    overlay = cv2.addWeighted(first_frame, 0.6, colored, 0.4, 0)
 
     heatmap_path = Path(args.heatmap_out)
     heatmap_path.parent.mkdir(parents=True, exist_ok=True)

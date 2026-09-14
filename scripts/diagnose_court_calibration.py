@@ -18,7 +18,6 @@ from src.video.io import VideoReader
 
 def diagnose(video_path: str, detector: CourtKeypointDetector, min_kp_conf: float):
     reader = VideoReader(video_path)
-    frames = list(reader.frames())
 
     n_genuine = 0
     n_miss = 0
@@ -26,7 +25,10 @@ def diagnose(video_path: str, detector: CourtKeypointDetector, min_kp_conf: floa
     low_conf_frames = []  # frames with 1-3 confident keypoints (near-miss)
     zero_frames = []  # frames with no detection at all
 
-    for i, frame in enumerate(frames):
+    # Streamed: `list(reader.frames())` held every decoded frame at once
+    # (~5.9MB each at 1080p, so ~16GB for a 2,700-frame clip), which is what
+    # had been killing long jobs in this repo for memory with no error.
+    for i, frame in enumerate(reader.frames()):
         detection = detector.detect(frame)
         if detection is None:
             n_miss += 1
@@ -41,7 +43,10 @@ def diagnose(video_path: str, detector: CourtKeypointDetector, min_kp_conf: floa
             n_miss += 1
             low_conf_frames.append((i, len(named), round(float(detection.bbox_confidence), 3)))
 
-    total = len(frames)
+    total = len(per_frame_counts)
+    if not total:
+        print(f"\n=== {video_path}: no frames read ===")
+        return
     print(f"\n=== {video_path} (min_kp_conf={min_kp_conf}) ===")
     print(f"Total frames: {total}")
     print(f"Genuine per-frame calibration (>=4 confident keypoints): {n_genuine}/{total} ({n_genuine/total:.1%})")

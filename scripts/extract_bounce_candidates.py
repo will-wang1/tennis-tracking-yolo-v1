@@ -36,6 +36,7 @@ import sys
 from pathlib import Path
 
 import cv2
+from tqdm import tqdm
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -74,12 +75,20 @@ def main() -> None:
     tracker = BallTracker()
 
     reader = VideoReader(args.input)
-    frames = list(reader.frames())
-    if not frames:
-        raise SystemExit(f"No frames read from {args.input}")
 
-    print(f"Running ball detection on {len(frames)} frames...")
-    detections = [detector.detect(f) for f in frames]
+    # Streamed rather than `list(reader.frames())`, which held every decoded
+    # frame at once (~5.9MB each at 1080p, so ~16GB for a 2,700-frame clip)
+    # and is what had been killing long jobs in this repo for memory with no
+    # error message. Thumbnails need specific frames back, so they are
+    # gathered in a SECOND streaming pass below once it is known which ones
+    # are wanted - decoding twice is far cheaper than holding the video.
+    print("Running ball detection...")
+    detections = [
+        detector.detect(frame)
+        for frame in tqdm(reader.frames(), total=reader.frame_count_hint())
+    ]
+    if not detections:
+        raise SystemExit(f"No frames read from {args.input}")
     positions = tracker.track(detections)
     ordered = sorted(positions, key=lambda p: p.frame_idx)
     index_by_frame = {p.frame_idx: i for i, p in enumerate(ordered)}
@@ -113,6 +122,7 @@ def main() -> None:
     ]
     rows = []
     skipped = 0
+    thumbnails_wanted: dict[int, Path] = {}
     for candidate_id, center_frame in enumerate(candidate_frames):
         center_idx = index_by_frame[center_frame]
         window_start_idx = max(0, center_idx - half_window)
@@ -137,7 +147,7 @@ def main() -> None:
         )
 
         thumb_path = thumbnails_dir / f"candidate_{candidate_id:03d}_frame{center_frame}.jpg"
-        cv2.imwrite(str(thumb_path), frames[center_frame])
+        thumbnails_wanted[center_frame] = thumb_path
 
         rows.append(
             {
@@ -153,6 +163,21 @@ def main() -> None:
                 "label": "",
             }
         )
+
+    # Second streaming pass: pick just the candidate frames back out of the
+    # video for thumbnails. See the note above the first pass for why the
+    # whole video is not kept in memory instead.
+    if thumbnails_wanted:
+        written_thumbs = 0
+        last_wanted = max(thumbnails_wanted)
+        for i, frame in enumerate(VideoReader(args.input).frames()):
+            path = thumbnails_wanted.get(i)
+            if path is not None:
+                cv2.imwrite(str(path), frame)
+                written_thumbs += 1
+            if i >= last_wanted:
+                break
+        print(f"Wrote {written_thumbs} thumbnails")
 
     with open(out_path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)

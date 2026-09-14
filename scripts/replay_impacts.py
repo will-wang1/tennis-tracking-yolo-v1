@@ -65,9 +65,6 @@ def build_cache(args) -> dict:
     from src.video.io import VideoReader
 
     reader = VideoReader(args.input)
-    frames = list(reader.frames())
-    if not frames:
-        raise SystemExit(f"No frames read from {args.input}")
 
     ball_detector = WASBBallDetector(
         args.wasb_weights, device=args.device, score_threshold=args.ball_score_threshold
@@ -77,18 +74,44 @@ def build_cache(args) -> dict:
     candidates_by_frame = []
     calibrations = {}
     last_good = None
-    for i, frame in enumerate(tqdm(frames, desc="detecting")):
+    num_frames = 0
+    # STREAMED, never materialised. `list(reader.frames())` here used to
+    # hold every decoded frame at once: at 1920x1080x3 bytes that is ~5.9MB
+    # per frame, so a 2,752-frame clip commits ~16GB on a 15GB machine.
+    # That is what had been killing long jobs in this repo - builds and
+    # renders dying at unpredictable percentages with no error, which
+    # looked like an environment problem because the memory was consumed
+    # before any per-frame work started. main.py's three-pass rewrite fixed
+    # the same bug on its side; this path kept it. Nothing below needs more
+    # than the current frame.
+    for i, frame in enumerate(
+        tqdm(reader.frames(), total=reader.frame_count_hint(), desc="detecting")
+    ):
+        num_frames = i + 1
         candidates_by_frame.append(ball_detector.detect_candidates(frame))
         named_points = court_detector.detect(frame) or {}
         if len(named_points) >= 4:
-            last_good = CourtCalibration.from_keypoints(named_points)
+            try:
+                fitted = CourtCalibration.from_keypoints(named_points)
+            except ValueError:
+                # No homography fits these keypoints at all - carry the last
+                # good one forward rather than kill a build minutes deep.
+                fitted = None
+            # Same plausibility gate main.py applies - a cache built without
+            # it would replay verdicts against calibrations the real
+            # pipeline now rejects.
+            if fitted is not None and fitted.is_plausible_view(frame.shape[1], frame.shape[0]):
+                last_good = fitted
         if last_good is not None:
             calibrations[i] = last_good
+
+    if not num_frames:
+        raise SystemExit(f"No frames read from {args.input}")
 
     return {
         "video": str(Path(args.input).resolve()),
         "fps": reader.fps,
-        "num_frames": len(frames),
+        "num_frames": num_frames,
         "candidates": candidates_by_frame,
         # plain 3x3 arrays rather than CourtCalibration objects: a cache
         # outlives the code that wrote it, and an array cannot be
