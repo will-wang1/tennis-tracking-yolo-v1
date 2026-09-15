@@ -86,7 +86,13 @@ class Score:
 
 def read_labels(path: Path) -> list[Label]:
     labels = []
-    with open(path, newline="", encoding="utf-8") as handle:
+    # utf-8-sig, not utf-8: label files are edited by hand in spreadsheets,
+    # and Excel's "CSV UTF-8" format (the default on macOS) writes a
+    # byte-order mark. Read as plain utf-8 the mark glues onto the first
+    # header, "seconds" becomes "﻿seconds", and a fully labelled file
+    # fails with KeyError: 'seconds'. utf-8-sig strips it if present and is
+    # identical otherwise.
+    with open(path, newline="", encoding="utf-8-sig") as handle:
         for row in csv.DictReader(handle):
             kind = row["kind"].strip()
             if kind not in KINDS:

@@ -140,6 +140,24 @@ class ReadLabelsTest(unittest.TestCase):
         self.assertEqual(labels[1].note, "off a dropshot")
         self.assertEqual(labels[1].tolerance_s, 0.3)
 
+    def test_reads_a_file_excel_saved_with_a_byte_order_mark(self):
+        # Excel's "CSV UTF-8" format - the macOS default - starts the file
+        # with a BOM. Read as plain utf-8 that becomes part of the first
+        # header and a fully labelled file dies with KeyError: 'seconds'.
+        path = Path(tempfile.mkdtemp()) / "labels.csv"
+        path.write_bytes("﻿seconds,strip,kind,tolerance_s,note\n1.5,000037.jpg,bounce,,\n".encode("utf-8"))
+
+        labels = read_labels(path)
+
+        self.assertEqual([(label.seconds, label.kind) for label in labels], [(1.5, "bounce")])
+
+    def test_ignores_columns_it_does_not_use(self):
+        # The skeletons carry a navigational `strip` column the scorer has
+        # no use for; it must not disturb reading the columns it does.
+        labels = read_labels(self._write("seconds,strip,kind,tolerance_s,note\n1.5,000037.jpg,contact,0.3,\n"))
+
+        self.assertEqual((labels[0].seconds, labels[0].kind, labels[0].tolerance_s), (1.5, "contact", 0.3))
+
     def test_a_blank_tolerance_falls_back_to_the_default(self):
         labels = read_labels(self._write("seconds,kind,tolerance_s,note\n1.5,bounce,,\n"))
 
