@@ -143,6 +143,11 @@ Also `none`:
 STRIP_RADIUS = 4  # frames either side of a candidate in its thumbnail strip
 STRIP_WIDTH = 320  # px per panel in the strip
 CROP_HALF_PX = 110  # half-size of the zoomed crop taken around the tracked ball
+# Candidates this close are one physical impact seen by two scans. 3 frames
+# is 0.12s at 25fps - far shorter than a ball can travel between two real
+# impacts (a bounce and the next racket contact are several tenths apart),
+# so merging cannot fuse two genuine events.
+MERGE_WITHIN_FRAMES = 3
 DEFAULT_TOLERANCE_S = 0.25
 
 
@@ -181,7 +186,40 @@ def candidate_frames(cache: dict, min_prominence: float, min_gap: int) -> dict[i
         sources.setdefault(impact.frame_idx, set()).add(f"pipeline:{impact.kind}")
 
     ball_xy = {p.frame_idx: (p.x, p.y) for p in positions}
-    return sources, ball_xy
+    return _merge_near_duplicates(sources, MERGE_WITHIN_FRAMES), ball_xy
+
+
+def _merge_near_duplicates(sources: dict[int, set[str]], max_gap: int) -> dict[int, set[str]]:
+    """Collapse candidates a few frames apart into one row.
+
+    The two scans locate the same physical impact at slightly different
+    frames - the pipeline's arc fit and the raw trajectory's local maximum
+    rarely agree to the frame. Emitted separately, one event becomes two
+    rows. FOUND BY LABELLING, not hypothesised: the first eight skeletons
+    carried 120 such pairs, and a labeller reasonably marks one side as the
+    event and the other `none`. The scorer then pairs a correct marker with
+    the `none` row (a false positive) and leaves the real row unmatched (a
+    miss) - one right answer scored as two errors, systematically, on
+    exactly the events the pipeline found.
+
+    Groups are anchored to their FIRST frame, so a group can never span
+    more than `max_gap` frames; chaining gap-to-gap would let a run of
+    close candidates swallow genuinely separate events. The kept frame is
+    the pipeline's own where there is one, since that is what gets scored.
+    """
+    groups: list[list[int]] = []
+    for frame in sorted(sources):
+        if groups and frame - groups[-1][0] <= max_gap:
+            groups[-1].append(frame)
+        else:
+            groups.append([frame])
+
+    merged: dict[int, set[str]] = {}
+    for group in groups:
+        from_pipeline = [f for f in group if any(s.startswith("pipeline") for s in sources[f])]
+        keep = from_pipeline[0] if from_pipeline else group[0]
+        merged[keep] = set().union(*(sources[f] for f in group))
+    return merged
 
 
 def _build_panel(frame, index: int, center: int, ball_xy) -> "cv2.typing.MatLike":

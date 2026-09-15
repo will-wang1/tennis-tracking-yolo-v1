@@ -1,11 +1,9 @@
 seconds,frame,proposed_by
-1.68,42,trajectory_scan
-1.76,44,pipeline:unknown
+1.76,44,pipeline:unknown trajectory_scan
 3.68,92,pipeline:unknown
 4.20,105,pipeline:unknown
 4.64,116,pipeline:bounce
-5.00,125,pipeline:contact
-5.04,126,trajectory_scan
+5.00,125,pipeline:contact trajectory_scan
 5.72,143,pipeline:bounce
 5.96,149,pipeline:unknown
 6.20,155,pipeline:contact
@@ -22,12 +20,10 @@ seconds,frame,proposed_by
 31.68,792,trajectory_scan
 38.84,971,pipeline:unknown
 39.36,984,pipeline:bounce
-39.76,994,pipeline:contact
-39.84,996,trajectory_scan
+39.76,994,pipeline:contact trajectory_scan
 40.36,1009,pipeline:unknown
 40.56,1014,pipeline:unknown
-40.88,1022,trajectory_scan
-40.92,1023,pipeline:unknown
+40.92,1023,pipeline:unknown trajectory_scan
 41.52,1038,trajectory_scan
 64.28,1607,pipeline:unknown
 64.68,1617,pipeline:bounce
@@ -39,19 +35,16 @@ seconds,frame,proposed_by
 67.72,1693,pipeline:unknown trajectory_scan
 68.16,1704,pipeline:unknown
 69.00,1725,pipeline:unknown trajectory_scan
-69.52,1738,pipeline:unknown
-69.56,1739,trajectory_scan
+69.52,1738,pipeline:unknown trajectory_scan
 69.80,1745,pipeline:unknown
 70.00,1750,trajectory_scan
 70.60,1765,pipeline:unknown
-78.48,1962,pipeline:unknown
-78.60,1965,trajectory_scan
+78.48,1962,pipeline:unknown trajectory_scan
 85.52,2138,trajectory_scan
 86.88,2172,trajectory_scan
 90.00,2250,pipeline:unknown
 90.48,2262,pipeline:unknown
-90.96,2274,pipeline:unknown
-91.00,2275,trajectory_scan
+90.96,2274,pipeline:unknown trajectory_scan
 91.96,2299,pipeline:bounce trajectory_scan
 92.48,2312,pipeline:contact
 92.92,2323,trajectory_scan
@@ -60,8 +53,7 @@ seconds,frame,proposed_by
 103.44,2586,pipeline:contact
 104.04,2601,pipeline:unknown
 105.12,2628,trajectory_scan
-107.56,2689,pipeline:contact
-107.64,2691,trajectory_scan
+107.56,2689,pipeline:contact trajectory_scan
 108.40,2710,pipeline:bounce trajectory_scan
 117.84,2946,pipeline:unknown
 118.32,2958,pipeline:bounce
@@ -70,8 +62,7 @@ seconds,frame,proposed_by
 119.84,2996,pipeline:unknown trajectory_scan
 120.52,3013,pipeline:contact
 120.96,3024,pipeline:bounce
-121.24,3031,pipeline:contact
-121.32,3033,trajectory_scan
+121.24,3031,pipeline:contact trajectory_scan
 121.68,3042,pipeline:unknown
 121.92,3048,pipeline:unknown
 122.24,3056,pipeline:contact
@@ -85,18 +76,15 @@ seconds,frame,proposed_by
 135.60,3390,pipeline:unknown
 136.32,3408,pipeline:unknown
 149.60,3740,pipeline:unknown
-150.48,3762,trajectory_scan
-150.52,3763,pipeline:contact
+150.52,3763,pipeline:contact trajectory_scan
 151.12,3778,pipeline:unknown
 151.76,3794,pipeline:contact
 152.20,3805,pipeline:contact
 152.48,3812,pipeline:unknown
 152.88,3822,pipeline:bounce
-153.40,3835,pipeline:contact
-153.44,3836,trajectory_scan
+153.40,3835,pipeline:contact trajectory_scan
 154.00,3850,pipeline:unknown
 154.36,3859,pipeline:bounce trajectory_scan
 155.16,3879,pipeline:unknown
 155.52,3888,pipeline:unknown
-156.52,3913,trajectory_scan
-156.64,3916,pipeline:bounce
+156.64,3916,pipeline:bounce trajectory_scan

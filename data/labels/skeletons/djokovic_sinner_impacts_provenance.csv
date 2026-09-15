@@ -3,28 +3,23 @@ seconds,frame,proposed_by
 3.12,78,pipeline:bounce
 3.36,84,trajectory_scan
 4.24,106,pipeline:unknown
-4.80,120,pipeline:contact
-4.84,121,trajectory_scan
+4.80,120,pipeline:contact trajectory_scan
 5.36,134,pipeline:unknown
-5.84,146,pipeline:unknown
-5.96,149,trajectory_scan
+5.84,146,pipeline:unknown trajectory_scan
 26.16,654,pipeline:unknown
 26.80,670,pipeline:unknown
-27.32,683,pipeline:bounce
-27.44,686,trajectory_scan
+27.32,683,pipeline:bounce trajectory_scan
 28.08,702,pipeline:unknown
 28.60,715,pipeline:contact trajectory_scan
 29.32,733,pipeline:contact
 34.28,857,trajectory_scan
 34.80,870,pipeline:unknown
 38.48,962,trajectory_scan
-39.04,976,pipeline:unknown
-39.16,979,trajectory_scan
+39.04,976,pipeline:unknown trajectory_scan
 40.24,1006,pipeline:unknown
 41.36,1034,pipeline:unknown
 42.28,1057,trajectory_scan
-45.04,1126,pipeline:unknown
-45.12,1128,trajectory_scan
+45.04,1126,pipeline:unknown trajectory_scan
 52.72,1318,pipeline:bounce
 53.12,1328,pipeline:bounce
 54.64,1366,trajectory_scan
@@ -38,11 +33,9 @@ seconds,frame,proposed_by
 77.08,1927,pipeline:unknown
 77.72,1943,pipeline:unknown
 77.96,1949,pipeline:bounce
-78.28,1957,trajectory_scan
-78.32,1958,pipeline:contact
+78.32,1958,pipeline:contact trajectory_scan
 78.80,1970,pipeline:unknown
-79.12,1978,pipeline:bounce
-79.20,1980,trajectory_scan
+79.12,1978,pipeline:bounce trajectory_scan
 79.52,1988,pipeline:contact
 80.28,2007,pipeline:bounce
 80.64,2016,pipeline:contact trajectory_scan
@@ -55,15 +48,13 @@ seconds,frame,proposed_by
 93.24,2331,trajectory_scan
 97.60,2440,trajectory_scan
 100.28,2507,pipeline:unknown trajectory_scan
-102.84,2571,trajectory_scan
-102.88,2572,pipeline:unknown
+102.88,2572,pipeline:unknown trajectory_scan
 103.56,2589,pipeline:contact
 104.32,2608,trajectory_scan
 105.80,2645,trajectory_scan
 115.16,2879,pipeline:bounce
 115.56,2889,pipeline:contact trajectory_scan
 116.40,2910,pipeline:unknown
-116.96,2924,pipeline:bounce
-117.00,2925,trajectory_scan
+116.96,2924,pipeline:bounce trajectory_scan
 117.92,2948,pipeline:bounce trajectory_scan
 119.08,2977,trajectory_scan
