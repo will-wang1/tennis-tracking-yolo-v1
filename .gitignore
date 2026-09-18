@@ -40,3 +40,7 @@ graphify-out/
 # scripts/extract_label_candidates.py. The label CSVs beside them ARE
 # tracked - those hold the human judgements, which nothing can regenerate.
 data/labels/skeletons/*_thumbs/
+
+# Instructions that ship inside the laptop-transfer zips and land at the
+# repo root on unzip - not project source.
+TRANSFER_README.txt
