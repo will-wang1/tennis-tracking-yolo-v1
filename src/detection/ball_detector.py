@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
-from ultralytics import YOLO
 
 
 @dataclass
@@ -31,6 +30,13 @@ class BallDetector:
         imgsz: int = 1280,
         device: Optional[str] = None,
     ):
+        # Imported here, not at module top: `Detection` above is imported
+        # all over the analysis code and is baked into every replay cache,
+        # so a top-level import made merely unpickling a cache - or scoring
+        # labels against one - require ultralytics and therefore PyTorch.
+        # That blocked scoring on a machine with no need to run a detector.
+        from ultralytics import YOLO
+
         self.model = YOLO(str(weights_path))
         self.confidence = confidence
         self.imgsz = imgsz
