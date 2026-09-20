@@ -4,7 +4,11 @@ from pathlib import Path
 
 import numpy as np
 
-from src.analysis.court_calibration import FULL_COURT_REFERENCE_POINTS, CourtCalibration
+from src.analysis.court_calibration import (
+    FULL_COURT_REFERENCE_POINTS,
+    CourtCalibration,
+    static_calibration_from_frames,
+)
 
 PIXEL_POINTS = [(340.0, 980.0), (1580.0, 980.0), (1400.0, 650.0), (520.0, 650.0)]
 WORLD_POINTS = [(0.0, 0.0), (8.23, 0.0), (8.23, 5.485), (0.0, 5.485)]
@@ -173,3 +177,51 @@ class CourtCalibrationTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StaticCalibrationFromFramesTest(unittest.TestCase):
+    """A fixed camera's per-frame fits are noisy readings of one homography."""
+
+    @staticmethod
+    def _shifted(dx, dy):
+        """A calibration whose view is offset by (dx, dy) pixels."""
+        corners = {
+            "baseline_far_left": (100.0 + dx, 100.0 + dy),
+            "baseline_far_right": (500.0 + dx, 100.0 + dy),
+            "baseline_near_right": (600.0 + dx, 400.0 + dy),
+            "baseline_near_left": (0.0 + dx, 400.0 + dy),
+        }
+        return CourtCalibration.from_keypoints(
+            corners,
+            world_points={k: FULL_COURT_REFERENCE_POINTS[k] for k in corners},
+        )
+
+    def test_combines_to_the_middle_of_consistent_fits(self):
+        frames = {i: self._shifted(dx, 0.0) for i, dx in enumerate((-2.0, 0.0, 2.0))}
+
+        static = static_calibration_from_frames(frames)
+
+        x, y = static.world_to_pixel(*FULL_COURT_REFERENCE_POINTS["baseline_far_left"])
+        self.assertAlmostEqual(x, 100.0, delta=1.0)
+        self.assertAlmostEqual(y, 100.0, delta=1.0)
+
+    def test_one_wholly_wrong_frame_does_not_drag_the_result(self):
+        # The cutaway case: most frames agree, one fit is nonsense. A mean
+        # would follow it; the median gives it one outlying vote.
+        frames = {i: self._shifted(0.0, 0.0) for i in range(9)}
+        frames[9] = self._shifted(4000.0, 4000.0)
+
+        static = static_calibration_from_frames(frames)
+
+        x, y = static.world_to_pixel(*FULL_COURT_REFERENCE_POINTS["baseline_far_left"])
+        self.assertAlmostEqual(x, 100.0, delta=1.0)
+        self.assertAlmostEqual(y, 100.0, delta=1.0)
+
+    def test_the_result_is_one_calibration_for_every_frame(self):
+        frames = {i: self._shifted(float(i), 0.0) for i in range(5)}
+        static = static_calibration_from_frames(frames)
+        self.assertIsInstance(static, CourtCalibration)
+
+    def test_no_calibrations_is_an_error_not_a_silent_identity(self):
+        with self.assertRaises(ValueError):
+            static_calibration_from_frames({})

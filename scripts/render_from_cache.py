@@ -56,7 +56,10 @@ import numpy as np
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from src.analysis.court_calibration import CourtCalibration  # noqa: E402
+from src.analysis.court_calibration import (  # noqa: E402
+    CourtCalibration,
+    static_calibration_from_frames,
+)
 from src.analysis.impact_pipeline import analyze_impacts  # noqa: E402
 from src.tracking.candidate_tracker import track_ball_paths, track_candidates  # noqa: E402
 from src.visualize.draw import CourtOverlayDrawer, ImpactMarkerDrawer  # noqa: E402
@@ -111,6 +114,14 @@ def render(args) -> None:
     fps = cache["fps"]
     candidates = cache["candidates"]
     calibrations = calibrations_from_cache(cache)
+
+    if args.static_court:
+        # A fixed camera's per-frame fits are many noisy readings of one
+        # homography; refitting each frame just re-rolls the noise and the
+        # wireframe visibly jitters. See static_calibration_from_frames.
+        static = static_calibration_from_frames(calibrations)
+        calibrations = {frame: static for frame in range(len(candidates))}
+        print("Court: one static calibration (fixed camera)")
 
     tracks = track_ball_paths(candidates, max_pixels_per_frame=args.max_jump)
     # Impacts come from the CURRENT pipeline (flattened, single ball), so
@@ -214,6 +225,11 @@ def main() -> None:
     parser.add_argument("--start", type=float, default=None, help="seconds")
     parser.add_argument("--end", type=float, default=None, help="seconds")
     parser.add_argument("--max-jump", type=float, default=150.0)
+    parser.add_argument(
+        "--per-frame-court", dest="static_court", action="store_false",
+        help="Refit the court every frame (the raw cache). Default is one static "
+             "calibration, which is correct for a fixed camera and stops the jitter.",
+    )
     parser.add_argument("--no-court", dest="court", action="store_false", help="Skip the court wireframe")
     parser.add_argument(
         "--no-candidates", dest="candidates", action="store_false",
