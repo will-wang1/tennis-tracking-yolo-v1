@@ -15,7 +15,6 @@ from dataclasses import dataclass
 from typing import Optional
 
 import numpy as np
-from ultralytics import YOLO
 
 COCO_KEYPOINT_NAMES = [
     "nose",
@@ -55,6 +54,15 @@ class PoseDetector:
         imgsz: int = 1280,
         device: Optional[str] = None,
     ):
+        # Imported here, not at module top, for the same reason
+        # ball_detector.py does it: `PersonPose` above is a plain dataclass
+        # imported across the analysis and drawing code (stroke_features ->
+        # stroke_classifier -> visualize.draw), so a top-level import made
+        # merely DRAWING a frame require ultralytics and therefore PyTorch.
+        # Found rendering an annotated clip from a cache, which needs no
+        # model at all and still could not import.
+        from ultralytics import YOLO
+
         self.model = YOLO(weights_path)
         self.confidence = confidence
         self.imgsz = imgsz
