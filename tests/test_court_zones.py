@@ -24,18 +24,18 @@ class ClassifyLandingZoneTest(unittest.TestCase):
         self.assertEqual(zone.half, "near")
         self.assertEqual(zone.depth, "short")
 
-    def test_deuce_ad_split_flips_between_halves(self):
-        # left of center (low x): deuce on the far side, ad on the near side
+    def test_side_is_camera_left_right_on_both_halves(self):
+        # Unlike the deuce/ad reading this replaced, side does NOT flip
+        # between halves - camera-left is camera-left at either end.
         far_left = classify_landing_zone(world_x=2.0, world_y=2.0)
         near_left = classify_landing_zone(world_x=2.0, world_y=22.0)
-        self.assertEqual(far_left.side, "deuce")
-        self.assertEqual(near_left.side, "ad")
+        self.assertEqual(far_left.side, "left")
+        self.assertEqual(near_left.side, "left")
 
-        # right of center (high x): ad on the far side, deuce on the near side
         far_right = classify_landing_zone(world_x=9.0, world_y=2.0)
         near_right = classify_landing_zone(world_x=9.0, world_y=22.0)
-        self.assertEqual(far_right.side, "ad")
-        self.assertEqual(near_right.side, "deuce")
+        self.assertEqual(far_right.side, "right")
+        self.assertEqual(near_right.side, "right")
 
     def test_inside_singles_lines_is_singles(self):
         zone = classify_landing_zone(world_x=5.485, world_y=2.0)
@@ -51,7 +51,7 @@ class ClassifyLandingZoneTest(unittest.TestCase):
 
     def test_label_combines_all_three_fields(self):
         zone = classify_landing_zone(world_x=2.0, world_y=2.0)
-        self.assertEqual(zone.label(), "far_deuce_deep")
+        self.assertEqual(zone.label(), "far_left_deep")
 
 
 class ClassifyCourtHalfTest(unittest.TestCase):

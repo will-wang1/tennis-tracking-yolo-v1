@@ -6,21 +6,15 @@ All of this is derived from `FULL_COURT_REFERENCE_POINTS`
 (`court_calibration.py`), the same reference points a calibration was
 fitted against, so it stays correct if that layout ever changes.
 
-DEUCE/AD IS A BEST-EFFORT LABEL, not a measurement. It assumes a standard
-behind-baseline broadcast camera, not mirrored left-right - the same
-assumption `FULL_COURT_REFERENCE_POINTS`'s own docstring makes ("x
-increasing toward the right doubles sideline ... for a typical
-behind-baseline broadcast angle"). Under that assumption the mapping is
-real court geometry, not a guess: a player facing the net from the NEAR
-baseline faces the same way the camera looks, so their right hand (the
-deuce court) points toward increasing x, matching the viewer's right: a
-player facing the net from the FAR baseline faces the camera, so their
-right hand points the other way - deuce is toward DECREASING x on that
-side. That is why `side` flips between `half`s below rather than using one
-fixed x threshold for the whole court. If a clip's camera is mirrored from
-that convention, every `side` label here comes out swapped; `half`,
-`depth` and `bounds` do not depend on the assumption and stay correct
-regardless.
+`side` is LEFT/RIGHT AS THE CAMERA SEES IT, not tennis's deuce/ad. Those
+are different questions: deuce/ad is defined relative to the player FACING
+the net, so it flips between the two halves and only survives if the
+camera is not mirrored from the standard behind-baseline convention.
+Camera-left/right needs no such assumption - one fixed x threshold for the
+whole court - and it is the question coaching actually asks ("is the feed
+going to both wings, or only one"). A deuce/ad reading can still be
+recovered downstream by flipping `side` on the far half, if a caller ever
+needs it.
 """
 
 from dataclasses import dataclass
@@ -41,7 +35,7 @@ _SERVICE_LINE_NEAR_Y = FULL_COURT_REFERENCE_POINTS["service_near_left"][1]
 @dataclass(frozen=True)
 class LandingZone:
     half: str  # "far" | "near" - which baseline's side of the net
-    side: str  # "deuce" | "ad" - see module docstring for the camera assumption
+    side: str  # "left" | "right" - as the camera sees it, see module docstring
     depth: str  # "short" (net-to-service-line) | "deep" (service-line-to-baseline)
     bounds: str  # "singles" | "doubles_alley" | "out"
 
@@ -62,11 +56,12 @@ def classify_court_half(world_y: float) -> str:
 def classify_landing_zone(world_x: float, world_y: float) -> LandingZone:
     half = classify_court_half(world_y)
 
+    # One threshold for the whole court, unlike the deuce/ad reading this
+    # replaced - camera-left is camera-left on both halves.
+    side = "left" if world_x < _CENTER_X else "right"
     if half == "far":
-        side = "deuce" if world_x < _CENTER_X else "ad"
         depth = "deep" if world_y <= _SERVICE_LINE_FAR_Y else "short"
     else:
-        side = "deuce" if world_x >= _CENTER_X else "ad"
         depth = "deep" if world_y >= _SERVICE_LINE_NEAR_Y else "short"
 
     if _SINGLES_LEFT_X <= world_x <= _SINGLES_RIGHT_X:
