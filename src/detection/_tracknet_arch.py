@@ -86,8 +86,24 @@ class TrackNetArch(nn.Module):
 
 
 def resolve_device(device: str | None) -> str:
+    """Pick a torch device when the caller didn't name one.
+
+    MPS (Apple Silicon's GPU) is checked because leaving it out is not a
+    missing optimisation but a SILENT one: this returned "cpu" on an M2,
+    every model ran on the CPU at a fraction of the speed, and nothing in
+    any output said so - the only symptom was a cache build taking tens of
+    minutes at ~180% CPU with an idle GPU.
+
+    CUDA stays first where both somehow exist. An explicit `device` is
+    always honoured unchanged, including "cpu", so a caller that hits an
+    op MPS does not implement can still force its way past it.
+    """
     if device is None:
-        return "cuda" if torch.cuda.is_available() else "cpu"
+        if torch.cuda.is_available():
+            return "cuda"
+        if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+            return "mps"
+        return "cpu"
     if device.isdigit():
         return f"cuda:{device}"
     return device
