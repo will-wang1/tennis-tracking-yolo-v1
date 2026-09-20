@@ -31,7 +31,6 @@ import json
 from src.analysis.bounce_detector import BounceEvent
 from src.analysis.court_calibration import CourtCalibration
 from src.analysis.court_zones import classify_court_half, classify_landing_zone
-from src.analysis.match_log import MatchLog
 from src.analysis.parabolic_bounce_detector import BounceCandidate
 from src.analysis.speed_estimator import ShotSpeed
 
@@ -90,22 +89,6 @@ class PlayerMovementStats:
 
 
 @dataclass(frozen=True)
-class ServeSpeedReading:
-    frame_idx: int
-    t_s: float
-    peak_speed: Optional[float]
-    unit: Optional[str]
-
-    def to_dict(self) -> dict:
-        return {
-            "frame_idx": self.frame_idx,
-            "t_s": round(self.t_s, 2),
-            "peak_speed": round(self.peak_speed, 1) if self.peak_speed is not None else None,
-            "unit": self.unit,
-        }
-
-
-@dataclass(frozen=True)
 class MatchStats:
     fps: float
     rallies: list[RallyStats]
@@ -121,8 +104,6 @@ class MatchStats:
     far_shot_counts: Optional[dict[str, int]] = None
     near_player_movement: Optional[PlayerMovementStats] = None
     far_player_movement: Optional[PlayerMovementStats] = None
-    near_serve_speeds: list[ServeSpeedReading] = field(default_factory=list)
-    far_serve_speeds: list[ServeSpeedReading] = field(default_factory=list)
     # Frame indices where the camera itself changed (see scene_cuts.py) -
     # video-level metadata, not folded from impacts like everything else
     # here, but a downstream reader (an AI agent especially) needs it to
@@ -130,13 +111,6 @@ class MatchStats:
     # about the RALLY, and to not trust tracking/calibration continuity
     # across the seam.
     scene_cuts: list[int] = field(default_factory=list)
-    # Serve/point structure (see serve_sequences.py, match_log.py) - who
-    # served each point, faults, double faults, first-serve-in rate, rally
-    # length. Deliberately carries NO point winner and no score - see
-    # match_log.py's module docstring for why that's a scope decision, not
-    # a gap. None when the caller didn't have what it takes to build one
-    # (needs a court calibration and player identity tracking, at minimum).
-    match_log: Optional[MatchLog] = None
     # world (x, y) metres and a "near"/"far" half label, one pair per racket
     # CONTACT with a calibration - see attribute_contacts_to_court_half.
     # Unlike near_shot_counts/far_shot_counts (pose-classified, near player
@@ -184,13 +158,10 @@ class MatchStats:
             "far_player_movement": self.far_player_movement.to_dict()
             if self.far_player_movement is not None
             else None,
-            "near_serve_speeds": [s.to_dict() for s in self.near_serve_speeds],
-            "far_serve_speeds": [s.to_dict() for s in self.far_serve_speeds],
             "contact_locations": [[round(x, 2), round(y, 2)] for x, y in self.contact_locations],
             "contact_sides": self.contact_sides,
             "contact_side_counts": self.contact_side_counts,
             "scene_cuts": self.scene_cuts,
-            "match_log": self.match_log.to_dict() if self.match_log is not None else None,
         }
 
     def write_json(self, path) -> None:
@@ -243,36 +214,6 @@ def compute_player_movement(
         max_speed_mps=max_speed,
         tracked_frames=used_steps,
     )
-
-
-def compute_serve_speed_trend(
-    serve_events: Sequence[tuple[int, str]],
-    shots: Sequence[ShotSpeed],
-    fps: float,
-) -> list[ServeSpeedReading]:
-    """One reading per serve event (from `ShotEventTracker.events`, already
-    filtered to label == "serve" by the caller - or pass the raw list and
-    this filters it itself), in chronological order, pairing each serve's
-    frame with whichever tracked shot speed overlaps it. `peak_speed` is
-    None when no shot speed was tracked at that instant (e.g. --speed was
-    off, or the ball wasn't tracked right at the serve) - a missing
-    reading, not a zero.
-    """
-    readings = []
-    for frame_idx, label in serve_events:
-        if label != "serve":
-            continue
-        overlapping = [s for s in shots if s.start_frame <= frame_idx <= s.end_frame]
-        speed = max(overlapping, key=lambda s: s.peak_speed) if overlapping else None
-        readings.append(
-            ServeSpeedReading(
-                frame_idx=frame_idx,
-                t_s=frame_idx / fps,
-                peak_speed=speed.peak_speed if speed is not None else None,
-                unit=speed.unit if speed is not None else None,
-            )
-        )
-    return readings
 
 
 def attribute_contacts_to_court_half(
@@ -340,11 +281,8 @@ def compute_match_stats(
     far_shot_counts: Optional[dict[str, int]] = None,
     near_player_positions_by_frame: Optional[dict[int, tuple[float, float]]] = None,
     far_player_positions_by_frame: Optional[dict[int, tuple[float, float]]] = None,
-    near_shot_events: Optional[Sequence[tuple[int, str]]] = None,
-    far_shot_events: Optional[Sequence[tuple[int, str]]] = None,
     calibrations_by_frame: Optional[dict[int, CourtCalibration]] = None,
     scene_cuts: Optional[Sequence[int]] = None,
-    match_log: Optional[MatchLog] = None,
     rally_gap_seconds: float = DEFAULT_RALLY_GAP_SECONDS,
 ) -> MatchStats:
     """`impacts` is `ImpactAnalysis.impacts` (bounce/contact/unknown already
@@ -360,20 +298,10 @@ def compute_match_stats(
     frame, chosen however the caller trusts most (this module doesn't
     re-derive which detection is the real player).
 
-    `near_shot_events`/`far_shot_events` are `ShotEventTracker.events`
-    (`(frame_idx, label)` for every counted shot) - only used to find serve
-    events, so passing the whole list is fine.
-
     `calibrations_by_frame` (the same map `main.py` builds under
     --show-court) drives `contact_locations`/`contact_sides` - see
     `attribute_contacts_to_court_half`. Without it those come back empty,
     same as any other calibration-dependent field here.
-
-    `match_log` is a pre-built `match_log.MatchLog` (from
-    `serve_sequences.classify_serve_sequences` + `match_log.build_match_log`,
-    which need a court calibration and `player_identity.PlayerIdentityTracker`
-    output that this function doesn't have inputs to build itself) - passed
-    straight through, not computed here.
     """
     ordered = sorted(impacts, key=lambda impact: impact.t)
 
@@ -436,14 +364,7 @@ def compute_match_stats(
         far_player_movement=compute_player_movement(far_player_positions_by_frame, fps)
         if far_player_positions_by_frame
         else None,
-        near_serve_speeds=compute_serve_speed_trend(near_shot_events, shots, fps)
-        if near_shot_events
-        else [],
-        far_serve_speeds=compute_serve_speed_trend(far_shot_events, shots, fps)
-        if far_shot_events
-        else [],
         contact_locations=contact_locations,
         contact_sides=contact_sides,
         scene_cuts=list(scene_cuts) if scene_cuts else [],
-        match_log=match_log,
     )

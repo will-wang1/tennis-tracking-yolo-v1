@@ -23,14 +23,10 @@ from src.analysis.bounce_ensemble import detect_bounces_ensemble
 from src.analysis.catboost_bounce_detector import CatBoostBounceDetector
 from src.analysis.geometric_bounce_detector import detect_bounces_geometric
 from src.analysis.flight_segmenter import find_flight_segments
-from src.analysis.html_report import clip_label_from_path, write_report_html
 from src.analysis.impact_pipeline import analyze_impacts
 from src.analysis.match_stats import compute_match_stats
-from src.analysis.match_log import build_match_log
 from src.analysis.parabolic_bounce_detector import detect_bounces_parabolic
-from src.analysis.player_identity import PlayerIdentityTracker
 from src.analysis.scene_cuts import detect_scene_cuts
-from src.analysis.serve_sequences import classify_serve_sequences
 from src.analysis.velocity_bounce_detector import detect_bounces_by_velocity
 from src.analysis.bounce_detector import BounceEvent, find_trajectory_breakpoints
 from src.analysis.court_calibration import CourtCalibration
@@ -350,18 +346,9 @@ def main() -> None:
         "src/analysis/match_stats.py). Rally segmentation is a genuinely new inference on top "
         "of that, though, and an honestly untested one - see that module's docstring.",
     )
-    parser.add_argument(
-        "--report",
-        help="Write a self-contained HTML match report here (scoreboard, bounce map, shot-speed "
-        "chart, court-coverage comparison, stroke mix, serve-speed trend, rally log) - built "
-        "from the same MatchStats object --stats writes to JSON, so requires --stats too. "
-        "Opens directly in a browser, no server needed (see src/analysis/html_report.py).",
-    )
     args = parser.parse_args()
     if args.stats and not args.bounce:
         raise SystemExit("--stats needs --bounce")
-    if args.report and not args.stats:
-        raise SystemExit("--report needs --stats")
     if args.stats_panel and not args.bounce:
         raise SystemExit("--stats-panel needs --bounce")
 
@@ -430,8 +417,6 @@ def main() -> None:
     far_shot_display_by_frame: dict[int, str] = {}
     near_player_bbox_by_frame: dict[int, tuple[float, float, float, float]] = {}
     far_player_bbox_by_frame: dict[int, tuple[float, float, float, float]] = {}
-    identity_by_frame: dict[int, dict[str, str]] = {}
-    identity_tracker = PlayerIdentityTracker() if args.minimap else None
     use_candidates = args.detector_backend == "wasb" and not args.no_candidate_tracking
     candidates_by_frame: list[list] = []
     num_frames = 0
@@ -486,19 +471,6 @@ def main() -> None:
                 if far:
                     far_player_bbox_by_frame[i] = far[0].bbox
 
-                # Cheap (histogram compares on boxes already computed above)
-                # and independent of --stroke - identity is useful for
-                # match_log's serve/point structure even when stroke type
-                # is never classified. force_reassign on a cut frame is
-                # what lets it recover from a camera change instead of
-                # blindly trusting position - see player_identity.py.
-                identity_by_frame[i] = identity_tracker.update(
-                    frame,
-                    near_bbox=near_player_bbox_by_frame.get(i),
-                    far_bbox=far_player_bbox_by_frame.get(i),
-                    force_reassign=i in cut_frame_set,
-                )
-
                 if args.stroke:
                     near_pose = pose_extractor.extract(frame, near[0].bbox) if near else None
                     near_prediction = near_shot_classifier.update(near_pose)
@@ -519,9 +491,7 @@ def main() -> None:
                     # wrong type with real confidence rather than the
                     # near-universal "neutral" it gives on other footage -
                     # showing that guess on screen is worse than showing
-                    # nothing. Only the structural "serve" override below
-                    # (classify_serve_sequences, not pose) ever populates
-                    # this dict for the far player.
+                    # nothing.
                     far_shot_tracker.update(i, far_prediction)
 
     if num_frames == 0:
@@ -673,34 +643,6 @@ def main() -> None:
     impacts_by_frame = {impact.frame_idx: impact for impact in impacts}
     minimap_bounce_points = [(b.world_x, b.world_y) for b in bounces if b.world_x is not None]
 
-    # Computed here rather than inside the --stats block below: the
-    # structural "serve" label override just after needs it whenever
-    # --stroke is on too, independent of whether --stats was requested.
-    serve_attempts = (
-        classify_serve_sequences(impacts, calibrations_by_frame, identity_by_frame, reader.fps)
-        if args.show_court and args.minimap
-        else []
-    )
-    if args.stroke and serve_attempts:
-        # A serve is always the first contact of a new point - a fact
-        # classify_serve_sequences reads from timing/identity structure
-        # alone, independent of pose. Overriding the DISPLAYED label with
-        # it (for every attempt, fault retries included - a faulted first
-        # serve is still a serve) fixes a real, measured pose-classifier
-        # miss found by hand-labelling this project's own footage: a
-        # genuine serve shown as "FOREHAND". This never invents a serve
-        # that didn't structurally happen, only relabels one the pose
-        # model already had a swing to react to.
-        for attempt in serve_attempts:
-            target = {"near": near_shot_display_by_frame, "far": far_shot_display_by_frame}.get(attempt.side)
-            if target is None:
-                continue
-            # 30 frames matches ShotEventTracker's own default
-            # display_recency - how long a label stays up after the frame
-            # it was actually detected on.
-            for frame_idx in range(attempt.frame_idx, attempt.frame_idx + 30):
-                target[frame_idx] = "serve"
-
     # One flight segmentation, used for both the speed readings and the arc
     # overlay, so the number reported and the curve drawn describe the same
     # fitted flight. Needs the UNSMOOTHED trajectory (see
@@ -797,13 +739,6 @@ def main() -> None:
         far_player_positions = {
             i: points[0] for i, points in far_players_by_frame.items() if points
         }
-        # serve_attempts was already computed above (needed there
-        # regardless of --stats, for the stroke-label override) - reused
-        # rather than recomputed. Needs a court calibration (to attribute
-        # each contact to a side) and identity tracking (to tell "the same
-        # server again" from "the other player now serving"), which is
-        # exactly what gated computing it in the first place.
-        match_log = build_match_log(serve_attempts) if serve_attempts else None
         match_stats = compute_match_stats(
             impacts,
             shots,
@@ -813,11 +748,8 @@ def main() -> None:
             far_shot_counts=far_shot_tracker.counts if args.stroke else None,
             near_player_positions_by_frame=near_player_positions if args.minimap else None,
             far_player_positions_by_frame=far_player_positions if args.minimap else None,
-            near_shot_events=near_shot_tracker.events if args.stroke else None,
-            far_shot_events=far_shot_tracker.events if args.stroke else None,
             calibrations_by_frame=calibrations_by_frame if args.show_court else None,
             scene_cuts=cut_frames,
-            match_log=match_log,
         )
         match_stats.write_json(args.stats)
         print(
@@ -830,17 +762,6 @@ def main() -> None:
                 f"Contacts by court half (from contact position, not pose - "
                 f"covers both players): near={counts.get('near', 0)}, far={counts.get('far', 0)}"
             )
-        if match_stats.match_log is not None and match_stats.match_log.points:
-            log = match_stats.match_log
-            print(
-                f"Serve/point structure (structural, no ball landing spot used - see "
-                f"serve_sequences.py): {len(log.points)} point(s), "
-                f"faults={log.fault_counts_by}, double_faults={log.double_fault_counts_by}, "
-                f"first_serve_in_rate={log.first_serve_in_rate_by}"
-            )
-        if args.report:
-            write_report_html(match_stats, clip_label_from_path(args.input), args.report)
-            print(f"Wrote {args.report}")
 
     output_width = (
         reader.width

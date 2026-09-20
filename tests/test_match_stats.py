@@ -8,7 +8,6 @@ from src.analysis.match_stats import (
     attribute_contacts_to_court_half,
     compute_match_stats,
     compute_player_movement,
-    compute_serve_speed_trend,
 )
 from src.analysis.parabolic_bounce_detector import BounceCandidate
 from src.analysis.speed_estimator import ShotSpeed
@@ -182,33 +181,6 @@ class ComputePlayerMovementTest(unittest.TestCase):
         self.assertAlmostEqual(stats.max_speed_mps, 9.0)
 
 
-class ComputeServeSpeedTrendTest(unittest.TestCase):
-    def test_pairs_each_serve_with_its_overlapping_shot_speed(self):
-        events = [(10, "serve"), (200, "forehand"), (400, "serve")]
-        shots = [
-            ShotSpeed(start_frame=0, end_frame=50, peak_frame=10, peak_speed=180.0, unit="km/h"),
-            ShotSpeed(start_frame=380, end_frame=420, peak_frame=400, peak_speed=165.0, unit="km/h"),
-        ]
-        readings = compute_serve_speed_trend(events, shots, fps=30.0)
-
-        self.assertEqual(len(readings), 2)  # the forehand event is skipped
-        self.assertEqual(readings[0].frame_idx, 10)
-        self.assertAlmostEqual(readings[0].peak_speed, 180.0)
-        self.assertEqual(readings[1].frame_idx, 400)
-        self.assertAlmostEqual(readings[1].peak_speed, 165.0)
-
-    def test_serve_with_no_overlapping_shot_speed_is_a_missing_reading_not_zero(self):
-        readings = compute_serve_speed_trend([(10, "serve")], shots=[], fps=30.0)
-
-        self.assertEqual(len(readings), 1)
-        self.assertIsNone(readings[0].peak_speed)
-        self.assertIsNone(readings[0].unit)
-
-    def test_no_serves_produces_no_readings(self):
-        events = [(10, "forehand"), (50, "backhand")]
-        self.assertEqual(compute_serve_speed_trend(events, shots=[], fps=30.0), [])
-
-
 class ComputeMatchStatsExtrasTest(unittest.TestCase):
     def test_bounce_zone_labels_are_parallel_to_bounce_locations(self):
         bounces = [
@@ -218,8 +190,8 @@ class ComputeMatchStatsExtrasTest(unittest.TestCase):
         stats = compute_match_stats([], shots=[], bounces=bounces, fps=30.0)
 
         self.assertEqual(len(stats.bounce_zone_labels), 2)
-        self.assertEqual(stats.bounce_zone_labels[0], "far_deuce_deep")
-        self.assertEqual(stats.bounce_zone_labels[1], "near_ad_deep")
+        self.assertEqual(stats.bounce_zone_labels[0], "far_left_deep")
+        self.assertEqual(stats.bounce_zone_labels[1], "near_left_deep")
 
     def test_bounce_zone_counts_tallies_the_labels(self):
         bounces = [
@@ -229,7 +201,7 @@ class ComputeMatchStatsExtrasTest(unittest.TestCase):
         ]
         stats = compute_match_stats([], shots=[], bounces=bounces, fps=30.0)
 
-        self.assertEqual(stats.bounce_zone_counts, {"far_deuce_deep": 2, "near_ad_deep": 1})
+        self.assertEqual(stats.bounce_zone_counts, {"far_left_deep": 2, "near_left_deep": 1})
 
     def test_player_movement_is_none_when_no_positions_given(self):
         stats = compute_match_stats([], shots=[], bounces=[], fps=30.0)
@@ -247,33 +219,19 @@ class ComputeMatchStatsExtrasTest(unittest.TestCase):
         self.assertAlmostEqual(stats.near_player_movement.distance_m, 5.0)
         self.assertAlmostEqual(stats.far_player_movement.distance_m, 10.0)
 
-    def test_serve_speeds_are_computed_when_events_given(self):
-        events = [(10, "serve")]
-        shots = [ShotSpeed(start_frame=0, end_frame=20, peak_frame=10, peak_speed=190.0, unit="km/h")]
-        stats = compute_match_stats(
-            [], shots=shots, bounces=[], fps=30.0, near_shot_events=events
-        )
-
-        self.assertEqual(len(stats.near_serve_speeds), 1)
-        self.assertAlmostEqual(stats.near_serve_speeds[0].peak_speed, 190.0)
-        self.assertEqual(stats.far_serve_speeds, [])
-
     def test_to_dict_round_trips_the_new_fields_through_json(self):
         import json
 
         bounces = [BounceEvent(frame_idx=0, x=1.0, y=1.0, world_x=2.0, world_y=2.0)]
         near = {0: (0.0, 0.0), 30: (3.0, 4.0)}
-        events = [(10, "serve")]
-        shots = [ShotSpeed(start_frame=0, end_frame=20, peak_frame=10, peak_speed=190.0, unit="km/h")]
         stats = compute_match_stats(
-            [], shots=shots, bounces=bounces, fps=30.0,
-            near_player_positions_by_frame=near, near_shot_events=events,
+            [], shots=[], bounces=bounces, fps=30.0,
+            near_player_positions_by_frame=near,
         )
 
         decoded = json.loads(json.dumps(stats.to_dict()))
-        self.assertEqual(decoded["bounce_zone_labels"], ["far_deuce_deep"])
+        self.assertEqual(decoded["bounce_zone_labels"], ["far_left_deep"])
         self.assertEqual(decoded["near_player_movement"]["distance_m"], 5.0)
-        self.assertEqual(len(decoded["near_serve_speeds"]), 1)
 
 
 class AttributeContactsToCourtHalfTest(unittest.TestCase):
@@ -361,26 +319,6 @@ class ComputeMatchStatsSceneCutsTest(unittest.TestCase):
         stats = compute_match_stats([], shots=[], bounces=[], fps=30.0, scene_cuts=[42])
         decoded = json.loads(json.dumps(stats.to_dict()))
         self.assertEqual(decoded["scene_cuts"], [42])
-
-    def test_match_log_defaults_to_none(self):
-        stats = compute_match_stats([], shots=[], bounces=[], fps=30.0)
-        self.assertIsNone(stats.match_log)
-        self.assertIsNone(stats.to_dict()["match_log"])
-
-    def test_match_log_passes_through_and_serializes(self):
-        import json
-
-        from src.analysis.match_log import build_match_log
-        from src.analysis.serve_sequences import ServeAttempt
-
-        log = build_match_log(
-            [ServeAttempt(frame_idx=0, t_s=0.0, side="near", identity="player_a", outcome="unreturned", shots_before_next_serve=0)]
-        )
-        stats = compute_match_stats([], shots=[], bounces=[], fps=30.0, match_log=log)
-
-        self.assertEqual(stats.match_log.points[0].server_identity, "player_a")
-        decoded = json.loads(json.dumps(stats.to_dict()))
-        self.assertEqual(decoded["match_log"]["point_count"], 1)
 
 
 if __name__ == "__main__":
