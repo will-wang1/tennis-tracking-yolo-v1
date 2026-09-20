@@ -1,7 +1,12 @@
 import unittest
 
 from src.detection.ball_detector import Detection
-from src.tracking.candidate_tracker import track_candidates
+from src.tracking.candidate_tracker import (
+    BallTrack,
+    count_simultaneous_frames,
+    track_ball_paths,
+    track_candidates,
+)
 
 
 def _d(x, y, confidence=0.9):
@@ -106,3 +111,100 @@ class TrackCandidatesTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _two_balls(count=14, separation=400.0):
+    """Two balls in flight at once, well apart - the coaching case
+    (`dingles_serve_volley` is a two-ball drill)."""
+    frames = []
+    for i in range(count):
+        a = _d(100 + 10 * i, 100 + 8 * i)
+        b = _d(100 + 10 * i + separation, 500 - 6 * i)
+        frames.append([a, b])
+    return frames
+
+
+class BallTrackTest(unittest.TestCase):
+    def test_overlaps_is_true_only_when_a_frame_is_shared(self):
+        a = BallTrack({0: _d(0, 0), 1: _d(1, 1), 2: _d(2, 2)})
+        b = BallTrack({2: _d(9, 9), 3: _d(8, 8)})
+        c = BallTrack({7: _d(5, 5), 8: _d(6, 6)})
+
+        self.assertTrue(a.overlaps(b))  # share frame 2 - cannot be one ball
+        self.assertFalse(a.overlaps(c))  # disjoint - may be one ball, gapped
+
+    def test_as_frame_list_places_detections_at_their_own_frames(self):
+        track = BallTrack({1: _d(10, 10), 3: _d(30, 30)})
+
+        out = track.as_frame_list(5)
+
+        self.assertEqual(len(out), 5)
+        self.assertIsNone(out[0])
+        self.assertEqual(out[1].x, 10.0)
+        self.assertIsNone(out[2])
+        self.assertEqual(out[3].x, 30.0)
+
+    def test_as_frame_list_drops_frames_outside_the_clip(self):
+        track = BallTrack({0: _d(1, 1), 9: _d(9, 9)})
+        self.assertEqual([d is not None for d in track.as_frame_list(3)], [True, False, False])
+
+
+class TrackBallPathsTest(unittest.TestCase):
+    def test_finds_both_balls_when_two_are_in_flight_at_once(self):
+        tracks = track_ball_paths(_two_balls())
+
+        self.assertGreaterEqual(len(tracks), 2)
+        self.assertTrue(tracks[0].overlaps(tracks[1]))
+        xs = {round(t.detections[0].x) for t in tracks[:2]}
+        self.assertEqual(xs, {100, 500})
+
+    def test_reports_the_frames_where_two_balls_coexist(self):
+        multi = count_simultaneous_frames(track_ball_paths(_two_balls()))
+
+        self.assertEqual(len(multi), 14)
+        self.assertTrue(all(n >= 2 for n in multi.values()))
+
+    def test_a_path_hugging_another_is_one_ball_seen_twice_not_two(self):
+        # Same flight, with a second blob 6px away every frame - the shadow
+        # that leaving frames open would otherwise admit as a second ball.
+        frames = [
+            [_d(100 + 10 * i, 100 + 10 * i), _d(106 + 10 * i, 104 + 10 * i)] for i in range(14)
+        ]
+
+        tracks = track_ball_paths(frames)
+
+        self.assertEqual(len(tracks), 1)
+
+    def test_balls_that_cross_closely_both_survive(self):
+        # They pass within a few px mid-flight but are far apart either
+        # side, so the MEDIAN separation - not the minimum - is what keeps
+        # both. See _is_shadow.
+        frames = []
+        for i in range(16):
+            frames.append([_d(100 + 30 * i, 300), _d(550 - 30 * i, 300 + 2 * i)])
+
+        tracks = track_ball_paths(frames)
+
+        self.assertGreaterEqual(len(tracks), 2)
+
+    def test_single_ball_footage_yields_one_track_and_no_overlap(self):
+        tracks = track_ball_paths(_straight(count=14))
+
+        self.assertEqual(len(tracks), 1)
+        self.assertEqual(count_simultaneous_frames(tracks), {})
+
+    def test_no_candidates_yields_no_tracks(self):
+        self.assertEqual(track_ball_paths([]), [])
+        self.assertEqual(track_ball_paths([[], [], []]), [])
+
+    def test_max_tracks_bounds_the_search(self):
+        tracks = track_ball_paths(_two_balls(), max_tracks=1)
+        self.assertEqual(len(tracks), 1)
+
+    def test_track_candidates_still_returns_one_detection_per_frame(self):
+        # The flattening wrapper must keep its original contract even though
+        # it now shares an extractor with the multi-ball path.
+        chosen = track_candidates(_two_balls())
+
+        self.assertEqual(len(chosen), 14)
+        self.assertTrue(all(c is None or isinstance(c, Detection) for c in chosen))
