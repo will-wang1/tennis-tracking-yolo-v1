@@ -114,7 +114,7 @@ def analyze_impacts(
     static_lockon_radius: float = 20.0,
     use_flight_segments: bool = True,
     merge_window_seconds: float = 0.2,
-    filter_clusters: bool = True,
+    filter_clusters: bool = False,
     **classifier_kwargs,
 ) -> ImpactAnalysis:
     """Find the ball's impacts and attribute each to the court or a racket.
@@ -128,11 +128,17 @@ def analyze_impacts(
 
     `filter_clusters` runs `rally_clusters.filter_non_rally_clusters` over
     the result (only when a calibration is available, same requirement as
-    `touchdowns` itself) - catches a player bouncing the ball before
-    serving, which `classify_touchdowns` has no way to see since the
-    signal only shows up ACROSS several impacts, not in any one impact's
-    own motion. Off by default only makes sense for comparing against a
-    run from before this existed; leave it on otherwise.
+    `touchdowns` itself) - it drops runs of impacts clustered in one spot,
+    which in MATCH footage is a player bouncing the ball before serving.
+
+    OFF BY DEFAULT, and that default is a deliberate scope decision, not a
+    regression. This project's target is COACHING-SESSION footage, where
+    the same same-spot signature is a coach feeding a basket of balls -
+    the single most important event to COUNT, not to discard. Leaving the
+    filter on would silently delete the measurement the session metrics
+    are built from. Pass `filter_clusters=True` to restore the match-play
+    behaviour when analysing a real point, where those impacts genuinely
+    are not part of play.
 
     (rally_clusters.py also has `filter_excess_bounces_between_contacts`,
     which is NOT run here - it regressed a real bounce on video_input2, see
