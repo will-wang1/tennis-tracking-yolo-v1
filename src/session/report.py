@@ -276,7 +276,7 @@ def build_session_report(
                 "metres, summed over near-court identities",
                 "measured",
                 "Foot point per frame through the court calibration, 0.5s rolling median, frame-to-frame distance with implausible-speed steps dropped.",
-                ["Sums identities, not people: one person split across two identities is counted once per identity, correctly."],
+                ["Sums identities, not people. One person split across two identities appears twice, each with part of the distance; the total is unaffected."],
                 identities=len(measured_people),
             ),
         },

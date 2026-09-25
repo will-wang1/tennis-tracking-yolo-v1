@@ -1,0 +1,390 @@
+<title>__TITLE__</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@500;600;700&family=IBM+Plex+Serif:wght@400;600&display=swap">
+<style>
+  :root {
+    --ground:#F1F4F3; --surface:#FFFFFF; --surface-2:#E4EBE9;
+    --ink:#141D1B; --ink-2:#485B57; --ink-3:#74847F;
+    --rule:#D3DDDA; --rule-2:#B4C3BF;
+    --accent:#0E6A5B; --accent-soft:#DCEDE9;
+    --good:#2C6B46; --good-soft:#DDEEE3;
+    --look:#A2551C; --look-soft:#F7E8DA;
+    --court:#DCE6F2; --court-line:#FFFFFF; --court-edge:#9FB3C8; --net:#74847F;
+    --s-bounce:#2a78d6; --s-contact:#eb6834; --s-unknown:#B9C2C0; --s-play:#2a78d6; --s-idle:#E4EBE9;
+    --heat-lo:#cde2fb; --heat-hi:#0d366b;
+    --hatch:#9AA6A3;
+    --display:'IBM Plex Sans','Helvetica Neue',Arial,sans-serif;
+    --body:'IBM Plex Serif',Georgia,'Times New Roman',serif;
+    --mono:'IBM Plex Mono',ui-monospace,'SF Mono',Menlo,monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:#0B1413; --surface:#121E1C; --surface-2:#1A2926;
+      --ink:#E4EDEA; --ink-2:#A3B6B1; --ink-3:#778A85;
+      --rule:#22332F; --rule-2:#334842;
+      --accent:#5FC3AE; --accent-soft:#102A26;
+      --good:#6FC08D; --good-soft:#0F241A;
+      --look:#DE9A5E; --look-soft:#2A1C10;
+      --court:#1B2A3A; --court-line:#8FA3B8; --court-edge:#3A5068; --net:#A3B6B1;
+      --s-bounce:#3987e5; --s-contact:#d95926; --s-unknown:#4A5856; --s-play:#3987e5; --s-idle:#1F2E2B;
+      --heat-lo:#184f95; --heat-hi:#cde2fb;
+      --hatch:#5A6966;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:#0B1413; --surface:#121E1C; --surface-2:#1A2926;
+    --ink:#E4EDEA; --ink-2:#A3B6B1; --ink-3:#778A85;
+    --rule:#22332F; --rule-2:#334842;
+    --accent:#5FC3AE; --accent-soft:#102A26;
+    --good:#6FC08D; --good-soft:#0F241A;
+    --look:#DE9A5E; --look-soft:#2A1C10;
+    --court:#1B2A3A; --court-line:#8FA3B8; --court-edge:#3A5068; --net:#A3B6B1;
+    --s-bounce:#3987e5; --s-contact:#d95926; --s-unknown:#4A5856; --s-play:#3987e5; --s-idle:#1F2E2B;
+    --heat-lo:#184f95; --heat-hi:#cde2fb;
+    --hatch:#5A6966;
+  }
+  body { background:var(--ground); color:var(--ink); font-family:var(--body); font-size:15.5px; line-height:1.6; }
+  .wrap { max-width:960px; margin:0 auto; padding-inline:20px; padding-block:34px 70px; }
+  .prose { max-width:68ch; }
+  h1 { font-family:var(--display); font-weight:700; font-size:clamp(26px,5vw,38px); line-height:1.08; letter-spacing:-0.02em; margin:0; text-wrap:balance; }
+  h2 { font-family:var(--display); font-weight:600; font-size:clamp(18px,2.4vw,22px); letter-spacing:-0.01em; margin:0 0 12px; text-wrap:balance; }
+  h3 { font-family:var(--display); font-weight:600; font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-3); margin:0 0 8px; }
+  p { margin:0 0 10px; }
+  .mono { font-family:var(--mono); font-size:.86em; }
+  .eyebrow { font-family:var(--mono); font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-3); margin:0 0 12px; }
+  header.top { border-bottom:2px solid var(--ink); padding-bottom:18px; margin-bottom:26px; }
+  .meta { display:flex; flex-wrap:wrap; gap:6px 18px; margin-top:12px; font-family:var(--mono); font-size:12px; color:var(--ink-3); }
+  .meta b { color:var(--ink-2); font-weight:500; }
+  section { margin:0 0 30px; }
+  .panel { background:var(--surface); border:1px solid var(--rule); padding:18px 20px; }
+
+  .draft { font-family:var(--mono); font-size:12px; color:var(--look); background:var(--look-soft); padding:8px 12px; margin:0 0 14px; }
+  .headline { font-family:var(--display); font-weight:600; font-size:clamp(18px,2.6vw,22px); line-height:1.35; margin:0 0 16px; text-wrap:balance; }
+  .obs { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:12px; }
+  .obs li { display:grid; grid-template-columns:96px 1fr; gap:4px 14px; align-items:start; }
+  @media (max-width:560px) { .obs li { grid-template-columns:1fr; } }
+  .chip { font-family:var(--mono); font-weight:600; font-size:10px; letter-spacing:.07em; text-transform:uppercase; padding:3px 7px; border-radius:2px; text-align:center; white-space:nowrap; justify-self:start; }
+  .c-strength { background:var(--good-soft); color:var(--good); }
+  .c-worth_a_look { background:var(--look-soft); color:var(--look); }
+  .c-neutral { background:var(--surface-2); color:var(--ink-2); }
+  .c-measured { background:var(--good-soft); color:var(--good); }
+  .c-estimated { background:var(--surface-2); color:var(--ink-2); }
+  .c-lower_bound { background:var(--look-soft); color:var(--look); }
+  .evidence { font-family:var(--mono); font-size:12px; color:var(--ink-3); margin-top:3px; }
+  .two { display:grid; grid-template-columns:1fr 1fr; gap:18px; margin-top:18px; }
+  @media (max-width:700px) { .two { grid-template-columns:1fr; } }
+  .two ul { margin:0; padding-left:18px; }
+  .two li { margin-bottom:6px; }
+
+  .tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:1px; background:var(--rule); border:1px solid var(--rule); }
+  .tile { background:var(--surface); padding:14px 16px; display:flex; flex-direction:column; gap:6px; }
+  .tile .n { font-family:var(--display); font-weight:700; font-size:28px; line-height:1; font-variant-numeric:tabular-nums; }
+  .tile .k { font-family:var(--display); font-size:12px; color:var(--ink-2); }
+
+  .chart { overflow-x:auto; margin:6px 0; }
+  .chart svg { display:block; width:100%; height:auto; min-width:540px; }
+  .chart text { font-family:var(--mono); font-size:11px; fill:var(--ink-3); }
+  .legend { display:flex; flex-wrap:wrap; gap:6px 18px; font-family:var(--mono); font-size:12px; color:var(--ink-2); margin:8px 0 2px; }
+  .legend i { display:inline-block; width:12px; height:12px; border-radius:2px; vertical-align:-1px; margin-right:6px; }
+  .note { font-size:14px; color:var(--ink-2); margin-top:8px; }
+
+  .courts { display:grid; grid-template-columns:1fr 1fr; gap:22px; }
+  @media (max-width:640px) { .courts { grid-template-columns:1fr; } }
+  .court-svg { width:100%; max-width:300px; height:auto; display:block; margin:0 auto; }
+  .court-svg text { font-family:var(--mono); font-size:13px; fill:var(--ink-3); }
+  .ramp { height:10px; width:160px; background:linear-gradient(90deg,var(--heat-lo),var(--heat-hi)); border:1px solid var(--rule-2); display:inline-block; vertical-align:middle; margin:0 6px; }
+
+  .scroll { overflow-x:auto; }
+  table { border-collapse:collapse; width:100%; font-size:13.5px; min-width:520px; }
+  th, td { text-align:left; padding:7px 10px; border-bottom:1px solid var(--rule); }
+  th { font-family:var(--display); font-size:10.5px; letter-spacing:.07em; text-transform:uppercase; color:var(--ink-3); font-weight:600; }
+  td.n { font-family:var(--mono); font-variant-numeric:tabular-nums; }
+  tr:last-child td { border-bottom:0; }
+  details { margin-top:10px; }
+  summary { cursor:pointer; font-family:var(--mono); font-size:12px; color:var(--accent); }
+  summary:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  .method { font-size:14px; color:var(--ink-2); }
+  .method dt { font-family:var(--display); font-weight:600; color:var(--ink); margin-top:10px; }
+  .method dd { margin:2px 0 0; }
+  #tip { position:fixed; pointer-events:none; background:var(--ink); color:var(--ground); font-family:var(--mono); font-size:12px; padding:6px 9px; border-radius:3px; z-index:10; max-width:260px; line-height:1.4; white-space:pre-line; }
+  .foot { font-size:13px; color:var(--ink-3); border-top:1px solid var(--rule-2); padding-top:12px; }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <p class="eyebrow">Coaching session report · prototype</p>
+    <h1 id="title">Session report</h1>
+    <div class="meta" id="meta"></div>
+  </header>
+
+  <section id="feedback-section">
+    <div class="panel">
+      <div class="draft" id="draft" hidden></div>
+      <p class="headline" id="headline"></p>
+      <ul class="obs" id="observations"></ul>
+      <div class="two">
+        <div><h3>Questions for the coach</h3><ul id="questions"></ul></div>
+        <div><h3>What this data can't show</h3><ul id="limits"></ul></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>At a glance</h2>
+    <div class="tiles" id="tiles"></div>
+    <p class="note">Each number says how far to trust it: <span class="chip c-measured">measured</span>
+      a direct reading, <span class="chip c-estimated">estimated</span> a reading with a known error,
+      <span class="chip c-lower_bound">at least</span> a minimum, where the true value is higher.</p>
+  </section>
+
+  <section>
+    <h2>When the ball was in play</h2>
+    <div class="panel">
+      <div class="chart" id="timeline"></div>
+      <div class="legend">
+        <span><i style="background:var(--s-play)"></i>ball in play</span>
+        <span><i style="background:var(--s-idle);border:1px solid var(--rule-2)"></i>no ball in play</span>
+        <span id="cut-legend"><i style="background:repeating-linear-gradient(45deg,var(--hatch) 0 2px,transparent 2px 5px);border:1px solid var(--rule-2)"></i>camera cutaway, not analysed</span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>How often the ball was hit or bounced</h2>
+    <div class="panel">
+      <div class="legend">
+        <span><i style="background:var(--s-bounce)"></i>bounce</span>
+        <span><i style="background:var(--s-contact)"></i>racket contact</span>
+        <span><i style="background:var(--s-unknown)"></i>not classified</span>
+      </div>
+      <div class="chart" id="bars"></div>
+      <p class="note">Impacts per 10 seconds. "Not classified" means the ball clearly changed direction but the system
+        couldn't tell whether a racket or the court did it.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Where the ball landed, and where people were</h2>
+    <div class="panel">
+      <div class="courts">
+        <div>
+          <h3>Confirmed bounces</h3>
+          <svg class="court-svg" id="landing" role="img" aria-label="Bounce positions on the court"></svg>
+          <div class="legend" style="justify-content:center">
+            <span><i style="background:var(--s-bounce);border-radius:50%"></i>confirmed by both methods</span>
+            <span><i style="border:2px solid var(--s-bounce);border-radius:50%;width:9px;height:9px"></i>one method only</span>
+          </div>
+        </div>
+        <div>
+          <h3>Time spent by people on court</h3>
+          <svg class="court-svg" id="coverage" role="img" aria-label="Heatmap of where people stood"></svg>
+          <div class="legend" style="justify-content:center"><span>less<span class="ramp"></span>more time</span></div>
+        </div>
+      </div>
+      <p class="note" id="court-note"></p>
+    </div>
+  </section>
+
+  <section>
+    <h2>People on court</h2>
+    <div class="panel">
+      <div class="scroll"><table id="people"><thead><tr>
+        <th>Identity</th><th>On camera</th><th>Distance</th><th>Avg speed</th><th>Where</th><th>Trust</th>
+      </tr></thead><tbody></tbody></table></div>
+      <p class="note">An identity is one continuous stretch of one person on camera, not a named player. Someone who is hidden
+        for a while, or a camera cut, starts a new identity.</p>
+    </div>
+  </section>
+
+  <section>
+    <details>
+      <summary>How each number was worked out</summary>
+      <dl class="method" id="methods"></dl>
+    </details>
+  </section>
+
+  <p class="foot prose" id="foot"></p>
+</div>
+<div id="tip" hidden></div>
+
+<script>
+const R = __REPORT__;
+const F = __FEEDBACK__;
+const $ = (id) => document.getElementById(id);
+const NS = "http://www.w3.org/2000/svg";
+const el = (tag, attrs, parent) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; };
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const pct = (v) => (v == null ? "–" : (100 * v).toFixed(0) + "%");
+const M = R.metrics, clip = R.clip, dur = clip.duration_s, fps = clip.fps;
+const tip = $("tip");
+function bindTips(root) {
+  root.querySelectorAll("[data-tip]").forEach((n) => {
+    n.addEventListener("mousemove", (e) => { tip.textContent = n.getAttribute("data-tip"); tip.hidden = false;
+      tip.style.left = Math.min(e.clientX + 14, innerWidth - 270) + "px"; tip.style.top = (e.clientY + 14) + "px"; });
+    n.addEventListener("mouseleave", () => { tip.hidden = true; });
+  });
+}
+const basisLabel = { measured: "measured", estimated: "estimated", lower_bound: "at least" };
+
+// ---------- header
+$("title").textContent = clip.name.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+$("meta").innerHTML = `<span><b>${clip.analysed_s.toFixed(0)}s</b> analysed of ${dur.toFixed(0)}s</span>`
+  + (clip.cutaways_s.length ? `<span><b>${clip.cutaways_s.length}</b> camera cutaway${clip.cutaways_s.length > 1 ? "s" : ""} excluded</span>` : "")
+  + `<span>report schema <b>${esc(R.schema_version)}</b></span>`;
+
+// ---------- feedback
+if (!F) {
+  $("feedback-section").hidden = true;
+} else {
+  if (F._provenance) { $("draft").hidden = false; $("draft").textContent = F._provenance; }
+  $("headline").textContent = F.headline;
+  const kindLabel = { strength: "strength", worth_a_look: "worth a look", neutral: "note" };
+  $("observations").innerHTML = F.observations.map((o) =>
+    `<li><span class="chip c-${esc(o.kind)}">${kindLabel[o.kind] || esc(o.kind)}</span>
+      <div>${esc(o.point)}<div class="evidence">${esc(o.evidence)}</div></div></li>`).join("");
+  $("questions").innerHTML = F.questions_for_the_coach.map((q) => `<li>${esc(q)}</li>`).join("");
+  $("limits").innerHTML = F.data_limits.map((q) => `<li>${esc(q)}</li>`).join("");
+}
+
+// ---------- tiles
+const tiles = [
+  ["ball_in_play", (m) => pct(m.value), "ball in play"],
+  ["impacts_per_minute", (m) => m.value, "impacts / minute"],
+  ["confirmed_contacts_per_minute", (m) => "≥ " + m.value, "racket hits / minute"],
+  ["two_balls_in_play", (m) => pct(m.value), "two balls at once"],
+  ["movement_near_court", (m) => Math.round(m.value) + " m", "run by near-court players"],
+];
+$("tiles").innerHTML = tiles.filter(([k]) => M[k]).map(([k, f, label]) => {
+  const m = M[k];
+  return `<div class="tile"><div class="n">${esc(f(m))}</div><div class="k">${label}</div>
+    <span class="chip c-${m.basis}">${basisLabel[m.basis] || m.basis}</span></div>`;
+}).join("");
+
+// ---------- timeline
+(function () {
+  const W = 900, H = 84, L = 10, R_ = 10, top = 12, h = 34;
+  const x = (t) => L + (t / dur) * (W - L - R_);
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Ball in play over time" });
+  const pat = el("pattern", { id: "hatch", width: 6, height: 6, patternUnits: "userSpaceOnUse", patternTransform: "rotate(45)" }, el("defs", {}, svg));
+  el("rect", { width: 2, height: 6, fill: "var(--hatch)" }, pat);
+  el("rect", { x: L, y: top, width: W - L - R_, height: h, fill: "var(--s-idle)", rx: 4, "data-tip": "no ball in play" }, svg);
+  R.raw.in_play_runs_s.forEach(([a, b]) => el("rect", { x: x(a), y: top, width: Math.max(1.5, x(b) - x(a) - 2), height: h, fill: "var(--s-play)", rx: 3,
+    "data-tip": `in play ${a.toFixed(1)}–${b.toFixed(1)}s (${(b - a).toFixed(1)}s)` }, svg));
+  clip.cutaways_s.forEach(([a, b]) => el("rect", { x: x(a), y: top - 6, width: Math.max(2, x(b) - x(a)), height: h + 12, fill: "url(#hatch)", stroke: "var(--hatch)",
+    "data-tip": `camera cutaway ${a.toFixed(1)}–${b.toFixed(1)}s: not the court view, not analysed` }, svg));
+  if (!clip.cutaways_s.length) $("cut-legend").hidden = true;
+  const step = dur > 600 ? 120 : dur > 200 ? 60 : 20;
+  for (let t = 0; t <= dur; t += step) {
+    el("line", { x1: x(t), x2: x(t), y1: top + h + 6, y2: top + h + 10, stroke: "var(--rule-2)" }, svg);
+    el("text", { x: x(t), y: top + h + 24, "text-anchor": t === 0 ? "start" : "middle" }, svg).textContent = t + "s";
+  }
+  $("timeline").appendChild(svg); bindTips($("timeline"));
+})();
+
+// ---------- impacts bars
+(function () {
+  const win = dur > 600 ? 60 : 10;
+  const n = Math.ceil(dur / win);
+  const W_ = Array.from({ length: n }, (_, i) => ({ t0: i * win, bounce: 0, contact: 0, unknown: 0 }));
+  R.raw.impacts.forEach((i) => { const k = Math.min(n - 1, Math.floor(i.t_s / win)); W_[k][i.kind] = (W_[k][i.kind] || 0) + 1; });
+  const W = 900, H = 240, L = 34, R_ = 8, T = 16, B = 30;
+  const band = (W - L - R_) / n, bw = Math.min(46, band * 0.62);
+  const tot = W_.map((w) => w.bounce + w.contact + w.unknown), max = Math.max(1, ...tot), yMax = Math.ceil(max / 5) * 5;
+  const y = (v) => T + (H - T - B) * (1 - v / yMax);
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `Impacts per ${win} seconds by kind` });
+  for (let v = 0; v <= yMax; v += 5) {
+    el("line", { x1: L, x2: W - R_, y1: y(v), y2: y(v), stroke: "var(--rule)", "stroke-width": v === 0 ? 1 : 0.6 }, svg);
+    el("text", { x: L - 6, y: y(v) + 4, "text-anchor": "end" }, svg).textContent = v;
+  }
+  W_.forEach((w, i) => {
+    const cx = L + band * i + band / 2, x0 = cx - bw / 2, end = Math.min(w.t0 + win, dur);
+    let acc = 0;
+    [["bounce", "var(--s-bounce)", "bounce"], ["contact", "var(--s-contact)", "racket contact"], ["unknown", "var(--s-unknown)", "not classified"]].forEach(([k, c, label]) => {
+      const v = w[k]; if (!v) return;
+      el("rect", { x: x0, y: y(acc + v), width: bw, height: Math.max(0, y(acc) - y(acc + v) - 2), fill: c, rx: 2,
+        "data-tip": `${w.t0}–${end.toFixed(0)}s · ${label}: ${v}\nwindow total ${tot[i]}` }, svg);
+      acc += v;
+    });
+    el("text", { x: cx, y: H - B + 18, "text-anchor": "middle" }, svg).textContent = `${w.t0}s`;
+    if (tot[i] === max) el("text", { x: cx, y: y(tot[i]) - 6, "text-anchor": "middle", style: "fill:var(--ink-2)" }, svg).textContent = tot[i];
+  });
+  $("bars").appendChild(svg); bindTips($("bars"));
+})();
+
+// ---------- courts
+function drawCourt(svg, margin) {
+  const S = 20, CW = 10.97, CL = 23.77, mx = margin[0], my = margin[1];
+  svg.setAttribute("viewBox", `${-mx * S} ${-my * S - 22} ${(CW + 2 * mx) * S} ${(CL + 2 * my) * S + 50}`);
+  el("rect", { x: 0, y: 0, width: CW * S, height: CL * S, fill: "var(--court)", stroke: "var(--court-edge)" }, svg);
+  const line = (x1, y1, x2, y2) => el("line", { x1: x1 * S, y1: y1 * S, x2: x2 * S, y2: y2 * S, stroke: "var(--court-line)", "stroke-width": 2 }, svg);
+  line(0, 0, CW, 0); line(0, CL, CW, CL); line(0, 0, 0, CL); line(CW, 0, CW, CL);
+  line(1.37, 0, 1.37, CL); line(9.6, 0, 9.6, CL); line(1.37, 5.485, 9.6, 5.485); line(1.37, 18.285, 9.6, 18.285); line(5.485, 5.485, 5.485, 18.285);
+  el("line", { x1: -0.9 * S, y1: 11.885 * S, x2: (CW + 0.9) * S, y2: 11.885 * S, stroke: "var(--net)", "stroke-width": 3 }, svg);
+  el("text", { x: CW * S / 2, y: -my * S - 6, "text-anchor": "middle" }, svg).textContent = "FAR END";
+  el("text", { x: CW * S / 2, y: (CL + my) * S + 22, "text-anchor": "middle" }, svg).textContent = "NEAR END · camera";
+  return S;
+}
+(function () {
+  const svg = $("landing"), S = drawCourt(svg, [1.5, 1.5]);
+  const hasSecond = R.raw.bounces.some((b) => "agreed_by_second_method" in b);
+  R.raw.bounces.forEach((b) => {
+    const solid = hasSecond ? b.agreed_by_second_method : b.bounds !== "out";
+    el("circle", { cx: b.position_m[0] * S, cy: b.position_m[1] * S, r: 6.5,
+      fill: solid ? "var(--s-bounce)" : "var(--surface)", stroke: solid ? "var(--surface)" : "var(--s-bounce)", "stroke-width": 2,
+      "data-tip": `${b.t_s.toFixed(1)}s · ${b.half} ${b.side}, ${b.depth} · ${b.bounds}` + (hasSecond ? `\n${b.agreed_by_second_method ? "found by both methods" : "one method only"}` : "") }, svg);
+  });
+  bindTips(svg.parentNode);
+})();
+(function () {
+  const cov = R.raw.coverage, svg = $("coverage");
+  if (!cov) { svg.parentNode.hidden = true; return; }
+  const S = drawCourt(svg, [-cov.origin_m[0], -cov.origin_m[1]]);
+  const cs = getComputedStyle(document.documentElement);
+  const hex = (h) => h.trim().match(/[0-9a-f]{2}/gi).map((x) => parseInt(x, 16));
+  const lo = hex(cs.getPropertyValue("--heat-lo")), hi = hex(cs.getPropertyValue("--heat-hi"));
+  const max = Math.max(...cov.seconds.flat());
+  const g = el("g", {}, svg);
+  svg.insertBefore(g, svg.children[1]); // under the court lines, over the court fill
+  cov.seconds.forEach((row, r) => row.forEach((v, c) => {
+    if (v <= 0) return;
+    const t = Math.sqrt(v / max); // sqrt so a queue spot does not wash out the rest
+    const col = lo.map((a, i) => Math.round(a + (hi[i] - a) * t));
+    el("rect", { x: (cov.origin_m[0] + c * cov.cell_m) * S, y: (cov.origin_m[1] + r * cov.cell_m) * S, width: cov.cell_m * S - 1, height: cov.cell_m * S - 1,
+      fill: `rgb(${col.join(",")})`, "data-tip": `${v.toFixed(1)} person-seconds in this 1m square` }, g);
+  }));
+  bindTips(svg.parentNode);
+})();
+(function () {
+  const bl = M.bounce_landing;
+  const parts = [];
+  if (bl) {
+    const agreed = R.raw.bounces.filter((b) => b.agreed_by_second_method).length;
+    if (R.raw.bounces.some((b) => "agreed_by_second_method" in b)) parts.push(`${agreed} of ${bl.value} bounces were found by both detection methods.`);
+    parts.push(...bl.caveats.filter((c) => /No confirmed|precise/.test(c)));
+  }
+  $("court-note").textContent = parts.join(" ");
+})();
+
+// ---------- people
+(function () {
+  const rows = R.people.filter((p) => p.tracked_s >= 3).sort((a, b) => a.start_s - b.start_s);
+  const where = (p) => {
+    const [x, y] = p.median_position_m;
+    const half = y < 11.885 ? "far" : "near", side = x < 5.485 ? "left" : "right";
+    const off = x < 0 || x > 10.97 ? ", outside the sideline" : (y < 0 || y > 23.77 ? ", behind the baseline" : "");
+    return `${half} ${side}${off}`;
+  };
+  $("people").querySelector("tbody").innerHTML = rows.map((p) => `<tr>
+    <td class="n">#${p.track_id}</td><td class="n">${p.start_s.toFixed(0)}–${p.end_s.toFixed(0)}s</td>
+    <td class="n">${p.distance_m == null ? "–" : p.distance_m.toFixed(0) + " m"}</td>
+    <td class="n">${p.average_speed_mps == null ? "–" : p.average_speed_mps.toFixed(1) + " m/s"}</td>
+    <td>${where(p)}</td><td><span class="chip c-${p.distance_confidence}">${p.distance_confidence}</span></td></tr>`).join("");
+})();
+
+// ---------- methods
+$("methods").innerHTML = Object.entries(M).map(([k, m]) =>
+  `<dt>${esc(k.replace(/_/g, " "))} <span class="chip c-${m.basis}">${basisLabel[m.basis] || m.basis}</span></dt>
+   <dd>${esc(m.method)}${m.caveats.length ? "<br><em>Caveats:</em> " + m.caveats.map(esc).join(" ") : ""}</dd>`).join("");
+$("foot").textContent = R.how_to_read;
+</script>
