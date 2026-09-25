@@ -133,12 +133,19 @@ def build_session_report(
     coverage: Optional[CoverageGrid],
     cutaways: Iterable[tuple[int, int]] = (),
     second_opinion_bounce_frames: Optional[set[int]] = None,
+    people_tracked: Optional[bool] = None,
 ) -> dict:
     """The report as a JSON-ready dict. `cutaways` are [start, end) frame
     ranges where the video shows something other than the fixed court view;
     they are excluded from every time-based metric rather than counted as
     idle. `second_opinion_bounce_frames` (another method's bounces, in THIS
-    clip's frame numbers) marks each bounce as agreed or not."""
+    clip's frame numbers) marks each bounce as agreed or not.
+
+    `people_tracked` says whether person tracking was RUN (default: whether
+    any people were passed). When it was not, the people metrics are
+    reported as null with the reason, never as zero - "0 m run" and
+    "0 contacts credited" would be confident, wrong readings of a
+    measurement that simply was not taken."""
     cut_mask = np.zeros(num_frames, dtype=bool)
     cut_list = [(max(0, a), min(num_frames, b)) for a, b in cutaways]
     for a, b in cut_list:
@@ -189,6 +196,8 @@ def build_session_report(
     ]
 
     # ---- people
+    if people_tracked is None:
+        people_tracked = bool(people)
     on_court_people = [p for p in people if p.on_this_court]
     measured_people = [p for p in on_court_people if p.distance_confidence == "measured"]
     timed = [p for p in measured_people if p.moving_share is not None]
@@ -324,4 +333,9 @@ def build_session_report(
             "ball_tracks": {"total": len(ball_tracks), "on_this_court": len(court_tracks)},
         },
     }
+    if not people_tracked:
+        for name in ("people_on_court", "movement_near_court", "near_court_moving_share", "contacts_attributed"):
+            metric = report["metrics"][name]
+            metric["value"] = None
+            metric["caveats"] = ["Person tracking was not run for this session, so this was not measured."]
     return report

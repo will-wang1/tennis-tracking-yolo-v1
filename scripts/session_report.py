@@ -147,6 +147,7 @@ def main() -> None:
         coverage=coverage,
         cutaways=cutaways,
         second_opinion_bounce_frames=second,
+        people_tracked=people_cache is not None,
     )
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)

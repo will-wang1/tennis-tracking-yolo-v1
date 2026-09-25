@@ -259,8 +259,11 @@ const tiles = [
 ];
 $("tiles").innerHTML = tiles.filter(([k]) => M[k]).map(([k, f, label]) => {
   const m = M[k];
-  return `<div class="tile"><div class="n">${esc(f(m))}</div><div class="k">${label}</div>
-    <span class="chip c-${m.basis}">${basisLabel[m.basis] || m.basis}</span></div>`;
+  // A null value means "not measured" (e.g. person tracking not run) and
+  // must never render as 0 - Math.round(null) would.
+  const missing = m.value == null;
+  return `<div class="tile"><div class="n">${missing ? "–" : esc(f(m))}</div><div class="k">${label}</div>
+    <span class="chip c-${missing ? "estimated" : m.basis}">${missing ? "not measured" : (basisLabel[m.basis] || m.basis)}</span></div>`;
 }).join("");
 
 // ---------- timeline
