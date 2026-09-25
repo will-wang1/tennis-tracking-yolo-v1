@@ -44,12 +44,28 @@ from src.analysis.person_tracks import (  # noqa: E402
 from src.session.report import build_session_report  # noqa: E402
 from src.tracking.candidate_tracker import track_ball_paths, track_candidates  # noqa: E402
 
-def find_cutaways(video: str, static: CourtCalibration, num_frames: int, fps: float) -> list[tuple[int, int]]:
-    """Shots, between detected camera cuts, whose picture does not contain
-    the static court. Tested on the IMAGE (court_line_contrast), not on the
-    cached calibrations - those are carried forward through a cutaway and
-    agree with the court view while showing something else. Six frames per
-    shot is plenty: a shot is one continuous view by definition."""
+def fit_court(
+    video: str | None, per_frame: dict, num_frames: int, fps: float
+) -> tuple[CourtCalibration, list[tuple[int, int]], list[dict]]:
+    """The court calibration for the whole clip, fitted ONLY from camera
+    shots that actually show the court - plus those that do not, as
+    cutaways, and a per-shot record.
+
+    Each shot (between detected cuts) gets its own median calibration,
+    which is checked against that shot's own frames (court_line_contrast).
+    Shots that pass are pooled for the final static fit; the rest are
+    cutaways. Fitting over every frame at once - the first version - holds
+    only while most frames show the court: on the full Dingles video an
+    11s intro and a minute of the coach talking at the net (~35% of
+    frames) dragged the median off the lines, every shot then failed the
+    check, and the report came out empty. A fixed fence camera has one
+    shot, so this reduces to the plain static fit.
+
+    Without a video to look at, every frame is trusted and nothing is a
+    cutaway - there is no picture to check against."""
+    if not video:
+        return static_calibration_from_frames(per_frame), [], []
+
     import cv2
 
     from src.analysis.court_calibration import MIN_COURT_LINE_CONTRAST, court_line_contrast
@@ -57,29 +73,44 @@ def find_cutaways(video: str, static: CourtCalibration, num_frames: int, fps: fl
     from src.video.io import VideoReader
 
     cuts = detect_scene_cuts(VideoReader(video).frames())
-    if not cuts:
-        return []
     bounds = [0] + sorted(cuts) + [num_frames]
     capture = cv2.VideoCapture(video)
-    cutaways = []
+    court_frames: dict = {}
+    cutaways: list[tuple[int, int]] = []
+    shots: list[dict] = []
     try:
         for a, b in zip(bounds, bounds[1:]):
-            scores = []
-            for f in np.linspace(a, b - 1, 6).astype(int):
-                capture.set(cv2.CAP_PROP_POS_FRAMES, int(f))
-                ok, image = capture.read()
-                if ok:
-                    gray = cv2.GaussianBlur(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), (3, 3), 0)
-                    scores.append(court_line_contrast(gray, static))
-            score = float(np.median(scores)) if scores else 0.0
-            is_cutaway = score < MIN_COURT_LINE_CONTRAST
+            shot_cal = {f: per_frame[f] for f in range(a, b) if f in per_frame}
+            score = 0.0
+            if shot_cal:
+                shot_fit = static_calibration_from_frames(shot_cal)
+                scores = []
+                for f in np.linspace(a, b - 1, 6).astype(int):
+                    capture.set(cv2.CAP_PROP_POS_FRAMES, int(f))
+                    ok, image = capture.read()
+                    if ok:
+                        gray = cv2.GaussianBlur(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), (3, 3), 0)
+                        scores.append(court_line_contrast(gray, shot_fit))
+                score = float(np.median(scores)) if scores else 0.0
+            court_view = score >= MIN_COURT_LINE_CONTRAST
             print(f"  shot {a / fps:6.1f}-{b / fps:6.1f}s  court-line contrast {score:5.1f} -> "
-                  f"{'CUTAWAY' if is_cutaway else 'court view'}")
-            if is_cutaway:
+                  f"{'court view' if court_view else 'CUTAWAY'}")
+            shots.append({"start_s": round(a / fps, 2), "end_s": round(b / fps, 2),
+                          "court_line_contrast": round(score, 1), "court_view": court_view})
+            if court_view:
+                court_frames.update(shot_cal)
+            else:
                 cutaways.append((a, b))
     finally:
         capture.release()
-    return cutaways
+
+    if not court_frames:
+        raise SystemExit(
+            "No camera shot in this video shows the court clearly enough to calibrate "
+            f"(best court-line contrast {max((s['court_line_contrast'] for s in shots), default=0):.1f}, "
+            f"need {MIN_COURT_LINE_CONTRAST:g}). Check the camera can see the court's lines, then re-run."
+        )
+    return static_calibration_from_frames(court_frames), cutaways, shots
 
 
 def main() -> None:
@@ -99,10 +130,8 @@ def main() -> None:
         f: (v if isinstance(v, CourtCalibration) else CourtCalibration(homography=v))
         for f, v in cache["calibrations"].items()
     }
-    static = static_calibration_from_frames(per_frame)
+    static, cutaways, shots = fit_court(args.video, per_frame, num_frames, fps)
     calibrations = {f: static for f in range(num_frames)}
-
-    cutaways = find_cutaways(args.video, static, num_frames, fps) if args.video else []
     skip = {f for a, b in cutaways for f in range(a, b)}
 
     people_cache = None
@@ -149,6 +178,9 @@ def main() -> None:
         second_opinion_bounce_frames=second,
         people_tracked=people_cache is not None,
     )
+    # The court this report was measured on, so everything downstream (the
+    # rendered video) uses the same one rather than re-deriving its own.
+    report["court"] = {"homography": np.asarray(static.homography).tolist(), "shots": shots}
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(report, indent=1))

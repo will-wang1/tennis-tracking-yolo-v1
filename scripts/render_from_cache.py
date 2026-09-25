@@ -122,7 +122,22 @@ def render(args) -> None:
     candidates = cache["candidates"]
     calibrations = calibrations_from_cache(cache)
 
-    if args.static_court:
+    cutaway_frames: set[int] = set()
+    if args.report:
+        # Use the court the session report was measured on, and its
+        # cutaways, so the video and the numbers cannot disagree about where
+        # the court is. The report fits the court only from shots that show
+        # it; a fit over every frame of a video with long non-court stretches
+        # comes out off the lines.
+        import json
+
+        report = json.loads(Path(args.report).read_text())
+        court = CourtCalibration(homography=np.array(report["court"]["homography"], dtype=float))
+        calibrations = {frame: court for frame in range(len(candidates))}
+        for a_s, b_s in report["clip"]["cutaways_s"]:
+            cutaway_frames.update(range(int(round(a_s * fps)), int(round(b_s * fps))))
+        print(f"Court: from {args.report} ({len(report['clip']['cutaways_s'])} cutaway(s))")
+    elif args.static_court:
         # A fixed camera's per-frame fits are many noisy readings of one
         # homography; refitting each frame just re-rolls the noise and the
         # wireframe visibly jitters. See static_calibration_from_frames.
@@ -199,7 +214,7 @@ def render(args) -> None:
         if not ok:
             break
 
-        if args.court:
+        if args.court and frame_idx not in cutaway_frames:
             frame = court.draw(frame, calibrations.get(frame_idx))
 
         if args.candidates:
@@ -270,6 +285,11 @@ def main() -> None:
     parser.add_argument("--end", type=float, default=None, help="seconds")
     parser.add_argument("--max-jump", type=float, default=150.0)
     parser.add_argument("--people", help="A scripts/track_people.py cache, to draw person boxes and ids")
+    parser.add_argument(
+        "--report",
+        help="A session_report.json: draw its court (fitted from court-view shots only) and "
+        "skip the court outline on its cutaways. Overrides --per-frame-court.",
+    )
     parser.add_argument(
         "--on-court-only", action="store_true",
         help="Draw only ball tracks on this court (the ones the session metrics count)",

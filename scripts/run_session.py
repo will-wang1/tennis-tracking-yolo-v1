@@ -132,8 +132,9 @@ def main() -> None:
     step("coach report page", out / "coach_report.html", page_cmd, force=True)
     if not args.no_video:
         step("annotated video", out / "annotated.mp4", [PY, s("render_from_cache.py"), "--cache", str(ball_cache),
-             "--input", str(video), "--people", str(people), "--on-court-only", "--no-track-labels",
-             "--output", str(out / "annotated.mp4")], args.force)
+             "--input", str(video), "--people", str(people), "--report", str(report),
+             "--on-court-only", "--no-track-labels",
+             "--output", str(out / "annotated.mp4")], force=True)
 
     print(f"\nDone. Open {_short(str(out / 'coach_report.html'))}")
 
