@@ -104,14 +104,19 @@ def main() -> None:
 
     report_cmd = [PY, s("session_report.py"), "--ball-cache", str(ball_cache), "--people", str(people),
                   "--video", str(video), "--name", args.name, "--out", str(report)]
+    tp_cache = out / "tennisproject_ball_track.pkl"
     if args.second_opinion:
         video_720 = REPO_ROOT / "data" / "videos" / f"{args.name}_720p30.mp4"
-        tp_cache = out / "tennisproject_ball_track.pkl"
         step("720p/30fps copy for TennisProject", video_720, [PY, s("normalise_clip.py"), "--input", str(source),
              "--start", str(args.start), "--end", str(end), "--fps", "29.97", "--width", "1280", "--height", "720",
              "--output", str(video_720)], args.force)
         step("TennisProject bounce method", tp_cache, [PY, s("tennisproject_bounces.py"),
              "--input", str(video_720), "--cache", str(tp_cache)], args.force)
+    # A second opinion computed on an earlier run is used whether or not it
+    # was asked for this time - only RUNNING it (slow) needs the flag.
+    # Otherwise re-running without the flag would quietly drop the
+    # "found by both methods" marks from a report that had them.
+    if tp_cache.exists():
         report_cmd += ["--second-opinion", str(tp_cache)]
     # The report is cheap and depends on every cache above, so it is always rebuilt.
     step("session report", report, report_cmd, force=True)
