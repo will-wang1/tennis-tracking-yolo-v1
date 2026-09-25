@@ -221,8 +221,13 @@ def render(args) -> None:
             for detection in candidates[frame_idx]:
                 cv2.circle(frame, (int(detection.x), int(detection.y)), 9, _CANDIDATE_COLOR, 1)
 
+        # A cutaway shows some other view, so ball tracks and impact markers
+        # - all positioned against the court - mean nothing there, and the
+        # bounce map re-projected onto it scatters crosses over the picture.
+        # People are still people, so their boxes stay.
+        in_cutaway = frame_idx in cutaway_frames
         live = 0
-        for i, track in enumerate(tracks):
+        for i, track in enumerate([] if in_cutaway else tracks):
             color = _TRACK_COLORS[i % len(_TRACK_COLORS)]
             detection = track.detections.get(frame_idx)
             if detection is not None:
@@ -261,9 +266,10 @@ def render(args) -> None:
                 cv2.putText(frame, label, (int(x1), int(y1) - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 4)
                 cv2.putText(frame, label, (int(x1), int(y1) - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
-        frame = impact_drawer.draw(
-            frame, frame_idx, impacts_by_frame, calibrations.get(frame_idx)
-        )
+        if not in_cutaway:
+            frame = impact_drawer.draw(
+                frame, frame_idx, impacts_by_frame, calibrations.get(frame_idx)
+            )
         frame = _draw_hud(frame, frame_idx, fps, live, len(tracks))
 
         writer.write(frame)
