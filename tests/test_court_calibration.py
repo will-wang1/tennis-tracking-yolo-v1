@@ -225,3 +225,59 @@ class StaticCalibrationFromFramesTest(unittest.TestCase):
     def test_no_calibrations_is_an_error_not_a_silent_identity(self):
         with self.assertRaises(ValueError):
             static_calibration_from_frames({})
+
+
+class CourtLineContrastTest(unittest.TestCase):
+    @staticmethod
+    def _calibration():
+        corners = {
+            "baseline_far_left": (700.0, 200.0),
+            "baseline_far_right": (1220.0, 200.0),
+            "baseline_near_right": (1900.0, 850.0),
+            "baseline_near_left": (20.0, 850.0),
+        }
+        return CourtCalibration.from_keypoints(
+            corners, world_points={k: FULL_COURT_REFERENCE_POINTS[k] for k in corners}
+        )
+
+    def _court_image(self, calibration):
+        import cv2
+
+        from src.analysis.court_calibration import _LINE_EDGES
+
+        image = np.full((1080, 1920), 90, dtype=np.uint8)
+        for a, b in _LINE_EDGES:
+            pa = tuple(int(v) for v in calibration.world_to_pixel(*FULL_COURT_REFERENCE_POINTS[a]))
+            pb = tuple(int(v) for v in calibration.world_to_pixel(*FULL_COURT_REFERENCE_POINTS[b]))
+            cv2.line(image, pa, pb, 230, 5)
+        return image
+
+    def test_a_frame_showing_the_court_scores_high(self):
+        from src.analysis.court_calibration import MIN_COURT_LINE_CONTRAST, court_line_contrast
+
+        calibration = self._calibration()
+        self.assertGreater(court_line_contrast(self._court_image(calibration), calibration), MIN_COURT_LINE_CONTRAST)
+
+    def test_a_frame_showing_something_else_scores_near_zero(self):
+        # The cutaway case: the calibration is fine, the picture is not the court.
+        from src.analysis.court_calibration import MIN_COURT_LINE_CONTRAST, court_line_contrast
+
+        rng = np.random.default_rng(1)
+        other = rng.integers(40, 200, size=(1080, 1920)).astype(np.uint8)
+        self.assertLess(court_line_contrast(other, self._calibration()), MIN_COURT_LINE_CONTRAST)
+
+    def test_a_shifted_court_scores_near_zero(self):
+        # The camera knocked out of position: right court, wrong place.
+        # The score only falls once MOST lines leave their pixels, and a shift
+        # ALONG a line leaves that line where it was - so what is detected
+        # depends on the direction. On this synthetic image a sideways shift
+        # keeps its perfectly horizontal, very bright lines on themselves, and
+        # 30px down keeps the steep sidelines partly on themselves (14.8);
+        # 60px down clears them. On real footage both cases are caught at
+        # smaller shifts (measured: 60px sideways 1.9, 30px down 5.6, true
+        # view 26), because real lines are thin and run at many angles.
+        from src.analysis.court_calibration import MIN_COURT_LINE_CONTRAST, court_line_contrast
+
+        calibration = self._calibration()
+        shifted = np.roll(self._court_image(calibration), 60, axis=0)
+        self.assertLess(court_line_contrast(shifted, calibration), MIN_COURT_LINE_CONTRAST)

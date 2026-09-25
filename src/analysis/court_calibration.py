@@ -331,3 +331,69 @@ def static_calibration_from_frames(
         if points
     }
     return CourtCalibration.from_keypoints(medians, world_points=world_points)
+
+
+# The court lines a calibration claims are in view, for `court_line_contrast`.
+# Same list as the drawn overlay (visualize/draw.py COURT_LINE_EDGES), kept
+# here so analysis code need not import drawing code.
+_LINE_EDGES = (
+    ("baseline_far_left", "baseline_far_right"),
+    ("baseline_near_left", "baseline_near_right"),
+    ("baseline_far_left", "baseline_near_left"),
+    ("baseline_far_right", "baseline_near_right"),
+    ("singles_far_left", "singles_near_left"),
+    ("singles_far_right", "singles_near_right"),
+    ("service_far_left", "service_far_right"),
+    ("service_near_left", "service_near_right"),
+    ("center_service_far", "center_service_near"),
+)
+
+# Below this, the lines the calibration predicts are not actually in the
+# picture. Measured on dingles_serve_volley: the fixed court view scores
+# 26.3-26.6 across three separate shots, the two net-level cutaways 0.3-0.5.
+MIN_COURT_LINE_CONTRAST = 10.0
+
+
+def court_line_contrast(
+    gray_frame: np.ndarray,
+    calibration: "CourtCalibration",
+    samples_per_line: int = 40,
+    offset_px: float = 10.0,
+) -> float:
+    """Does this calibration's court actually appear in this frame?
+
+    Samples points along every court line the calibration projects, and
+    compares brightness ON the line with brightness `offset_px` either side
+    of it. Painted lines are brighter than the court around them, so a
+    calibration that matches the picture scores well above zero; one that
+    doesn't - a cutaway, a replay, a camera knocked out of position - puts
+    its lines on arbitrary pixels and scores about zero.
+
+    This checks the calibration against the IMAGE, which is the only check
+    that works once a calibration has been carried forward: the cached
+    per-frame calibrations of a cutaway can be the court view's own,
+    carried over when detection found nothing, and so agree with it
+    perfectly while describing a different picture entirely.
+
+    Returns the mean on-minus-beside brightness (0-255 scale), or 0.0 if no
+    sample fell inside the frame.
+    """
+    height, width = gray_frame.shape[:2]
+    gray = gray_frame.astype(np.float64)
+    differences = []
+    for a, b in _LINE_EDGES:
+        pa = np.array(calibration.world_to_pixel(*FULL_COURT_REFERENCE_POINTS[a]), dtype=float)
+        pb = np.array(calibration.world_to_pixel(*FULL_COURT_REFERENCE_POINTS[b]), dtype=float)
+        direction = pb - pa
+        length = float(np.linalg.norm(direction))
+        if not np.isfinite(length) or length < 1.0:
+            continue
+        normal = np.array([-direction[1], direction[0]]) / length
+        for t in np.linspace(0.05, 0.95, samples_per_line):
+            p = pa + t * direction
+            q1, q2 = p + offset_px * normal, p - offset_px * normal
+            if all(0 <= q[0] < width and 0 <= q[1] < height for q in (p, q1, q2)):
+                on = gray[int(p[1]), int(p[0])]
+                beside = (gray[int(q1[1]), int(q1[0])] + gray[int(q2[1]), int(q2[0])]) / 2.0
+                differences.append(on - beside)
+    return float(np.mean(differences)) if differences else 0.0
