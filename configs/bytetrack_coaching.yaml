@@ -1,0 +1,13 @@
+# ByteTrack for coaching footage. Identical to ultralytics' bytetrack.yaml
+# except track_buffer, which is raised from 30 frames (1.2s at 25fps) to
+# 75 (3s): in a coaching session players walk behind each other and behind
+# the coach constantly, and at the default anyone hidden for longer than
+# 1.2s comes back under a NEW id - splitting one player's distance and
+# touches across two identities. See scripts/track_people.py.
+tracker_type: bytetrack
+track_high_thresh: 0.25
+track_low_thresh: 0.1
+new_track_thresh: 0.25
+track_buffer: 75
+match_thresh: 0.8
+fuse_score: True
