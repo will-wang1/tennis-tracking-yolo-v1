@@ -1,0 +1,156 @@
+seconds,frame,proposed_by
+0.32,8,tennisproject_ball_track
+0.48,12,pipeline:unknown tennisproject_ball_track
+0.72,18,pipeline:unknown
+1.28,32,pipeline:bounce tennisproject_ball_track trajectory_scan
+1.68,42,pipeline:unknown
+1.88,47,pipeline:contact
+2.04,51,trajectory_scan
+2.52,63,tennisproject_ball_track
+2.68,67,pipeline:unknown trajectory_scan
+3.00,75,trajectory_scan
+3.52,88,pipeline:contact
+4.16,104,pipeline:bounce tennisproject_ball_track trajectory_scan
+5.52,138,trajectory_scan
+5.68,142,pipeline:unknown
+6.64,166,pipeline:bounce tennisproject_ball_track trajectory_scan
+7.28,182,pipeline:contact trajectory_scan
+8.12,203,pipeline:unknown
+8.64,216,pipeline:unknown
+9.16,229,tennisproject_ball_track trajectory_scan
+9.32,233,pipeline:contact
+9.92,248,pipeline:unknown
+10.16,254,pipeline:unknown
+10.96,274,pipeline:bounce trajectory_scan
+11.20,280,tennisproject_ball_track
+11.60,290,pipeline:contact trajectory_scan
+12.44,311,pipeline:unknown
+13.68,342,pipeline:bounce tennisproject_ball_track trajectory_scan
+14.12,353,pipeline:contact
+14.48,362,pipeline:contact trajectory_scan
+15.24,381,pipeline:bounce tennisproject_ball_track trajectory_scan
+17.04,426,trajectory_scan
+17.36,434,pipeline:contact
+17.56,439,tennisproject_ball_track trajectory_scan
+17.76,444,pipeline:bounce
+18.64,466,pipeline:unknown
+19.48,487,pipeline:bounce trajectory_scan
+20.00,500,pipeline:unknown tennisproject_ball_track
+20.20,505,trajectory_scan
+20.52,513,pipeline:contact
+21.32,533,pipeline:bounce tennisproject_ball_track trajectory_scan
+21.76,544,tennisproject_ball_track
+22.24,556,tennisproject_ball_track
+26.24,656,trajectory_scan
+26.76,669,pipeline:unknown
+27.20,680,pipeline:unknown
+27.56,689,trajectory_scan
+27.76,694,pipeline:bounce
+28.12,703,tennisproject_ball_track
+28.60,715,trajectory_scan
+28.76,719,pipeline:unknown
+29.12,728,trajectory_scan
+30.40,760,pipeline:unknown
+31.60,790,trajectory_scan
+32.76,819,trajectory_scan
+33.16,829,tennisproject_ball_track
+33.52,838,tennisproject_ball_track
+34.32,858,tennisproject_ball_track
+36.28,907,tennisproject_ball_track
+37.32,933,pipeline:unknown
+37.60,940,tennisproject_ball_track
+38.04,951,pipeline:unknown
+38.56,964,pipeline:bounce tennisproject_ball_track
+39.20,980,pipeline:contact trajectory_scan
+39.84,996,pipeline:unknown
+40.24,1006,pipeline:unknown
+43.20,1080,tennisproject_ball_track trajectory_scan
+43.76,1094,pipeline:unknown trajectory_scan
+44.20,1105,pipeline:unknown
+44.60,1115,pipeline:unknown trajectory_scan
+45.12,1128,trajectory_scan
+45.36,1134,pipeline:unknown
+46.04,1151,pipeline:unknown
+46.56,1164,pipeline:unknown
+46.92,1173,tennisproject_ball_track
+47.68,1192,pipeline:unknown
+48.32,1208,tennisproject_ball_track
+49.48,1237,trajectory_scan
+50.60,1265,pipeline:bounce tennisproject_ball_track trajectory_scan
+51.24,1281,pipeline:bounce tennisproject_ball_track trajectory_scan
+51.80,1295,pipeline:unknown tennisproject_ball_track trajectory_scan
+52.16,1304,pipeline:unknown
+52.72,1318,pipeline:unknown
+53.56,1339,pipeline:unknown
+55.88,1397,trajectory_scan
+56.44,1411,pipeline:contact trajectory_scan
+58.12,1453,tennisproject_ball_track trajectory_scan
+58.96,1474,pipeline:unknown
+59.28,1482,pipeline:contact tennisproject_ball_track trajectory_scan
+59.64,1491,pipeline:unknown tennisproject_ball_track
+61.76,1544,pipeline:unknown
+62.48,1562,pipeline:unknown
+62.96,1574,pipeline:bounce tennisproject_ball_track
+63.24,1581,tennisproject_ball_track
+63.48,1587,pipeline:contact
+64.48,1612,pipeline:bounce tennisproject_ball_track trajectory_scan
+64.92,1623,pipeline:unknown
+65.36,1634,trajectory_scan
+65.72,1643,trajectory_scan
+66.00,1650,pipeline:unknown trajectory_scan
+66.84,1671,pipeline:bounce tennisproject_ball_track trajectory_scan
+67.92,1698,pipeline:contact trajectory_scan
+68.28,1707,tennisproject_ball_track
+68.72,1718,pipeline:bounce trajectory_scan
+69.04,1726,tennisproject_ball_track trajectory_scan
+70.40,1760,trajectory_scan
+74.76,1869,tennisproject_ball_track trajectory_scan
+75.00,1875,pipeline:unknown
+75.24,1881,trajectory_scan
+75.48,1887,pipeline:unknown
+75.72,1893,tennisproject_ball_track trajectory_scan
+76.08,1902,tennisproject_ball_track
+77.60,1940,pipeline:unknown
+78.48,1962,pipeline:unknown
+79.00,1975,pipeline:bounce
+79.36,1984,pipeline:bounce tennisproject_ball_track
+79.60,1990,pipeline:contact trajectory_scan
+80.32,2008,pipeline:unknown
+81.24,2031,pipeline:contact trajectory_scan
+81.52,2038,pipeline:bounce
+82.00,2050,pipeline:bounce tennisproject_ball_track trajectory_scan
+82.80,2070,pipeline:contact trajectory_scan
+83.36,2084,pipeline:contact
+84.64,2116,tennisproject_ball_track
+85.56,2139,tennisproject_ball_track
+86.40,2160,pipeline:unknown
+86.92,2173,pipeline:unknown
+87.84,2196,tennisproject_ball_track
+88.08,2202,pipeline:unknown
+89.12,2228,tennisproject_ball_track
+89.68,2242,pipeline:contact
+90.84,2271,pipeline:bounce tennisproject_ball_track
+91.32,2283,pipeline:contact trajectory_scan
+91.68,2292,tennisproject_ball_track
+91.88,2297,tennisproject_ball_track
+93.08,2327,pipeline:unknown
+94.24,2356,pipeline:bounce tennisproject_ball_track trajectory_scan
+94.80,2370,pipeline:unknown trajectory_scan
+95.56,2389,pipeline:bounce
+98.32,2458,pipeline:contact
+99.52,2488,pipeline:bounce trajectory_scan
+99.68,2492,tennisproject_ball_track
+99.96,2499,pipeline:unknown trajectory_scan
+100.36,2509,tennisproject_ball_track trajectory_scan
+100.68,2517,pipeline:unknown trajectory_scan
+101.36,2534,pipeline:unknown
+102.12,2553,pipeline:unknown tennisproject_ball_track trajectory_scan
+103.16,2579,pipeline:contact
+104.12,2603,pipeline:unknown
+104.68,2617,pipeline:unknown
+105.04,2626,tennisproject_ball_track trajectory_scan
+105.44,2636,pipeline:unknown
+105.60,2640,tennisproject_ball_track trajectory_scan
+105.96,2649,pipeline:unknown trajectory_scan
+106.28,2657,tennisproject_ball_track
+106.80,2670,pipeline:unknown

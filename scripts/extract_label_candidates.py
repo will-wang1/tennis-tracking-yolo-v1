@@ -321,11 +321,32 @@ def main() -> None:
     )
     parser.add_argument("--min-gap", type=int, default=5, help="Minimum frames between candidates")
     parser.add_argument("--no-thumbnails", action="store_true")
+    parser.add_argument(
+        "--also-propose",
+        action="append",
+        default=[],
+        metavar="PKL",
+        help="Another method's output to add as candidates - a cache with 'fps' and "
+        "'bounces' (frame numbers at ITS fps), e.g. scripts/tennisproject_bounces.py's. "
+        "Comparing two methods on labels seeded by only one of them would make the "
+        "other's misses unlabellable. Repeatable.",
+    )
     args = parser.parse_args()
 
     cache = load_cache(Path(args.cache))
     fps = cache["fps"]
     sources, ball_xy = candidate_frames(cache, args.min_prominence, args.min_gap)
+    for extra_path in args.also_propose:
+        with open(extra_path, "rb") as handle:
+            extra = pickle.load(handle)
+        tag = Path(extra_path).stem
+        for frame in extra.get("bounces", []):
+            # Frames are converted through SECONDS, since the other method may
+            # have run on a differently-normalised copy of the same clip.
+            here = int(round(frame / extra["fps"] * fps))
+            if 0 <= here < cache["num_frames"]:
+                sources.setdefault(here, set()).add(tag)
+    sources = _merge_near_duplicates(sources, MERGE_WITHIN_FRAMES)
     if not sources:
         raise SystemExit("no candidates found - is the cache for this clip?")
 
@@ -358,7 +379,9 @@ def main() -> None:
             writer.writerow([f"{frame / fps:.2f}", frame, " ".join(sorted(sources[frame]))])
 
     only_scan = sum(1 for s in sources.values() if not any(x.startswith("pipeline") for x in s))
-    only_pipeline = sum(1 for s in sources.values() if "trajectory_scan" not in s)
+    only_pipeline = sum(
+        1 for s in sources.values() if any(x.startswith("pipeline") for x in s) and "trajectory_scan" not in s
+    )
     print(f"{len(sources)} candidates -> {out}")
     print(f"   {only_scan} the pipeline proposed NOTHING for (its potential recall gaps)")
     print(f"   {only_pipeline} only the pipeline proposed (its potential false positives)")

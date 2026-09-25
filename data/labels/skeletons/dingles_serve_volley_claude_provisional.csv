@@ -1,0 +1,50 @@
+frame,seconds,proposed_by,kind,confidence,note
+274,10.96,ours,none,high,ball crossing net tape just after far player's contact
+444,17.76,ours,bounce,low,ball reaches far player ~4 frames before swing
+487,19.48,ours,contact,medium,racket blur in candidate panel - volley
+694,27.76,ours,none,medium,ball in flight over net after coming from cart end
+1718,68.72,ours,none,high,false ball track on a person by the ball cart
+1975,79.00,ours,none,medium,ball in flight crossing net
+2038,81.52,ours,none,high,stationary ball beside the adjacent court
+2389,95.56,ours,none,high,ball held still under net tape - in the net
+2488,99.52,ours,contact,medium,ball at far player's racket mid-swing
+8,0.32,tennisproject,none,high,serve toss apex
+12,0.48,tennisproject,contact,high,serve contact
+63,2.52,tennisproject,,unsure,low near far service line with player mid-swing
+229,9.16,tennisproject,bounce,medium,ball comes down on near court just before near player's swing
+280,11.20,tennisproject,bounce,low,ball stops moving in image after crossing net
+439,17.56,tennisproject,bounce,low,same event as ours 444 - timing differs
+500,20.00,tennisproject,bounce,medium,ball low at far player's feet before swing
+544,21.76,tennisproject,none,high,dead ball against bottom of net
+556,22.24,tennisproject,none,high,dead ball against bottom of net
+703,28.12,tennisproject,none,high,dead ball against bottom of net
+829,33.16,tennisproject,none,high,dead ball against bottom of net
+838,33.52,tennisproject,none,high,dead ball against bottom of net
+858,34.32,tennisproject,,unsure,our tracker had no ball - strip cannot show it
+907,36.28,tennisproject,none,medium,ball by the net while another is in play
+940,37.60,tennisproject,none,high,serve toss apex
+1080,43.20,tennisproject,none,high,dead ball against bottom of net
+1173,46.92,tennisproject,none,high,dead ball lying on far court
+1208,48.32,tennisproject,bounce,medium,blurred ball turns sharp at a line on near court
+1295,51.80,tennisproject,none,high,dead ball lying on near court
+1453,58.12,tennisproject,none,high,pre-serve bouncing (real court contact - not rally play)
+1482,59.28,tennisproject,none,high,pre-serve bouncing
+1491,59.64,tennisproject,none,high,pre-serve bouncing
+1581,63.24,tennisproject,none,high,ball rolling slowly after the point
+1707,68.28,tennisproject,none,medium,lob in flight against curtain
+1726,69.04,tennisproject,,unsure,ball low at far end drifting toward cart
+1869,74.76,tennisproject,none,high,pre-serve bouncing
+1893,75.72,tennisproject,none,high,pre-serve bouncing
+1902,76.08,tennisproject,none,high,pre-serve bouncing
+2116,84.64,tennisproject,,unsure,our tracker had no ball
+2139,85.56,tennisproject,none,high,dead ball behind far baseline
+2196,87.84,tennisproject,none,high,dead ball behind far baseline
+2228,89.12,tennisproject,none,high,dead ball behind far baseline
+2292,91.68,tennisproject,none,high,ball resting against net
+2297,91.88,tennisproject,none,high,ball resting against net
+2492,99.68,tennisproject,contact,medium,far player's racket contact (same as ours 2488)
+2509,100.36,tennisproject,none,high,pre-serve bouncing / picking up ball
+2553,102.12,tennisproject,none,high,pre-serve bouncing
+2626,105.04,tennisproject,none,high,pre-serve bouncing
+2640,105.60,tennisproject,none,high,pre-serve bouncing
+2657,106.28,tennisproject,none,high,pre-serve bouncing
