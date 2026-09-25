@@ -145,11 +145,19 @@ def render(args) -> None:
     # the markers describe what ships today rather than a preview of what
     # per-track analysis would produce.
     flattened = track_candidates(candidates, max_pixels_per_frame=args.max_jump)
+    player_boxes = cache.get("player_boxes") or None
+    if args.people:
+        # Same boxes the session report classifies impacts with, so the
+        # markers on the video match the report's counts.
+        from src.analysis.person_tracks import boxes_by_frame
+
+        with open(args.people, "rb") as handle:
+            player_boxes = boxes_by_frame(pickle.load(handle)["people"])
     analysis = analyze_impacts(
         flattened,
         fps,
         calibrations_by_frame=calibrations,
-        player_boxes_by_frame=cache.get("player_boxes") or None,
+        player_boxes_by_frame=player_boxes,
         max_pixels_per_frame=args.max_jump,
     )
     impacts_by_frame = {impact.frame_idx: impact for impact in analysis.impacts}

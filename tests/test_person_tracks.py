@@ -106,3 +106,11 @@ class CoverageTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BoxesByFrameTest(unittest.TestCase):
+    def test_every_box_is_kept_tracked_or_not_and_empty_frames_are_skipped(self):
+        from src.analysis.person_tracks import boxes_by_frame
+
+        people = [[(3, 1.0, 2.0, 3.0, 4.0, 0.9), (None, 5.0, 6.0, 7.0, 8.0, 0.3)], [], [(3, 1.0, 2.0, 3.0, 4.0, 0.9)]]
+        self.assertEqual(boxes_by_frame(people), {0: [(1.0, 2.0, 3.0, 4.0), (5.0, 6.0, 7.0, 8.0)], 2: [(1.0, 2.0, 3.0, 4.0)]})

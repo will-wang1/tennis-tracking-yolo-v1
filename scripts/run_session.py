@@ -73,6 +73,7 @@ def main() -> None:
     parser.add_argument("--no-feedback", action="store_true")
     parser.add_argument("--no-video", action="store_true")
     parser.add_argument("--force", action="store_true", help="Redo steps even if their output exists")
+    parser.add_argument("--title", help="Coach page title (default: from --name). Keep it fixed if the page is published.")
     args = parser.parse_args()
 
     source = Path(args.input).expanduser()
@@ -124,8 +125,11 @@ def main() -> None:
     if not args.no_feedback:
         step("AI feedback", feedback, [PY, s("session_feedback.py"), "--report", str(report),
              "--out", str(feedback)], args.force)
-    step("coach report page", out / "coach_report.html", [PY, s("render_coach_report.py"), "--report", str(report),
-         "--feedback", str(feedback), "--out", str(out / "coach_report.html")], force=True)
+    page_cmd = [PY, s("render_coach_report.py"), "--report", str(report), "--feedback", str(feedback),
+                "--out", str(out / "coach_report.html")]
+    if args.title:
+        page_cmd += ["--title", args.title]
+    step("coach report page", out / "coach_report.html", page_cmd, force=True)
     if not args.no_video:
         step("annotated video", out / "annotated.mp4", [PY, s("render_from_cache.py"), "--cache", str(ball_cache),
              "--input", str(video), "--people", str(people), "--on-court-only", "--no-track-labels",

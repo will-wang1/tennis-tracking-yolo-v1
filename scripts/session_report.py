@@ -34,6 +34,7 @@ from src.analysis.court_calibration import (  # noqa: E402
 )
 from src.analysis.impact_pipeline import analyze_impacts  # noqa: E402
 from src.analysis.person_tracks import (  # noqa: E402
+    boxes_by_frame,
     coverage_grid,
     foot_positions_by_track,
     summarise_movement,
@@ -102,18 +103,24 @@ def main() -> None:
     cutaways = find_cutaways(args.video, static, num_frames, fps) if args.video else []
     skip = {f for a, b in cutaways for f in range(a, b)}
 
+    people_cache = None
+    if args.people:
+        with open(args.people, "rb") as handle:
+            people_cache = pickle.load(handle)
+    # Person-tracking boxes when available - every frame, from the same pass
+    # that measures movement - else whatever the ball cache holds.
+    player_boxes = boxes_by_frame(people_cache["people"]) if people_cache else (cache.get("player_boxes") or None)
+
     ball_tracks = track_ball_paths(cache["candidates"])
     impacts = analyze_impacts(
         track_candidates(cache["candidates"]),
         fps,
         calibrations_by_frame=calibrations,
-        player_boxes_by_frame=cache.get("player_boxes") or None,
+        player_boxes_by_frame=player_boxes,
     )
 
     people, coverage = [], None
-    if args.people:
-        with open(args.people, "rb") as handle:
-            people_cache = pickle.load(handle)
+    if people_cache:
         tracks = foot_positions_by_track(people_cache["people"], lambda f: static, skip_frames=skip)
         people = summarise_movement(tracks, fps, static)
         coverage = coverage_grid(tracks, fps, track_ids=[p.track_id for p in people if p.on_this_court])

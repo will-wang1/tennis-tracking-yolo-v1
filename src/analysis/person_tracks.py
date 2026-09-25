@@ -233,3 +233,22 @@ def coverage_grid(
             if 0 <= r < rows and 0 <= c < cols:
                 grid[r, c] += 1.0 / fps
     return CoverageGrid(origin_m=(x0, y0), cell_m=cell_m, seconds=grid.tolist())
+
+
+def boxes_by_frame(people_by_frame: list[list[tuple]]) -> dict[int, list[tuple[float, float, float, float]]]:
+    """Every person box per frame, tracked or not, in the shape
+    `analyze_impacts(player_boxes_by_frame=...)` takes.
+
+    The impact classifier was built to have player boxes - they are what
+    lets it withhold a "contact" nobody could have reached, and what stops
+    it calling a far player's shot "ball leaving the top of frame". Without
+    them, on the fence-height Dingles clip, 27 of 59 unattributed impacts
+    were that frame-edge rule firing on the far baseline (y~193px, inside
+    the 150px edge band); with these boxes it is 7, and 46.6% of impacts
+    come out of every player's reach - inside the 26-68% measured on match
+    footage, so the reach gate works on a crowded coaching court."""
+    return {
+        frame: [(x1, y1, x2, y2) for _id, x1, y1, x2, y2, _conf in row]
+        for frame, row in enumerate(people_by_frame)
+        if row
+    }
