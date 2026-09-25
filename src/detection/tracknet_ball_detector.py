@@ -126,3 +126,98 @@ class TrackNetBallDetector:
         scale_x = orig_width / MODEL_WIDTH
         scale_y = orig_height / MODEL_HEIGHT
         return cx * scale_x, cy * scale_y, peak_value / 255.0
+
+
+# --- yastrebksv/TennisProject's exact ball tracking -------------------------
+#
+# `TrackNetBallDetector` above deliberately departs from the original
+# post-processing (a weighted centroid instead of HoughCircles, no
+# nearest-to-previous outlier filter) because that tracked this project's
+# footage more steadily. That is the right call for ball TRACKING - and the
+# wrong one for feeding TennisProject's pretrained CatBoost bounce model,
+# which learned its features from tracks made THIS way. So the original is
+# reproduced here verbatim, quirks included, for that one purpose.
+
+
+def tennisproject_postprocess(
+    feature_map: np.ndarray,
+    prev_pred: list,
+    scale: int = 2,
+    max_dist: float = 80,
+) -> tuple[Optional[float], Optional[float]]:
+    """TennisProject ball_detector.BallDetector.postprocess, unchanged.
+
+    Note `feature_map *= 255` on an argmax map already in 0..255: the
+    product overflows when cast to uint8 and wraps, so what survives the
+    127 threshold is NOT simply the brightest pixels. That is almost
+    certainly unintended upstream, and it is kept anyway - the bounce model
+    was trained on the tracks this produced, so "fixing" it would feed the
+    model a different distribution and stop this being the same method.
+    """
+    feature_map = feature_map * 255
+    feature_map = feature_map.reshape((MODEL_HEIGHT, MODEL_WIDTH))
+    feature_map = feature_map.astype(np.uint8)
+    _, heatmap = cv2.threshold(feature_map, 127, 255, cv2.THRESH_BINARY)
+    circles = cv2.HoughCircles(
+        heatmap, cv2.HOUGH_GRADIENT, dp=1, minDist=1, param1=50, param2=2, minRadius=2, maxRadius=7
+    )
+    x, y = None, None
+    if circles is not None:
+        if prev_pred[0]:
+            for i in range(len(circles[0])):
+                x_temp = circles[0][i][0] * scale
+                y_temp = circles[0][i][1] * scale
+                dist = float(np.hypot(x_temp - prev_pred[0], y_temp - prev_pred[1]))
+                if dist < max_dist:
+                    x, y = x_temp, y_temp
+                    break
+        else:
+            x = circles[0][0][0] * scale
+            y = circles[0][0][1] * scale
+    return x, y
+
+
+def track_ball_tennisproject(
+    frames,
+    weights_path: str | Path,
+    device: Optional[str] = None,
+) -> list[tuple[Optional[float], Optional[float]]]:
+    """TennisProject ball_detector.BallDetector.infer_model, streamed.
+
+    Same inputs, stacking order, argmax and post-processing as upstream; the
+    only differences are that frames are consumed from an iterator instead
+    of a list held in memory, and inference runs under no_grad - neither
+    changes a single output value.
+
+    Requires 1280x720 frames. Upstream hardcodes `scale=2` from its 640x360
+    heatmap, so any other size returns coordinates in the wrong units - and
+    the bounce features are raw pixel differences in exactly those units.
+    """
+    device = resolve_device(device)
+    model = TrackNetArch(in_channels=9, out_channels=256)
+    model.load_state_dict(torch.load(str(weights_path), map_location=device, weights_only=True))
+    model.to(device)
+    model.eval()
+
+    ball_track: list[tuple[Optional[float], Optional[float]]] = [(None, None)] * 2
+    prev_pred: list = [None, None]
+    window: deque[np.ndarray] = deque(maxlen=3)
+    for index, frame in enumerate(frames):
+        if frame.shape[:2] != (720, 1280):
+            raise ValueError(
+                f"TennisProject's method needs 1280x720 frames, got {frame.shape[1]}x{frame.shape[0]} "
+                f"at frame {index} - normalise the clip first (scripts/normalise_clip.py)."
+            )
+        window.append(cv2.resize(frame, (MODEL_WIDTH, MODEL_HEIGHT)))
+        if len(window) < 3:
+            continue
+        img_preprev, img_prev, img = window[0], window[1], window[2]
+        imgs = np.concatenate((img, img_prev, img_preprev), axis=2).astype(np.float32) / 255.0
+        inp = np.expand_dims(np.rollaxis(imgs, 2, 0), axis=0)
+        with torch.no_grad():
+            out = model(torch.from_numpy(inp).float().to(device))
+        output = out.argmax(dim=1).detach().cpu().numpy()
+        x_pred, y_pred = tennisproject_postprocess(output, prev_pred)
+        prev_pred = [x_pred, y_pred]
+        ball_track.append((x_pred, y_pred))
+    return ball_track
