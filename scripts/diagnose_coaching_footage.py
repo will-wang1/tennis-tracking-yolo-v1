@@ -56,12 +56,14 @@ does not generalize.
 import argparse
 import pickle
 import sys
+
+import numpy as np
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from src.analysis.court_calibration import CourtCalibration  # noqa: E402
+from src.analysis.court_calibration import CourtCalibration, static_calibration_from_frames  # noqa: E402
 from src.analysis.impact_pipeline import analyze_impacts  # noqa: E402
 from src.analysis.touchdown_detector import _DEFAULT_MAX_REACH_RATIO  # noqa: E402
 from src.tracking.candidate_tracker import track_candidates  # noqa: E402
@@ -80,11 +82,17 @@ def _percentile(values: list[float], pct: float) -> float:
 
 
 def _summarise(values: list[float]) -> str:
-    if not values:
-        return "no data"
-    ordered = sorted(values)
+    """Percentiles over the FINITE values only. A single NaN makes sorting
+    undefined and silently scrambles every percentile - it did, on the
+    first coaching clip, producing a p75 below the p50 - so non-finite
+    values are dropped and counted rather than sorted."""
+    finite = [v for v in values if v is not None and np.isfinite(v)]
+    dropped = len(values) - len(finite)
+    if not finite:
+        return "no data" + (f"  ({dropped} non-finite dropped)" if dropped else "")
+    ordered = sorted(finite)
     cells = [f"p{p}={_percentile(ordered, p):.2f}" for p in _PERCENTILES]
-    return f"n={len(ordered)}  " + "  ".join(cells)
+    return f"n={len(ordered)}  " + "  ".join(cells) + (f"  ({dropped} non-finite dropped)" if dropped else "")
 
 
 def load_cache(path: Path) -> dict:
@@ -101,16 +109,30 @@ def calibrations_from_cache(cache: dict) -> dict[int, CourtCalibration]:
     }
 
 
-def analyse(cache: dict, max_jump: float) -> tuple:
+def analyse(cache: dict, max_jump: float, static_court: bool = False) -> tuple:
     detections = track_candidates(cache["candidates"], max_pixels_per_frame=max_jump)
     analysis = analyze_impacts(
         detections,
         cache["fps"],
-        calibrations_by_frame=calibrations_from_cache(cache),
+        calibrations_by_frame=_calibrations(cache, static_court),
         player_boxes_by_frame=cache.get("player_boxes") or None,
         max_pixels_per_frame=max_jump,
     )
     return detections, analysis
+
+
+def _calibrations(cache: dict, static_court: bool) -> dict[int, CourtCalibration]:
+    """Per-frame calibrations as cached, or - for a FIXED camera - one
+    static fit for every frame. Per-frame fits on a fixed camera jitter
+    (corners move a median 35.9px between consecutive frames on the
+    Dingles clip), and that jitter turns into approach rate: the
+    diagnostics first measured on it reported up to 144 m/s. Opt-in,
+    because a panning broadcast camera genuinely needs per-frame fits."""
+    per_frame = calibrations_from_cache(cache)
+    if not static_court or not per_frame:
+        return per_frame
+    static = static_calibration_from_frames(per_frame)
+    return {frame: static for frame in per_frame}
 
 
 def check_candidates(cache: dict) -> list[str]:
@@ -186,6 +208,7 @@ def check_strength(analysis, fps: float) -> list[str]:
         f"  |approach| before     {_summarise(before)}",
         f"  |approach| after      {_summarise(after)}",
     ]
+    before = [r for r in before if np.isfinite(r)]
     if before:
         weak = sum(1 for r in before if r < 3.0)
         lines.append(
@@ -211,6 +234,10 @@ def main() -> None:
         help="Run only these checks (default: all three).",
     )
     parser.add_argument("--max-jump", type=float, default=150.0, help="BallTracker max_pixels_per_frame")
+    parser.add_argument(
+        "--static-court", action="store_true",
+        help="Use one static court fit for every frame - right for a fixed camera, wrong for a panning one",
+    )
     args = parser.parse_args()
     checks = args.check or ["candidates", "reach", "strength"]
 
@@ -228,7 +255,7 @@ def main() -> None:
         # that needs it was actually asked for.
         analysis = None
         if "reach" in checks or "strength" in checks:
-            _, analysis = analyse(cache, args.max_jump)
+            _, analysis = analyse(cache, args.max_jump, args.static_court)
             print(f"  {len(analysis.impacts)} impacts detected")
 
         if "candidates" in checks:
