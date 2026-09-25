@@ -80,6 +80,13 @@ _TRACK_COLORS = [
     (255, 128, 128),  # pale blue
 ]
 _CANDIDATE_COLOR = (120, 120, 120)
+
+
+def _person_color(track_id: int) -> tuple[int, int, int]:
+    """A stable colour per person id, so the same person keeps one colour
+    for the whole clip and an id switch is visible as a colour change."""
+    rng = np.random.default_rng(track_id * 7919)
+    return tuple(int(v) for v in rng.integers(80, 256, size=3))
 _TRAIL_LENGTH = 12
 
 
@@ -156,6 +163,12 @@ def render(args) -> None:
     if not writer.isOpened():
         raise SystemExit(f"Could not open {out_path} for writing")
 
+    people = None
+    if args.people:
+        with open(args.people, "rb") as handle:
+            people = pickle.load(handle)["people"]
+        print(f"People: {args.people}")
+
     court = CourtOverlayDrawer()
     impact_drawer = ImpactMarkerDrawer(fps=fps)
     # Per-track trails, kept here rather than in TrailDrawer because that
@@ -202,6 +215,18 @@ def render(args) -> None:
         for x1, y1, x2, y2 in (cache.get("player_boxes") or {}).get(frame_idx, []):
             cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (200, 200, 60), 2)
 
+        if people is not None and frame_idx < len(people):
+            for track_id, x1, y1, x2, y2, _conf in people[frame_idx]:
+                color = _person_color(track_id) if track_id is not None else (160, 160, 160)
+                cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
+                # The foot point is what gets projected onto the court for
+                # distance and coverage, so it is drawn - if it sits off
+                # the player's feet, every movement number is off too.
+                cv2.circle(frame, (int((x1 + x2) / 2), int(y2)), 5, color, -1)
+                label = f"P{track_id}" if track_id is not None else "?"
+                cv2.putText(frame, label, (int(x1), int(y1) - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 4)
+                cv2.putText(frame, label, (int(x1), int(y1) - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+
         frame = impact_drawer.draw(
             frame, frame_idx, impacts_by_frame, calibrations.get(frame_idx)
         )
@@ -225,6 +250,7 @@ def main() -> None:
     parser.add_argument("--start", type=float, default=None, help="seconds")
     parser.add_argument("--end", type=float, default=None, help="seconds")
     parser.add_argument("--max-jump", type=float, default=150.0)
+    parser.add_argument("--people", help="A scripts/track_people.py cache, to draw person boxes and ids")
     parser.add_argument(
         "--per-frame-court", dest="static_court", action="store_false",
         help="Refit the court every frame (the raw cache). Default is one static "
