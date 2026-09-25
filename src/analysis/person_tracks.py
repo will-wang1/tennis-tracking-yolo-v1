@@ -73,6 +73,8 @@ class PersonMovement:
     max_speed_mps: Optional[float]
     metres_per_pixel: float
     distance_confidence: str  # "measured" | "estimated"
+    moving_share: Optional[float] = None
+    confirmed_contacts: Optional[int] = None
 
     def to_dict(self, fps: float) -> dict:
         return {
@@ -87,6 +89,8 @@ class PersonMovement:
             "max_speed_mps": None if self.max_speed_mps is None else round(self.max_speed_mps, 2),
             "metres_per_pixel": round(self.metres_per_pixel, 4),
             "distance_confidence": self.distance_confidence,
+            "moving_share": None if self.moving_share is None else round(self.moving_share, 2),
+            "confirmed_contacts": self.confirmed_contacts,
         }
 
 
@@ -203,6 +207,7 @@ def summarise_movement(
                 max_speed_mps=movement.max_speed_mps if movement else None,
                 metres_per_pixel=mpp,
                 distance_confidence="estimated" if mpp > LOW_CONFIDENCE_METRES_PER_PIXEL else "measured",
+                moving_share=moving_share(raw, fps, smoothing_frames),
             )
         )
     return sorted(out, key=lambda m: -m.tracked_frames)
@@ -252,3 +257,74 @@ def boxes_by_frame(people_by_frame: list[list[tuple]]) -> dict[int, list[tuple[f
         for frame, row in enumerate(people_by_frame)
         if row
     }
+
+
+# A person counts as MOVING over a one-second window at or above this
+# speed. A CONVENTION, not a measurement: on the Dingles clip the near-court
+# speed distribution has no gap to put a threshold in (p25 0.55, p50 0.99,
+# p75 2.0 m/s), so the line is drawn where shuffling in a ready position
+# ends and moving to the ball begins. Anything built on it says so.
+MOVING_SPEED_MPS = 0.5
+MOVING_WINDOW_S = 1.0
+
+
+def moving_share(
+    positions: dict[int, tuple[float, float]],
+    fps: float,
+    smoothing_frames: int = DEFAULT_SMOOTHING_FRAMES,
+    threshold_mps: float = MOVING_SPEED_MPS,
+    window_s: float = MOVING_WINDOW_S,
+) -> Optional[float]:
+    """Share of `window_s` windows (half-overlapping) in which this person
+    covered ground at `threshold_mps` or more - the work side of a
+    work:rest split. Windows that straddle a tracking gap are skipped, not
+    guessed across. None when fewer than two windows can be measured."""
+    smoothed = smooth_positions(positions, smoothing_frames)
+    frames = sorted(smoothed)
+    width = max(1, int(round(window_s * fps)))
+    step = max(1, width // 2)
+    speeds = []
+    for i in range(0, len(frames) - width, step):
+        a, b = frames[i], frames[i + width]
+        if b - a > width + 3:  # the window crosses a gap in tracking
+            continue
+        (ax, ay), (bx, by) = smoothed[a], smoothed[b]
+        speeds.append(float(np.hypot(bx - ax, by - ay)) / ((b - a) / fps))
+    if len(speeds) < 2:
+        return None
+    return float(np.mean([s >= threshold_mps for s in speeds]))
+
+
+def attribute_contacts(
+    contact_frames_xy: Iterable[tuple[int, float, float]],
+    people_by_frame: list[list[tuple]],
+    max_reach_ratio: float = 0.6,
+) -> tuple[dict[int, int], int]:
+    """Credit each racket contact to the tracked person nearest the ball at
+    that frame, if they were within reach.
+
+    Distance is measured the way touchdown_detector's reach gate measures
+    it - from the ball to the nearest edge of a person's box, in units of
+    that box's height, so it means the same thing near and far. Contacts
+    with nobody tracked within reach are counted as unattributed rather
+    than handed to whoever was least far away.
+
+    Returns ({track_id: contacts}, unattributed)."""
+    credited: dict[int, int] = {}
+    unattributed = 0
+    for frame, x, y in contact_frames_xy:
+        row = people_by_frame[frame] if 0 <= frame < len(people_by_frame) else []
+        best_id, best_ratio = None, None
+        for track_id, x1, y1, x2, y2, _conf in row:
+            if track_id is None:
+                continue
+            dx = max(x1 - x, 0.0, x - x2)
+            dy = max(y1 - y, 0.0, y - y2)
+            ratio = float(np.hypot(dx, dy)) / max(y2 - y1, 1.0)
+            if best_ratio is None or ratio < best_ratio:
+                best_id, best_ratio = int(track_id), ratio
+        if best_id is not None and best_ratio <= max_reach_ratio:
+            credited[best_id] = credited.get(best_id, 0) + 1
+        else:
+            unattributed += 1
+    return credited, unattributed

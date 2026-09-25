@@ -190,10 +190,11 @@
     <h2>People on court</h2>
     <div class="panel">
       <div class="scroll"><table id="people"><thead><tr>
-        <th>Identity</th><th>On camera</th><th>Distance</th><th>Avg speed</th><th>Where</th><th>Trust</th>
+        <th>Identity</th><th>On camera</th><th>Distance</th><th>Avg speed</th><th>Moving</th><th>Hits</th><th>Where</th><th>Trust</th>
       </tr></thead><tbody></tbody></table></div>
       <p class="note">An identity is one continuous stretch of one person on camera, not a named player. Someone who is hidden
-        for a while, or a camera cut, starts a new identity.</p>
+        for a while, or a camera cut, starts a new identity. "Moving" is the share of their time spent covering ground at
+        0.5 m/s or more. "Hits" counts only racket contacts the system is sure of, so each is a minimum.</p>
     </div>
   </section>
 
@@ -254,6 +255,7 @@ const tiles = [
   ["confirmed_contacts_per_minute", (m) => "≥ " + m.value, "racket hits / minute"],
   ["two_balls_in_play", (m) => pct(m.value), "two balls at once"],
   ["movement_near_court", (m) => Math.round(m.value) + " m", "run by near-court players"],
+  ["near_court_moving_share", (m) => pct(m.value), "of near-court players' time spent moving"],
 ];
 $("tiles").innerHTML = tiles.filter(([k]) => M[k]).map(([k, f, label]) => {
   const m = M[k];
@@ -379,6 +381,8 @@ function drawCourt(svg, margin) {
     <td class="n">#${p.track_id}</td><td class="n">${p.start_s.toFixed(0)}–${p.end_s.toFixed(0)}s</td>
     <td class="n">${p.distance_m == null ? "–" : p.distance_m.toFixed(0) + " m"}</td>
     <td class="n">${p.average_speed_mps == null ? "–" : p.average_speed_mps.toFixed(1) + " m/s"}</td>
+    <td class="n">${p.moving_share == null ? "–" : Math.round(100 * p.moving_share) + "%"}</td>
+    <td class="n">${p.confirmed_contacts == null ? "–" : (p.confirmed_contacts ? "≥ " + p.confirmed_contacts : "–")}</td>
     <td>${where(p)}</td><td><span class="chip c-${p.distance_confidence}">${p.distance_confidence}</span></td></tr>`).join("");
 })();
 

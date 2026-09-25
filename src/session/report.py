@@ -33,6 +33,7 @@ from src.analysis.impact_pipeline import ImpactAnalysis
 from src.analysis.person_tracks import (
     COURT_LENGTH_M,
     COURT_WIDTH_M,
+    MOVING_SPEED_MPS,
     CoverageGrid,
     PersonMovement,
 )
@@ -190,6 +191,13 @@ def build_session_report(
     # ---- people
     on_court_people = [p for p in people if p.on_this_court]
     measured_people = [p for p in on_court_people if p.distance_confidence == "measured"]
+    timed = [p for p in measured_people if p.moving_share is not None]
+    moving = (
+        sum(p.moving_share * p.tracked_frames for p in timed) / sum(p.tracked_frames for p in timed)
+        if timed else None
+    )
+    attributed = sum(p.confirmed_contacts or 0 for p in on_court_people)
+    total_contacts = kinds.get("contact", 0)
 
     report = {
         "schema_version": SCHEMA_VERSION,
@@ -278,6 +286,30 @@ def build_session_report(
                 "Foot point per frame through the court calibration, 0.5s rolling median, frame-to-frame distance with implausible-speed steps dropped.",
                 ["Sums identities, not people. One person split across two identities appears twice, each with part of the distance; the total is unaffected."],
                 identities=len(measured_people),
+            ),
+            "near_court_moving_share": _metric(
+                None if moving is None else round(moving, 3),
+                "fraction of near-court players' time spent moving",
+                "estimated",
+                f"Per near-court identity, the share of 1-second windows in which they covered ground at "
+                f"{MOVING_SPEED_MPS:g} m/s or more; averaged across identities, weighted by time on camera. "
+                "The rest of the time is standing or shuffling: a work:rest split.",
+                [
+                    f"{MOVING_SPEED_MPS:g} m/s is a convention (roughly where shuffling in a ready position ends), "
+                    "not a measured boundary - the data has no natural gap to place it in.",
+                    "Near-court players only: far-court speeds are too noisy at this camera height.",
+                ],
+            ),
+            "contacts_attributed": _metric(
+                attributed,
+                f"of {total_contacts} confirmed contacts credited to a tracked person",
+                "lower_bound",
+                "Each confirmed racket contact is credited to the tracked person nearest the ball at that "
+                "frame, if within 0.6 of their box height - the same reach test the classifier uses.",
+                [
+                    "Only CONFIRMED contacts are credited, so every per-person count is a minimum.",
+                    "Credits go to identities, not named players; the coach can be credited with feeds.",
+                ],
             ),
         },
         "people": [p.to_dict(fps) for p in on_court_people],

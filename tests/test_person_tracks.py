@@ -114,3 +114,53 @@ class BoxesByFrameTest(unittest.TestCase):
 
         people = [[(3, 1.0, 2.0, 3.0, 4.0, 0.9), (None, 5.0, 6.0, 7.0, 8.0, 0.3)], [], [(3, 1.0, 2.0, 3.0, 4.0, 0.9)]]
         self.assertEqual(boxes_by_frame(people), {0: [(1.0, 2.0, 3.0, 4.0), (5.0, 6.0, 7.0, 8.0)], 2: [(1.0, 2.0, 3.0, 4.0)]})
+
+
+class MovingShareTest(unittest.TestCase):
+    def test_standing_still_is_not_moving_and_jogging_is(self):
+        from src.analysis.person_tracks import moving_share
+
+        standing = {f: (5.0, 20.0) for f in range(100)}
+        jogging = {f: (1.0 + 0.08 * f, 20.0) for f in range(100)}  # 2 m/s
+        self.assertEqual(moving_share(standing, FPS), 0.0)
+        self.assertEqual(moving_share(jogging, FPS), 1.0)
+
+    def test_half_and_half(self):
+        from src.analysis.person_tracks import moving_share
+
+        path = {f: (1.0 + 0.08 * f, 20.0) if f < 100 else (9.0, 20.0) for f in range(200)}
+        self.assertAlmostEqual(moving_share(path, FPS), 0.5, delta=0.1)
+
+    def test_a_gap_in_tracking_is_not_bridged(self):
+        from src.analysis.person_tracks import moving_share
+
+        # Two stationary stretches 5m apart with nothing in between: a window
+        # across the gap would read as movement that was never seen.
+        path = {**{f: (1.0, 20.0) for f in range(50)}, **{f: (6.0, 20.0) for f in range(200, 250)}}
+        self.assertEqual(moving_share(path, FPS), 0.0)
+
+    def test_too_short_to_say(self):
+        from src.analysis.person_tracks import moving_share
+
+        self.assertIsNone(moving_share({f: (1.0, 1.0) for f in range(20)}, FPS))
+
+
+class AttributeContactsTest(unittest.TestCase):
+    def test_credits_the_person_in_reach_and_nobody_otherwise(self):
+        from src.analysis.person_tracks import attribute_contacts
+
+        people = [
+            [(1, 100.0, 100.0, 140.0, 200.0, 0.9), (2, 800.0, 100.0, 840.0, 200.0, 0.9)],
+            [(1, 100.0, 100.0, 140.0, 200.0, 0.9)],
+        ]
+        # frame 0: ball beside person 2; frame 1: ball far from everyone
+        credited, unattributed = attribute_contacts([(0, 850.0, 150.0), (1, 500.0, 150.0)], people)
+
+        self.assertEqual(credited, {2: 1})
+        self.assertEqual(unattributed, 1)
+
+    def test_untracked_boxes_are_never_credited(self):
+        from src.analysis.person_tracks import attribute_contacts
+
+        people = [[(None, 100.0, 100.0, 140.0, 200.0, 0.4)]]
+        self.assertEqual(attribute_contacts([(0, 120.0, 150.0)], people), ({}, 1))

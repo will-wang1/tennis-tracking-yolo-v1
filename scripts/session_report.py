@@ -21,6 +21,7 @@ import argparse
 import json
 import pickle
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -34,6 +35,7 @@ from src.analysis.court_calibration import (  # noqa: E402
 )
 from src.analysis.impact_pipeline import analyze_impacts  # noqa: E402
 from src.analysis.person_tracks import (  # noqa: E402
+    attribute_contacts,
     boxes_by_frame,
     coverage_grid,
     foot_positions_by_track,
@@ -124,6 +126,9 @@ def main() -> None:
         tracks = foot_positions_by_track(people_cache["people"], lambda f: static, skip_frames=skip)
         people = summarise_movement(tracks, fps, static)
         coverage = coverage_grid(tracks, fps, track_ids=[p.track_id for p in people if p.on_this_court])
+        contacts = [(i.frame_idx, i.x, i.y) for i in impacts.impacts if i.kind == "contact" and i.frame_idx not in skip]
+        credited, _unattributed = attribute_contacts(contacts, people_cache["people"])
+        people = [replace(p, confirmed_contacts=credited.get(p.track_id, 0)) for p in people]
 
     second = None
     if args.second_opinion:
