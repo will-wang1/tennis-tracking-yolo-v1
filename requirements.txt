@@ -13,3 +13,5 @@ scipy>=1.13.0
 sympy>=1.13.0
 tensorflow>=2.15.0
 h5py>=3.10.0
+lap>=0.5
+anthropic>=1.0

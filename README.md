@@ -1,5 +1,54 @@
 # tennis-tracking-yolo-v1
 
+## Coaching session analysis (current aim)
+
+The project now evaluates **how a tennis coaching session was run**, from
+video of a fixed camera on the back fence behind the baseline: how much of
+the session a ball was in play, how often it was hit, where it landed, how
+far the players moved and how much of their time they spent moving. It
+works for squad sessions and 1-on-1 lessons, uses video only (no audio),
+and writes a structured report that Claude turns into feedback for the
+coach, with the raw data alongside.
+
+It measures **activity**. It cannot judge whether a drill was a good choice,
+whether an instruction was right, or whether anyone improved, and neither
+the report nor the feedback claims to.
+
+One command, raw video in, coach report out:
+
+```bash
+python scripts/run_session.py --input session.mp4 --name tuesday_squad
+open outputs/tuesday_squad/coach_report.html
+```
+
+Steps whose output already exists are skipped, so an interrupted run
+resumes. The slow steps are the two detection passes, both run once and
+cached: ball + court, then people.
+
+| Output (`outputs/<name>/`) | What it is |
+|---|---|
+| `session_report.json` | Every metric, as `value` / `unit` / `basis` / `method` / `caveats` |
+| `session_feedback.json` | Claude's feedback on the report (needs an API key; otherwise `session_feedback.prompt.txt`) |
+| `coach_report.html` | The one-page report for the coach, opens straight from disk |
+| `annotated.mp4` | The video with the court, ball tracks, bounces and people drawn on |
+
+Every number carries a **basis**: `measured` (a direct reading),
+`estimated` (a real reading with a known, material error), or `lower_bound`
+(the true value is at least this). Near-court positions are measured to
+about 1cm per pixel on a fence-height camera; far-court ones to about 13cm,
+which is why far-court distances are estimates.
+
+Extra setup for this pipeline, on top of the section below:
+`pip install ultralytics lap catboost anthropic torch torchvision`. For AI
+feedback, set `ANTHROPIC_API_KEY`.
+
+The sections below document the ball, court and impact components the
+session pipeline is built on. They date from the project's match-analysis
+phase, and some features they mention (serve/point structure, the HTML
+match report) were removed in the pivot.
+
+---
+
 Tennis ball tracking using a YOLO detector fine-tuned specifically for the
 ball, with no other model in the loop. Most tennis-analysis projects (e.g.
 those built around TrackNet) use a dedicated heatmap-regression CNN for the
