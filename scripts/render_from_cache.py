@@ -131,6 +131,16 @@ def render(args) -> None:
         print("Court: one static calibration (fixed camera)")
 
     tracks = track_ball_paths(candidates, max_pixels_per_frame=args.max_jump)
+    if args.on_court_only:
+        # Same filter the session report uses, so the video shows exactly the
+        # balls the metrics count - not the next court's rally, not a false
+        # track on a person by the ball cart.
+        from src.session.report import on_court_tracks
+
+        static_for_filter = next(iter(calibrations.values()))
+        before = len(tracks)
+        tracks = on_court_tracks(tracks, static_for_filter)
+        print(f"Ball tracks on this court: {len(tracks)} of {before}")
     # Impacts come from the CURRENT pipeline (flattened, single ball), so
     # the markers describe what ships today rather than a preview of what
     # per-track analysis would produce.
@@ -207,6 +217,7 @@ def render(args) -> None:
                 cv2.circle(frame, (int(tx), int(ty)), max(2, int(5 * fade)), color, -1)
             if detection is not None:
                 cv2.circle(frame, (int(detection.x), int(detection.y)), 14, color, 2)
+            if detection is not None and args.track_labels:
                 cv2.putText(
                     frame, str(i), (int(detection.x) + 17, int(detection.y) - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2,
@@ -251,6 +262,16 @@ def main() -> None:
     parser.add_argument("--end", type=float, default=None, help="seconds")
     parser.add_argument("--max-jump", type=float, default=150.0)
     parser.add_argument("--people", help="A scripts/track_people.py cache, to draw person boxes and ids")
+    parser.add_argument(
+        "--on-court-only", action="store_true",
+        help="Draw only ball tracks on this court (the ones the session metrics count)",
+    )
+    parser.add_argument(
+        "--no-track-labels", dest="track_labels", action="store_false",
+        help="Hide ball track numbers. They label a continuous stretch of tracking, not a ball, "
+        "and are numbered best-path-first rather than in time order - a viewer reads '17' as "
+        "'the 17th ball', which it is not.",
+    )
     parser.add_argument(
         "--per-frame-court", dest="static_court", action="store_false",
         help="Refit the court every frame (the raw cache). Default is one static "
