@@ -293,6 +293,17 @@ def render(args) -> None:
             people = pickle.load(handle)["people"]
         print(f"People: {args.people}")
 
+    player_of, not_people = None, set()
+    if args.players:
+        # Stable players (assign_players.py): one label and one colour per
+        # person for the whole clip, and the not-a-person tracklets hidden.
+        import json
+
+        players_doc = json.loads(Path(args.players).read_text())
+        player_of = {int(t): int(p) for t, p in players_doc["player_of_tracklet"].items()}
+        not_people = set(players_doc.get("not_people", []))
+        print(f"Players: {len(set(player_of.values()))} from {args.players}")
+
     strokes_by_track = None
     if args.strokes:
         # Stroke labels replace the impact markers: one label per swing,
@@ -364,13 +375,22 @@ def render(args) -> None:
 
         if people is not None and frame_idx < len(people):
             for track_id, x1, y1, x2, y2, _conf in people[frame_idx]:
-                color = _person_color(track_id) if track_id is not None else (160, 160, 160)
+                if track_id in not_people:
+                    continue  # the ball cart, detected as a person
+                if player_of is not None:
+                    player = player_of.get(track_id)
+                    color = _person_color(1000 + player) if player is not None else (160, 160, 160)
+                else:
+                    color = _person_color(track_id) if track_id is not None else (160, 160, 160)
                 cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
                 # The foot point is what gets projected onto the court for
                 # distance and coverage, so it is drawn - if it sits off
                 # the player's feet, every movement number is off too.
                 cv2.circle(frame, (int((x1 + x2) / 2), int(y2)), 5, color, -1)
-                label = f"P{track_id}" if track_id is not None else "?"
+                if player_of is not None:
+                    label = f"Player {player_of[track_id]}" if track_id in player_of else "?"
+                else:
+                    label = f"P{track_id}" if track_id is not None else "?"
                 cv2.putText(frame, label, (int(x1), int(y1) - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 4)
                 cv2.putText(frame, label, (int(x1), int(y1) - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
@@ -410,6 +430,7 @@ def main() -> None:
         "scripts/tennisproject_bounces.py cache (the CatBoost model)",
     )
     parser.add_argument("--bounces-label", default="CatBoost")
+    parser.add_argument("--players", help="scripts/assign_players.py players.json - label people as stable players")
     parser.add_argument(
         "--strokes",
         help="A scripts/classify_strokes.py strokes.json: label each person's strokes "

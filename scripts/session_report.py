@@ -120,6 +120,8 @@ def main() -> None:
     parser.add_argument("--video", help="Source video, to detect camera cutaways")
     parser.add_argument("--second-opinion", help="scripts/tennisproject_bounces.py cache, to mark agreed bounces")
     parser.add_argument("--name", help="Clip name (default: the cache's folder)")
+    parser.add_argument("--players", help="scripts/assign_players.py players.json - per-player section")
+    parser.add_argument("--strokes", help="scripts/classify_strokes.py strokes.json - stroke mix per player")
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
 
@@ -178,6 +180,39 @@ def main() -> None:
         second_opinion_bounce_frames=second,
         people_tracked=people_cache is not None,
     )
+    if args.players:
+        from src.session.report import player_summaries
+
+        players_doc = json.loads(Path(args.players).read_text())
+        strokes_doc = json.loads(Path(args.strokes).read_text()) if args.strokes else None
+        report["players"] = player_summaries(people, players_doc, strokes_doc, fps)
+        not_people = set(players_doc.get("not_people", []))
+        report["people"] = [p for p in report["people"] if p["track_id"] not in not_people]
+        report["metrics"]["players_identified"] = {
+            "value": len(report["players"]),
+            "unit": "players",
+            "basis": "estimated",
+            "method": "Tracklets joined into players by clothing colour, never merging two people seen on "
+                      "screen at the same time in different places - see src/analysis/identity.py.",
+            "caveats": [
+                "Relies on players wearing different clothing.",
+                "Includes the coach - coach and players are not yet told apart.",
+            ],
+        }
+        if strokes_doc is not None:
+            hits = [s for s in strokes_doc["strokes"] if s["hit_confirmed"]]
+            report["metrics"]["confirmed_hits_from_strokes"] = {
+                "value": len(hits),
+                "unit": "swings with the ball within reach",
+                "basis": "estimated",
+                "method": "Swings found from pose (wrist-speed peaks), counted as a hit when the ball was within "
+                          "reach within 0.32s - see src/analysis/strokes.py.",
+                "caveats": [
+                    "Bending to pick up a ball or bouncing it before a serve can pass as a hit.",
+                    "Stroke types are rules over pose, checked by eye on near-court players only.",
+                ],
+            }
+
     # The court this report was measured on, so everything downstream (the
     # rendered video) uses the same one rather than re-deriving its own.
     report["court"] = {"homography": np.asarray(static.homography).tolist(), "shots": shots}

@@ -186,9 +186,22 @@
     </div>
   </section>
 
-  <section>
-    <h2>People on court</h2>
+  <section id="players-section" hidden>
+    <h2>Players</h2>
     <div class="panel">
+      <div class="scroll"><table id="players"><thead><tr>
+        <th>Player</th><th>On camera</th><th>Distance</th><th>Moving</th><th>Hits</th><th>Stroke mix (hits)</th><th>Hand</th>
+      </tr></thead><tbody></tbody></table></div>
+      <p class="note">Each player is followed across the whole session, joined up by clothing colour. Distance is
+        measured near the camera and estimated at the far end; "far part estimated" shows how much of a total is the
+        rougher kind. Hits and stroke mix count only swings with the ball within reach.</p>
+    </div>
+  </section>
+
+  <section>
+    <details id="people-details">
+    <summary>Tracking detail: every continuous stretch of tracking</summary>
+    <div class="panel" style="margin-top:10px">
       <div class="scroll"><table id="people"><thead><tr>
         <th>Identity</th><th>On camera</th><th>Distance</th><th>Avg speed</th><th>Moving</th><th>Hits</th><th>Where</th><th>Trust</th>
       </tr></thead><tbody></tbody></table></div>
@@ -196,6 +209,7 @@
         for a while, or a camera cut, starts a new identity. "Moving" is the share of their time spent covering ground at
         0.5 m/s or more. "Hits" counts only racket contacts the system is sure of, so each is a minimum.</p>
     </div>
+    </details>
   </section>
 
   <section>
@@ -256,6 +270,8 @@ const tiles = [
   ["two_balls_in_play", (m) => pct(m.value), "two balls at once"],
   ["movement_near_court", (m) => Math.round(m.value) + " m", "run by near-court players"],
   ["near_court_moving_share", (m) => pct(m.value), "of near-court players' time spent moving"],
+  ["players_identified", (m) => m.value, "players followed"],
+  ["confirmed_hits_from_strokes", (m) => m.value, "hits found from swings"],
 ];
 $("tiles").innerHTML = tiles.filter(([k]) => M[k]).map(([k, f, label]) => {
   const m = M[k];
@@ -387,6 +403,24 @@ function drawCourt(svg, margin) {
     <td class="n">${p.moving_share == null ? "–" : Math.round(100 * p.moving_share) + "%"}</td>
     <td class="n">${p.confirmed_contacts == null ? "–" : (p.confirmed_contacts ? "≥ " + p.confirmed_contacts : "–")}</td>
     <td>${where(p)}</td><td><span class="chip c-${p.distance_confidence}">${p.distance_confidence}</span></td></tr>`).join("");
+})();
+
+// ---------- players
+(function () {
+  if (!R.players || !R.players.length) return;
+  $("players-section").hidden = false;
+  const short = { serve: "Serve", overhead: "Overhead", forehand: "FH", backhand: "BH",
+    forehand_volley: "FH volley", backhand_volley: "BH volley", slice: "Slice" };
+  $("players").querySelector("tbody").innerHTML = R.players.map((p) => {
+    const mix = Object.entries(p.stroke_mix).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1])
+      .map(([k, n]) => `${short[k] || k} ${n}`).join(" · ") || "–";
+    const dist = p.distance_estimated_m > 0
+      ? `${Math.round(p.distance_m)} m <span class="mono" style="color:var(--ink-3)">(${Math.round(p.distance_estimated_m)} m far part estimated)</span>`
+      : `${Math.round(p.distance_m)} m`;
+    return `<tr><td><strong>Player ${p.player}</strong></td><td class="n">${Math.round(p.on_camera_s)}s</td><td>${dist}</td>
+      <td class="n">${p.moving_share == null ? "–" : Math.round(100 * p.moving_share) + "%"}</td>
+      <td class="n">${p.confirmed_hits}</td><td>${esc(mix)}</td><td>${p.racket_hand || "–"}</td></tr>`;
+  }).join("");
 })();
 
 // ---------- methods
