@@ -96,6 +96,11 @@
   .ramp { height:10px; width:160px; background:linear-gradient(90deg,var(--heat-lo),var(--heat-hi)); border:1px solid var(--rule-2); display:inline-block; vertical-align:middle; margin:0 6px; }
 
   .scroll { overflow-x:auto; }
+  .heat-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(120px,1fr)); gap:14px; }
+  .heat-grid figure { margin:0; text-align:center; }
+  .heat-grid figcaption { font-family:var(--display); font-weight:600; font-size:13px; margin-top:4px; }
+  .heat-grid .court-svg { max-width:150px; }
+  .seg-summary { font-family:var(--mono); font-size:12.5px; color:var(--ink-2); margin:0 0 6px; }
   table { border-collapse:collapse; width:100%; font-size:13.5px; min-width:520px; }
   th, td { text-align:left; padding:7px 10px; border-bottom:1px solid var(--rule); }
   th { font-family:var(--display); font-size:10.5px; letter-spacing:.07em; text-transform:uppercase; color:var(--ink-3); font-weight:600; }
@@ -139,12 +144,15 @@
   </section>
 
   <section>
-    <h2>When the ball was in play</h2>
+    <h2>Session structure</h2>
     <div class="panel">
+      <p class="seg-summary" id="seg-summary"></p>
       <div class="chart" id="timeline"></div>
       <div class="legend">
         <span><i style="background:var(--s-play)"></i>ball in play</span>
         <span><i style="background:var(--s-idle);border:1px solid var(--rule-2)"></i>no ball in play</span>
+        <span><i style="background:var(--accent)"></i>drill</span>
+        <span id="break-legend" hidden><i style="background:var(--look)"></i>break</span>
         <span id="cut-legend"><i style="background:repeating-linear-gradient(45deg,var(--hatch) 0 2px,transparent 2px 5px);border:1px solid var(--rule-2)"></i>camera cutaway, not analysed</span>
       </div>
     </div>
@@ -190,11 +198,23 @@
     <h2>Players</h2>
     <div class="panel">
       <div class="scroll"><table id="players"><thead><tr>
-        <th>Player</th><th>On camera</th><th>Distance</th><th>Moving</th><th>Hits (at least)</th>
+        <th>Player</th><th>On camera</th><th>Distance</th><th>Moving</th><th>Waiting off court</th><th>Idle</th><th>Hits (at least)</th>
       </tr></thead><tbody></tbody></table></div>
       <p class="note">Each player is followed across the whole session, joined up by clothing colour. Distance is
         measured near the camera and estimated at the far end; "far part estimated" shows how much of a total is the
-        rougher kind. Hits count only racket contacts the system is sure of, credited to the nearest player, so each is a minimum.</p>
+        rougher kind. "Waiting off court" is time standing still for 3 seconds or more behind a baseline or beside the
+        court while a drill is running - waiting for a turn. "Idle" is all such still time, on court too (ready
+        position counts). Hits count only racket contacts the system is sure of, so each is a minimum.</p>
+    </div>
+  </section>
+
+  <section id="heat-section" hidden>
+    <h2>Where each player moved</h2>
+    <div class="panel">
+      <div class="heat-grid" id="heat-grid"></div>
+      <div class="legend" style="justify-content:center;margin-top:10px"><span>less<span class="ramp"></span>more time</span></div>
+      <p class="note">Every court uses the same colour scale, so a darker court means more time in one place. Far-end
+        positions are less precise than near-end ones.</p>
     </div>
   </section>
 
@@ -294,6 +314,14 @@ $("tiles").innerHTML = tiles.filter(([k]) => M[k]).map(([k, f, label]) => {
   clip.cutaways_s.forEach(([a, b]) => el("rect", { x: x(a), y: top - 6, width: Math.max(2, x(b) - x(a)), height: h + 12, fill: "url(#hatch)", stroke: "var(--hatch)",
     "data-tip": `camera cutaway ${a.toFixed(1)}–${b.toFixed(1)}s: not the court view, not analysed` }, svg));
   if (!clip.cutaways_s.length) $("cut-legend").hidden = true;
+  (R.segments || []).forEach((seg) => {
+    const isBreak = seg.kind === "break";
+    if (isBreak) $("break-legend").hidden = false;
+    el("rect", { x: x(seg.start_s), y: 2, width: Math.max(2, x(seg.end_s) - x(seg.start_s)), height: 6,
+      fill: isBreak ? "var(--look)" : "var(--accent)", rx: 2,
+      "data-tip": `${seg.kind} ${seg.start_s}–${seg.end_s}s` + (isBreak && seg.players_gathered ? "\nplayers gathered together" : "")
+        + (seg.ball_in_play_share != null && !isBreak ? `\nball in play ${Math.round(100 * seg.ball_in_play_share)}%` : "") }, svg);
+  });
   const step = dur > 600 ? 120 : dur > 200 ? 60 : 20;
   for (let t = 0; t <= dur; t += step) {
     el("line", { x1: x(t), x2: x(t), y1: top + h + 6, y2: top + h + 10, stroke: "var(--rule-2)" }, svg);
@@ -356,14 +384,12 @@ function drawCourt(svg, margin) {
   });
   bindTips(svg.parentNode);
 })();
-(function () {
-  const cov = R.raw.coverage, svg = $("coverage");
-  if (!cov) { svg.parentNode.hidden = true; return; }
+function drawHeat(svg, cov, sharedMax) {
   const S = drawCourt(svg, [-cov.origin_m[0], -cov.origin_m[1]]);
   const cs = getComputedStyle(document.documentElement);
   const hex = (h) => h.trim().match(/[0-9a-f]{2}/gi).map((x) => parseInt(x, 16));
   const lo = hex(cs.getPropertyValue("--heat-lo")), hi = hex(cs.getPropertyValue("--heat-hi"));
-  const max = Math.max(...cov.seconds.flat());
+  const max = sharedMax || Math.max(...cov.seconds.flat());
   const g = el("g", {}, svg);
   svg.insertBefore(g, svg.children[1]); // under the court lines, over the court fill
   cov.seconds.forEach((row, r) => row.forEach((v, c) => {
@@ -374,6 +400,11 @@ function drawCourt(svg, margin) {
       fill: `rgb(${col.join(",")})`, "data-tip": `${v.toFixed(1)} person-seconds in this 1m square` }, g);
   }));
   bindTips(svg.parentNode);
+}
+(function () {
+  const cov = R.raw.coverage, svg = $("coverage");
+  if (!cov) { svg.parentNode.hidden = true; return; }
+  drawHeat(svg, cov);
 })();
 (function () {
   const bl = M.bounce_landing;
@@ -404,16 +435,50 @@ function drawCourt(svg, margin) {
     <td>${where(p)}</td><td><span class="chip c-${p.distance_confidence}">${p.distance_confidence}</span></td></tr>`).join("");
 })();
 
+// ---------- structure summary
+(function () {
+  const segs = R.segments || [];
+  const drills = segs.filter((s) => s.kind === "drill"), breaks = segs.filter((s) => s.kind === "break");
+  if (!segs.length) { $("seg-summary").textContent = "No play detected."; return; }
+  const gathered = breaks.filter((b) => b.players_gathered).length;
+  $("seg-summary").textContent = `${drills.length} drill${drills.length === 1 ? "" : "s"}`
+    + (breaks.length ? `, ${breaks.length} break${breaks.length === 1 ? "" : "s"} of 15s or more`
+       + (gathered ? ` (${gathered} with players gathered together)` : "") : ", no breaks of 15s or more")
+    + ` · ball in play ${pct(M.ball_in_play.value)} of analysed time`;
+})();
+
+// ---------- per-player heatmaps
+(function () {
+  const pc = R.raw.player_coverage;
+  if (!pc || !R.players) return;
+  $("heat-section").hidden = false;
+  const all = Object.values(pc).map((c) => Math.max(...c.seconds.flat()));
+  const shared = Math.max(...all, 1e-9);
+  R.players.forEach((p) => {
+    const cov = pc[String(p.player)]; if (!cov) return;
+    const fig = document.createElement("figure");
+    const svg = document.createElementNS(NS, "svg"); svg.setAttribute("class", "court-svg");
+    fig.appendChild(svg);
+    const cap = document.createElement("figcaption"); cap.textContent = `Player ${p.player}`; fig.appendChild(cap);
+    $("heat-grid").appendChild(fig);
+    drawHeat(svg, cov, shared);
+  });
+})();
+
 // ---------- players
 (function () {
   if (!R.players || !R.players.length) return;
   $("players-section").hidden = false;
+  const fmtWait = (s, share, longest) => s == null ? "–"
+    : `${Math.round(s)}s (${Math.round(100 * share)}%)` + (longest ? ` <span style="color:var(--ink-3)">longest ${Math.round(longest)}s</span>` : "");
   $("players").querySelector("tbody").innerHTML = R.players.map((p) => {
     const dist = p.distance_estimated_m > 0
       ? `${Math.round(p.distance_m)} m <span class="mono" style="color:var(--ink-3)">(${Math.round(p.distance_estimated_m)} m far part estimated)</span>`
       : `${Math.round(p.distance_m)} m`;
     return `<tr><td><strong>Player ${p.player}</strong></td><td class="n">${Math.round(p.on_camera_s)}s</td><td>${dist}</td>
       <td class="n">${p.moving_share == null ? "–" : Math.round(100 * p.moving_share) + "%"}</td>
+      <td class="n">${fmtWait(p.queue_s, p.queue_share, p.longest_queue_s)}</td>
+      <td class="n">${fmtWait(p.idle_s, p.idle_share)}</td>
       <td class="n">${p.confirmed_hits}</td></tr>`;
   }).join("");
 })();

@@ -113,6 +113,72 @@ def fit_court(
     return static_calibration_from_frames(court_frames), cutaways, shots
 
 
+def add_structure(report: dict, tracks: dict, players_doc: dict, fps: float, num_frames: int, cutaway: set) -> None:
+    """Drill/break segments, per-player queue and idle time, and a movement
+    heatmap per player (src/session/structure.py)."""
+    from src.analysis.person_tracks import coverage_grid, smooth_positions
+    from src.session.structure import BREAK_S, drill_segments, players_gathered, queue_and_idle
+
+    analysed = np.ones(num_frames, dtype=bool)
+    analysed[list(f for f in cutaway if 0 <= f < num_frames)] = False
+    in_play = np.zeros(num_frames, dtype=bool)
+    for a_s, b_s in report["raw"]["in_play_runs_s"]:
+        in_play[int(round(a_s * fps)):int(round(b_s * fps))] = True
+    segments = drill_segments(in_play, analysed, fps)
+    drill_mask = np.zeros(num_frames, dtype=bool)
+    for seg in segments:
+        if seg.kind == "drill":
+            drill_mask[seg.start:seg.end] = True
+    drill_mask &= analysed
+
+    positions_by_player = {}
+    for player, tracklets in players_doc["players"].items():
+        merged = {}
+        for t in tracklets:
+            merged.update(smooth_positions(tracks.get(int(t), {})))
+        positions_by_player[int(player)] = merged
+    for seg in segments:
+        if seg.kind == "break":
+            seg.gathered = players_gathered(positions_by_player, range(seg.start, seg.end), fps)
+    by_player = {p["player"]: p for p in report.get("players", [])}
+    for player, positions in positions_by_player.items():
+        if player in by_player:
+            by_player[player].update(queue_and_idle(positions, fps, drill_mask))
+    report["segments"] = [s.to_dict(fps) for s in segments]
+    report["raw"]["player_coverage"] = {
+        str(player): coverage_grid(tracks, fps, track_ids=[int(t) for t in tracklets]).to_dict()
+        for player, tracklets in players_doc["players"].items()
+    }
+
+    drills = [s for s in segments if s.kind == "drill"]
+    breaks = [s for s in segments if s.kind == "break"]
+    report["metrics"]["drills"] = {
+        "value": len(drills),
+        "unit": "drill segments",
+        "basis": "estimated",
+        "method": f"Ball-in-play stretches joined across gaps under {BREAK_S:g}s of analysed time; a longer gap "
+                  "is a break. Camera cutaways do not split a drill.",
+        "caveats": [
+            f"{BREAK_S:g}s is a convention, not measured: no footage with several drills has been checked yet.",
+            "Segments are not named: the tool cannot tell which drill is which.",
+        ],
+        "breaks": len(breaks),
+        "breaks_with_players_gathered": sum(1 for s in breaks if s.gathered),
+    }
+    queue = [p.get("queue_share") for p in report.get("players", []) if p.get("queue_share") is not None]
+    report["metrics"]["queue_share"] = {
+        "value": round(float(np.mean(queue)), 3) if queue else None,
+        "unit": "average share of a player's drill time spent waiting off court",
+        "basis": "estimated",
+        "method": "Per player: standing still for 3s or more (under 0.6m moved in 2s) outside the court lines, "
+                  "during drills only. Averaged over players.",
+        "caveats": [
+            "Includes the coach, who stands beside the court by design - coach and players are not yet told apart.",
+            "A player standing behind the baseline between rallies for 3s+ also counts as waiting.",
+        ],
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--ball-cache", required=True)
@@ -197,6 +263,9 @@ def main() -> None:
                 "Includes the coach - coach and players are not yet told apart.",
             ],
         }
+
+    if args.players and people_cache:
+        add_structure(report, tracks, players_doc, fps, num_frames, skip)
 
     # The court this report was measured on, so everything downstream (the
     # rendered video) uses the same one rather than re-deriving its own.
