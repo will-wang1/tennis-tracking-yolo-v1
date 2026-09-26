@@ -1,0 +1,13 @@
+{
+ "_note": "Who is who, by tracklet id from outputs/dingles_serve_volley/person_tracks.pkl. Labelled BY EYE by Claude from one thumbnail per tracklet (37 tracklets lasting >= 1s), checked against co-occurrence: every overlap within one person is a <=0.4s tracker handover, except T54/T115 (coach) which is one person boxed twice. Not verified by a human. Cart = the yellow ball hopper detected as a person.",
+ "people": {
+  "A_boy_green_shirt": [2, 51, 121, 190, 236],
+  "B_boy_grey_shirt": [1, 41, 138],
+  "C_coach_grey_jacket": [3, 26, 54, 115, 192],
+  "D_woman_dark_hair_teal_top": [5, 56, 141],
+  "E_girl_blonde_teal_top": [7, 20, 55, 123, 172, 189, 242],
+  "F_man_white_top_blue_shorts": [6, 52, 191],
+  "G_white_shirt_black_shorts": [4, 53, 93, 226, 268]
+ },
+ "not_people": {"ball_cart": [27, 68, 100, 137, 183, 254]}
+}
