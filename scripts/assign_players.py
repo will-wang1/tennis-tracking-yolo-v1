@@ -62,6 +62,10 @@ def main() -> None:
 
     boxes = defaultdict(dict)
     posed = defaultdict(int)
+    # Poses may be sampled (track_poses.py --every); the posed share is
+    # over the frames that were posed.
+    every = poses.get("every", 1)
+    pose_frames = defaultdict(int)
     for f, row in enumerate(people["people"]):
         if f in cutaway:
             continue
@@ -69,11 +73,14 @@ def main() -> None:
             if t is None:
                 continue
             boxes[t][f] = (x1, y1, x2, y2, c)
+            if f % every:
+                continue
+            pose_frames[t] += 1
             p = poses["poses"][f].get(t) if f < len(poses["poses"]) else None
             if p is not None and np.mean(p[1][[5, 6, 11, 12, 13, 14]] > 0.5) >= 0.8:
                 posed[t] += 1
     long_enough = {t for t, b in boxes.items() if len(b) >= MIN_TRACKLET_FRAMES}
-    not_people = sorted(t for t in long_enough if posed[t] / len(boxes[t]) < MIN_POSED_SHARE)
+    not_people = sorted(t for t in long_enough if posed[t] / max(1, pose_frames[t]) < MIN_POSED_SHARE)
     tracklets = sorted(long_enough - set(not_people))
     print(f"{len(tracklets)} person tracklets, {len(not_people)} dropped as not a person: {not_people}")
 

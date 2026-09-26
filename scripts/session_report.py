@@ -44,8 +44,32 @@ from src.analysis.person_tracks import (  # noqa: E402
 from src.session.report import build_session_report  # noqa: E402
 from src.tracking.candidate_tracker import track_ball_paths, track_candidates  # noqa: E402
 
+def scene_cuts(video: str, cache: Path | None = None) -> list[int]:
+    """Scene cuts in `video`, cached in `cache` (JSON) keyed on the video's
+    path, size and modification time. Cut detection reads every frame -
+    17s for a 108s clip, ~10 minutes for an hour - and the pipeline builds
+    the report twice, so the second pass reuses the first's."""
+    from src.analysis.scene_cuts import detect_scene_cuts
+    from src.video.io import VideoReader
+
+    stat = Path(video).stat()
+    key = {"video": str(Path(video).resolve()), "size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
+    if cache is not None and cache.exists():
+        try:
+            saved = json.loads(cache.read_text())
+            if saved.get("key") == key:
+                return [int(c) for c in saved["cuts"]]
+        except (ValueError, KeyError):
+            pass
+    cuts = [int(c) for c in detect_scene_cuts(VideoReader(video).frames())]
+    if cache is not None:
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(json.dumps({"key": key, "cuts": cuts}))
+    return cuts
+
+
 def fit_court(
-    video: str | None, per_frame: dict, num_frames: int, fps: float
+    video: str | None, per_frame: dict, num_frames: int, fps: float, cuts_cache: Path | None = None
 ) -> tuple[CourtCalibration, list[tuple[int, int]], list[dict]]:
     """The court calibration for the whole clip, fitted ONLY from camera
     shots that actually show the court - plus those that do not, as
@@ -69,10 +93,7 @@ def fit_court(
     import cv2
 
     from src.analysis.court_calibration import MIN_COURT_LINE_CONTRAST, court_line_contrast
-    from src.analysis.scene_cuts import detect_scene_cuts
-    from src.video.io import VideoReader
-
-    cuts = detect_scene_cuts(VideoReader(video).frames())
+    cuts = scene_cuts(video, cuts_cache)
     bounds = [0] + sorted(cuts) + [num_frames]
     capture = cv2.VideoCapture(video)
 
@@ -246,7 +267,8 @@ def main() -> None:
         f: (v if isinstance(v, CourtCalibration) else CourtCalibration(homography=v))
         for f, v in cache["calibrations"].items()
     }
-    static, cutaways, shots = fit_court(args.video, per_frame, num_frames, fps)
+    static, cutaways, shots = fit_court(args.video, per_frame, num_frames, fps,
+                                         cuts_cache=Path(args.out).parent / "scene_cuts.json")
     calibrations = {f: static for f in range(num_frames)}
     skip = {f for a, b in cutaways for f in range(a, b)}
 

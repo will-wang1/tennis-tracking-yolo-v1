@@ -93,3 +93,21 @@ class BestFitTest(unittest.TestCase):
         fit, score = session_report_script.best_fit(per_frame, lambda c: court_line_contrast(gray, c))
         self.assertTrue(np.allclose(fit.homography, truth.homography))
         self.assertGreater(score, 50)
+
+
+class SceneCutCacheTest(unittest.TestCase):
+    def test_cuts_are_reused_until_the_video_changes(self):
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            video = Path(tmp) / "clip.mp4"
+            video.write_bytes(b"x")
+            cache = Path(tmp) / "scene_cuts.json"
+            with mock.patch("src.analysis.scene_cuts.detect_scene_cuts", return_value=[5, 9]) as detect, \
+                    mock.patch("src.video.io.VideoReader"):
+                self.assertEqual(session_report_script.scene_cuts(str(video), cache), [5, 9])
+                self.assertEqual(session_report_script.scene_cuts(str(video), cache), [5, 9])
+                self.assertEqual(detect.call_count, 1)
+                video.write_bytes(b"longer")
+                session_report_script.scene_cuts(str(video), cache)
+                self.assertEqual(detect.call_count, 2)

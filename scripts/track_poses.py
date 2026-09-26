@@ -1,7 +1,9 @@
 """Pose (17 COCO keypoints) for EVERY tracked person in a clip, cached once.
 
-Built for stroke classification, which needs the arms of far-court players
-as much as near ones. Running a pose model on the whole frame does not
+Used to tell people from objects (the ball cart has no skeleton), for
+which a pose on every 5th frame is plenty (--every, default 5) - a 5x
+saving; skipped frames carry an empty dict and the output
+records `every`. Pose needs the far-court players as much as near ones. Running a pose model on the whole frame does not
 give that: measured on dingles_serve_volley, YOLOv8s-pose over the full
 1080p frame finds only the 2 near players (boxes ~280px tall) and misses
 all 5 at the far end (~76-111px tall). Cropping each tracked person's box
@@ -57,6 +59,7 @@ def main() -> None:
     parser.add_argument("--output", required=True)
     parser.add_argument("--model", default=str(REPO_ROOT / "weights" / "yolo" / "yolov8s-pose.pt"))
     parser.add_argument("--device", default=None)
+    parser.add_argument("--every", type=int, default=5, help="Pose every Nth frame (default 5); 1 for every frame.")
     args = parser.parse_args()
 
     import cv2
@@ -75,6 +78,9 @@ def main() -> None:
         if not ok:
             break
         crops, meta = [], []
+        if index % max(1, args.every):
+            poses.append({})
+            continue
         for track_id, x1, y1, x2, y2, _conf in row:
             if track_id is None:
                 continue
@@ -108,7 +114,8 @@ def main() -> None:
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
     with open(out, "wb") as handle:
-        pickle.dump({"fps": people["fps"], "num_frames": len(poses), "model": args.model, "poses": poses}, handle)
+        pickle.dump({"fps": people["fps"], "num_frames": len(poses), "model": args.model,
+                     "every": max(1, args.every), "poses": poses}, handle)
     print(f"Wrote {out}: {len(poses)} frames")
 
 
