@@ -132,6 +132,47 @@ def _draw_other_bounces(frame, frame_idx, bounces, fps, label):
     return frame
 
 
+# BGR, one per stroke, so a type reads at a glance across the court.
+_STROKE_COLORS = {
+    "serve": (0, 220, 255),
+    "overhead": (60, 60, 255),
+    "forehand": (255, 200, 0),
+    "backhand": (0, 140, 255),
+    "forehand_volley": (80, 255, 80),
+    "backhand_volley": (255, 90, 200),
+    "slice": (255, 255, 255),
+}
+_STROKE_HOLD_S = 1.0
+
+
+def _draw_strokes(frame, frame_idx, strokes_by_track, people_row, fps):
+    """Label each person with the stroke they played in the last second:
+    a bold coloured label for a confirmed hit (ball within reach), a small
+    grey "(swing)" for a swing with no ball near - a shadow swing, a feed,
+    or something else - because those are not hits and must not read as
+    such."""
+    hold = int(_STROKE_HOLD_S * fps)
+    boxes = {t: (x1, y1, x2, y2) for t, x1, y1, x2, y2, _c in people_row if t is not None}
+    for track_id, box in boxes.items():
+        recent = [s for s in strokes_by_track.get(track_id, []) if 0 <= frame_idx - s["frame"] < hold]
+        if not recent:
+            continue
+        s = recent[-1]
+        x1, y1, x2, _y2 = box
+        cx = int((x1 + x2) / 2)
+        if s["hit_confirmed"]:
+            text = s["stroke"].replace("_", " ").upper()
+            color = _STROKE_COLORS.get(s["stroke"], (255, 255, 255))
+            scale, thick = 0.75, 2
+        else:
+            text, color, scale, thick = "(swing)", (170, 170, 170), 0.5, 1
+        (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, thick)
+        x, y = max(0, cx - tw // 2), max(th + 6, int(y1) - 26)
+        cv2.rectangle(frame, (x - 4, y - th - 5), (x + tw + 4, y + 5), (0, 0, 0), -1)
+        cv2.putText(frame, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, scale, color, thick)
+    return frame
+
+
 def _person_color(track_id: int) -> tuple[int, int, int]:
     """A stable colour per person id, so the same person keeps one colour
     for the whole clip and an id switch is visible as a colour change."""
@@ -252,10 +293,22 @@ def render(args) -> None:
             people = pickle.load(handle)["people"]
         print(f"People: {args.people}")
 
+    strokes_by_track = None
+    if args.strokes:
+        # Stroke labels replace the impact markers: one label per swing,
+        # above the person who played it.
+        import json
+
+        strokes_by_track = {}
+        for s in json.loads(Path(args.strokes).read_text())["strokes"]:
+            strokes_by_track.setdefault(s["track_id"], []).append(s)
+        print(f"Strokes: {sum(len(v) for v in strokes_by_track.values())} from {args.strokes}")
+
     other_bounces = None
     if args.bounces_from:
         other_bounces = load_other_bounces(args.bounces_from, fps, width / 1280.0)
         print(f"Bounces: {len(other_bounces)} from {args.bounces_from} (replacing this pipeline's impact markers)")
+
 
     court = CourtOverlayDrawer()
     impact_drawer = ImpactMarkerDrawer(fps=fps)
@@ -321,7 +374,10 @@ def render(args) -> None:
                 cv2.putText(frame, label, (int(x1), int(y1) - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 4)
                 cv2.putText(frame, label, (int(x1), int(y1) - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
-        if not in_cutaway and other_bounces is not None:
+        if strokes_by_track is not None and people is not None and frame_idx < len(people):
+            if not in_cutaway:
+                frame = _draw_strokes(frame, frame_idx, strokes_by_track, people[frame_idx], fps)
+        elif not in_cutaway and other_bounces is not None:
             frame = _draw_other_bounces(frame, frame_idx, other_bounces, fps, args.bounces_label)
         elif not in_cutaway:
             frame = impact_drawer.draw(
@@ -354,6 +410,11 @@ def main() -> None:
         "scripts/tennisproject_bounces.py cache (the CatBoost model)",
     )
     parser.add_argument("--bounces-label", default="CatBoost")
+    parser.add_argument(
+        "--strokes",
+        help="A scripts/classify_strokes.py strokes.json: label each person's strokes "
+        "(needs --people) in place of the impact markers",
+    )
     parser.add_argument(
         "--report",
         help="A session_report.json: draw its court (fitted from court-view shots only) and "
