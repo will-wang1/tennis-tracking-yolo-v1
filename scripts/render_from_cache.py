@@ -82,6 +82,56 @@ _TRACK_COLORS = [
 _CANDIDATE_COLOR = (120, 120, 120)
 
 
+_OTHER_BOUNCE_COLOR = (255, 0, 255)  # magenta, like the pipeline's own bounce crosses
+_OTHER_BOUNCE_HOLD_S = 1.5
+
+
+def load_other_bounces(path: str, fps: float, frame_scale: float) -> dict[int, tuple[float, float, float]]:
+    """Another method's bounces (scripts/tennisproject_bounces.py cache),
+    re-expressed in THIS video's frames and pixels: {frame: (x, y, t_s)}.
+
+    That method runs on its own copy of the clip (1280x720, 29.97fps), so
+    frames go through seconds and positions are scaled by `frame_scale`
+    (1.5 for 720p -> 1080p). The position drawn is the one the bounce model
+    itself saw - its own smoothed track - not this project's tracker."""
+    import pickle
+
+    with open(path, "rb") as handle:
+        other = pickle.load(handle)
+    out = {}
+    xy = other.get("smoothed_xy") or other["ball_track"]
+    for f in other.get("bounces", []):
+        x, y = xy[f]
+        if x is None:
+            continue
+        t = f / other["fps"]
+        out[int(round(t * fps))] = (float(x) * frame_scale, float(y) * frame_scale, t)
+    return out
+
+
+def _draw_other_bounces(frame, frame_idx, bounces, fps, label):
+    """Each bounce as a cross that holds for a moment then fades, labelled
+    with the method and time, so a viewer can check it against the ball."""
+    hold = int(_OTHER_BOUNCE_HOLD_S * fps)
+    for start in range(frame_idx - hold, frame_idx + 1):
+        hit = bounces.get(start)
+        if hit is None:
+            continue
+        x, y, t = hit
+        age = (frame_idx - start) / max(hold, 1)
+        size = 14 if age < 0.2 else 10
+        thickness = 3 if age < 0.5 else 2
+        cx, cy = int(x), int(y)
+        cv2.line(frame, (cx - size, cy - size), (cx + size, cy + size), _OTHER_BOUNCE_COLOR, thickness)
+        cv2.line(frame, (cx - size, cy + size), (cx + size, cy - size), _OTHER_BOUNCE_COLOR, thickness)
+        if age < 0.2:
+            cv2.circle(frame, (cx, cy), 22, _OTHER_BOUNCE_COLOR, 2)
+        text = f"{label} bounce {t:.2f}s"
+        cv2.putText(frame, text, (cx + 16, cy - 14), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 4)
+        cv2.putText(frame, text, (cx + 16, cy - 14), cv2.FONT_HERSHEY_SIMPLEX, 0.55, _OTHER_BOUNCE_COLOR, 2)
+    return frame
+
+
 def _person_color(track_id: int) -> tuple[int, int, int]:
     """A stable colour per person id, so the same person keeps one colour
     for the whole clip and an id switch is visible as a colour change."""
@@ -202,6 +252,11 @@ def render(args) -> None:
             people = pickle.load(handle)["people"]
         print(f"People: {args.people}")
 
+    other_bounces = None
+    if args.bounces_from:
+        other_bounces = load_other_bounces(args.bounces_from, fps, width / 1280.0)
+        print(f"Bounces: {len(other_bounces)} from {args.bounces_from} (replacing this pipeline's impact markers)")
+
     court = CourtOverlayDrawer()
     impact_drawer = ImpactMarkerDrawer(fps=fps)
     # Per-track trails, kept here rather than in TrailDrawer because that
@@ -266,7 +321,9 @@ def render(args) -> None:
                 cv2.putText(frame, label, (int(x1), int(y1) - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 4)
                 cv2.putText(frame, label, (int(x1), int(y1) - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
-        if not in_cutaway:
+        if not in_cutaway and other_bounces is not None:
+            frame = _draw_other_bounces(frame, frame_idx, other_bounces, fps, args.bounces_label)
+        elif not in_cutaway:
             frame = impact_drawer.draw(
                 frame, frame_idx, impacts_by_frame, calibrations.get(frame_idx)
             )
@@ -291,6 +348,12 @@ def main() -> None:
     parser.add_argument("--end", type=float, default=None, help="seconds")
     parser.add_argument("--max-jump", type=float, default=150.0)
     parser.add_argument("--people", help="A scripts/track_people.py cache, to draw person boxes and ids")
+    parser.add_argument(
+        "--bounces-from",
+        help="Draw another method's bounces instead of this pipeline's impacts - a "
+        "scripts/tennisproject_bounces.py cache (the CatBoost model)",
+    )
+    parser.add_argument("--bounces-label", default="CatBoost")
     parser.add_argument(
         "--report",
         help="A session_report.json: draw its court (fitted from court-view shots only) and "
