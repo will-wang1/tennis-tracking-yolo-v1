@@ -89,7 +89,13 @@ def build_cache(args) -> dict:
     ):
         num_frames = i + 1
         candidates_by_frame.append(ball_detector.detect_candidates(frame))
-        named_points = court_detector.detect(frame) or {}
+        # The court detector is the costliest model here (212 ms/frame on
+        # an M2 against 84 for the ball: 71% of this loop), and a fixed
+        # camera's court does not move. So it runs every `court_every`
+        # frames and the last good fit is carried in between - the same
+        # carry-forward the loop always did when detection failed. The
+        # session report fits one court per camera shot from these anyway.
+        named_points = (court_detector.detect(frame) or {}) if i % max(1, args.court_every) == 0 else {}
         if len(named_points) >= 4:
             try:
                 fitted = CourtCalibration.from_keypoints(named_points)
@@ -290,6 +296,11 @@ def main() -> None:
     parser.add_argument("--wasb-weights", default=str(REPO_ROOT / "weights" / "wasb_tennis_pretrained.pth.tar"))
     parser.add_argument("--court-weights", default=str(REPO_ROOT / "weights" / "court_net_pretrained.pt"))
     parser.add_argument("--device", default=None, help="'cpu' to keep off the GPU")
+    parser.add_argument(
+        "--court-every", type=int, default=25,
+        help="Run the court detector every N frames and carry the fit between (default 25 = once a "
+             "second at 25fps). Use 1 for a moving camera.",
+    )
     parser.add_argument(
         "--ball-score-threshold",
         type=float,

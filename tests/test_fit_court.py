@@ -77,3 +77,19 @@ class FitCourtTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BestFitTest(unittest.TestCase):
+    def test_a_split_detector_is_settled_by_the_picture_not_the_median(self):
+        # Two clusters of per-frame fits either side of the truth-free middle:
+        # the median lands between them and fits neither; scoring picks the
+        # cluster the picture agrees with.
+        truth = _calibration(0.0)
+        wrong = _calibration(80.0)
+        per_frame = {**{f: truth for f in range(0, 7)}, **{f: wrong for f in range(7, 12)}}
+        gray = cv2.cvtColor(_court_frame(truth), cv2.COLOR_BGR2GRAY)
+        from src.analysis.court_calibration import court_line_contrast
+
+        fit, score = session_report_script.best_fit(per_frame, lambda c: court_line_contrast(gray, c))
+        self.assertTrue(np.allclose(fit.homography, truth.homography))
+        self.assertGreater(score, 50)

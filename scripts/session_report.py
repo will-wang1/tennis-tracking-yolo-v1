@@ -75,23 +75,30 @@ def fit_court(
     cuts = detect_scene_cuts(VideoReader(video).frames())
     bounds = [0] + sorted(cuts) + [num_frames]
     capture = cv2.VideoCapture(video)
+
+    def grays(a: int, b: int) -> list:
+        out = []
+        for f in np.linspace(a, b - 1, 6).astype(int):
+            capture.set(cv2.CAP_PROP_POS_FRAMES, int(f))
+            ok, image = capture.read()
+            if ok:
+                out.append(cv2.GaussianBlur(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), (3, 3), 0))
+        return out
+
+    def contrast(fit, images) -> float:
+        return float(np.median([court_line_contrast(g, fit) for g in images])) if images else 0.0
+
     court_frames: dict = {}
+    winners: list[tuple[CourtCalibration, list]] = []
     cutaways: list[tuple[int, int]] = []
     shots: list[dict] = []
     try:
         for a, b in zip(bounds, bounds[1:]):
             shot_cal = {f: per_frame[f] for f in range(a, b) if f in per_frame}
-            score = 0.0
+            score, images, shot_fit = 0.0, [], None
             if shot_cal:
-                shot_fit = static_calibration_from_frames(shot_cal)
-                scores = []
-                for f in np.linspace(a, b - 1, 6).astype(int):
-                    capture.set(cv2.CAP_PROP_POS_FRAMES, int(f))
-                    ok, image = capture.read()
-                    if ok:
-                        gray = cv2.GaussianBlur(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), (3, 3), 0)
-                        scores.append(court_line_contrast(gray, shot_fit))
-                score = float(np.median(scores)) if scores else 0.0
+                images = grays(a, b)
+                shot_fit, score = best_fit(shot_cal, lambda fit: contrast(fit, images))
             court_view = score >= MIN_COURT_LINE_CONTRAST
             print(f"  shot {a / fps:6.1f}-{b / fps:6.1f}s  court-line contrast {score:5.1f} -> "
                   f"{'court view' if court_view else 'CUTAWAY'}")
@@ -99,6 +106,7 @@ def fit_court(
                           "court_line_contrast": round(score, 1), "court_view": court_view})
             if court_view:
                 court_frames.update(shot_cal)
+                winners.append((shot_fit, images))
             else:
                 cutaways.append((a, b))
     finally:
@@ -110,7 +118,37 @@ def fit_court(
             f"(best court-line contrast {max((s['court_line_contrast'] for s in shots), default=0):.1f}, "
             f"need {MIN_COURT_LINE_CONTRAST:g}). Check the camera can see the court's lines, then re-run."
         )
-    return static_calibration_from_frames(court_frames), cutaways, shots
+    # One calibration for the clip: each court shot's winner, scored on the
+    # frames of every court shot, best overall.
+    everything = [g for _, images in winners for g in images]
+    return max((fit for fit, _ in winners), key=lambda fit: contrast(fit, everything)), cutaways, shots
+
+
+MAX_CANDIDATES = 24
+
+
+def best_fit(per_frame: dict, score) -> tuple[CourtCalibration, float]:
+    """The calibration for one shot: the median fit, or one of the
+    detector's own per-frame fits, whichever lines up best with the image
+    (`score`, higher is better). The median alone is not safe - on Dingles
+    the near-corner keypoints split into two clusters ~80px apart (about
+    700 frames vs 500 in one shot), so the median sits on a knife edge and
+    sampling the detector every 25th frame instead of every frame tipped it
+    to the wrong side (contrast -6 against 28). Scoring against the picture
+    settles it whichever side the median falls."""
+    candidates = [static_calibration_from_frames(per_frame)]
+    seen = set()
+    distinct = []
+    for f in sorted(per_frame):
+        key = np.asarray(per_frame[f].homography).round(6).tobytes()
+        if key not in seen:
+            seen.add(key)
+            distinct.append(per_frame[f])
+    step = max(1, len(distinct) // MAX_CANDIDATES)
+    candidates += distinct[::step][:MAX_CANDIDATES]
+    scored = [(score(c), i, c) for i, c in enumerate(candidates)]
+    s, _, fit = max(scored, key=lambda t: (t[0], -t[1]))
+    return fit, s
 
 
 def add_structure(report: dict, tracks: dict, players_doc: dict, fps: float, num_frames: int, cutaway: set) -> None:
