@@ -117,7 +117,14 @@ def add_structure(report: dict, tracks: dict, players_doc: dict, fps: float, num
     """Drill/break segments, per-player queue and idle time, and a movement
     heatmap per player (src/session/structure.py)."""
     from src.analysis.person_tracks import coverage_grid, smooth_positions
-    from src.session.structure import BREAK_S, drill_segments, players_gathered, queue_and_idle
+    from src.session.structure import (
+        BREAK_S,
+        drill_segments,
+        intensity_windows,
+        players_gathered,
+        queue_and_idle,
+        zone_shares,
+    )
 
     analysed = np.ones(num_frames, dtype=bool)
     analysed[list(f for f in cutaway if 0 <= f < num_frames)] = False
@@ -144,6 +151,8 @@ def add_structure(report: dict, tracks: dict, players_doc: dict, fps: float, num
     for player, positions in positions_by_player.items():
         if player in by_player:
             by_player[player].update(queue_and_idle(positions, fps, drill_mask))
+            by_player[player]["zone_shares"] = zone_shares(positions, drill_mask)
+    report["raw"]["intensity"] = intensity_windows(positions_by_player, in_play & analysed, drill_mask, fps)
     report["segments"] = [s.to_dict(fps) for s in segments]
     report["raw"]["player_coverage"] = {
         str(player): coverage_grid(tracks, fps, track_ids=[int(t) for t in tracklets]).to_dict()
@@ -187,6 +196,8 @@ def main() -> None:
     parser.add_argument("--second-opinion", help="scripts/tennisproject_bounces.py cache, to mark agreed bounces")
     parser.add_argument("--name", help="Clip name (default: the cache's folder)")
     parser.add_argument("--players", help="scripts/assign_players.py players.json - per-player section")
+    parser.add_argument("--targets", help="JSON of coaching targets overriding the defaults (src/session/insights.py Targets)")
+    parser.add_argument("--coach-player", type=int, help="Which player is the coach, if the guess is wrong")
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
 
@@ -266,6 +277,12 @@ def main() -> None:
 
     if args.players and people_cache:
         add_structure(report, tracks, players_doc, fps, num_frames, skip)
+
+    from src.session.insights import Targets, build_summary, load_targets
+
+    report["summary"] = build_summary(
+        report, load_targets(args.targets) if args.targets else Targets(), coach_override=args.coach_player
+    )
 
     # The court this report was measured on, so everything downstream (the
     # rendered video) uses the same one rather than re-deriving its own.
