@@ -132,6 +132,23 @@ def _draw_other_bounces(frame, frame_idx, bounces, fps, label):
     return frame
 
 
+_STROKE_BEFORE, _STROKE_AFTER = 10, 28
+_STROKE_COLORS = {"forehand": (60, 200, 255), "backhand": (255, 170, 60), "serve": (120, 255, 120)}
+
+
+def _draw_stroke(frame, hit: dict, x: int, y: int) -> None:
+    """A stroke label over the hitter: the stroke in colour, or for an
+    unsure hit the model's raw guess in grey, so it can be judged too."""
+    stroke = hit["stroke"]
+    if stroke == "unsure":
+        text, color, scale = f"? {hit['label']} {max(hit['probabilities'].values()):.2f}", (170, 170, 170), 0.55
+    else:
+        text, color, scale = stroke.upper() + (" (net)" if hit.get("at_net") else ""), _STROKE_COLORS[stroke], 0.8
+    y = max(20, y)
+    cv2.putText(frame, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, scale, (0, 0, 0), 5)
+    cv2.putText(frame, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, scale, color, 2)
+
+
 def _person_color(track_id: int) -> tuple[int, int, int]:
     """A stable colour per person id, so the same person keeps one colour
     for the whole clip and an id switch is visible as a colour change."""
@@ -263,6 +280,18 @@ def render(args) -> None:
         not_people = set(players_doc.get("not_people", []))
         print(f"Players: {len(set(player_of.values()))} from {args.players}")
 
+    strokes_at: dict[int, list[dict]] = {}
+    if args.strokes:
+        # scripts/classify_strokes_bst.py output: each hit's label is shown
+        # over the hitter from a little before contact to a second after.
+        import json
+
+        hits = json.loads(Path(args.strokes).read_text())["hits"]
+        for hit in hits:
+            for f in range(hit["frame"] - _STROKE_BEFORE, hit["frame"] + _STROKE_AFTER):
+                strokes_at.setdefault(f, []).append(hit)
+        print(f"Strokes: {len(hits)} hits from {args.strokes}")
+
     other_bounces = None
     if args.bounces_from:
         other_bounces = load_other_bounces(args.bounces_from, fps, width / 1280.0)
@@ -341,6 +370,9 @@ def render(args) -> None:
                     label = f"P{track_id}" if track_id is not None else "?"
                 cv2.putText(frame, label, (int(x1), int(y1) - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 4)
                 cv2.putText(frame, label, (int(x1), int(y1) - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+                for hit in strokes_at.get(frame_idx, []):
+                    if hit["tracklet"] == track_id:
+                        _draw_stroke(frame, hit, int(x1), int(y1) - 30)
 
         if not in_cutaway and other_bounces is not None:
             frame = _draw_other_bounces(frame, frame_idx, other_bounces, fps, args.bounces_label)
@@ -376,6 +408,7 @@ def main() -> None:
     )
     parser.add_argument("--bounces-label", default="CatBoost")
     parser.add_argument("--players", help="scripts/assign_players.py players.json - label people as stable players")
+    parser.add_argument("--strokes", help="scripts/classify_strokes_bst.py output - label each hit over its hitter")
     parser.add_argument(
         "--report",
         help="A session_report.json: draw its court (fitted from court-view shots only) and "
