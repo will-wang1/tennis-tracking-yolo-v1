@@ -341,23 +341,18 @@ def build_session_report(
     return report
 
 
-STROKE_TYPES = ("serve", "overhead", "forehand", "backhand", "forehand_volley", "backhand_volley", "slice")
 
-
-def player_summaries(people: list[PersonMovement], players_doc: dict, strokes_doc: Optional[dict], fps: float) -> list[dict]:
+def player_summaries(people: list[PersonMovement], players_doc: dict, fps: float) -> list[dict]:
     """One record per stable player (identity.py), folding together every
     tracklet that player was seen in.
 
     Distance is summed over tracklets and split into its measured and
     estimated parts, because a player who rotates between the near and far
     halves has some of each and a single total would hide which part to
-    trust. Moving share is weighted by time on camera. Hits and stroke mix
-    count CONFIRMED hits only (ball within reach) - a swing with no ball
-    near is not a hit."""
+    trust. Moving share is weighted by time on camera. Hits are confirmed
+    racket contacts credited to this player (attribute_contacts) - a
+    minimum, since most impacts are never classified."""
     by_track = {p.track_id: p for p in people}
-    strokes_by_track: dict[int, list[dict]] = {}
-    for s in (strokes_doc or {}).get("strokes", []):
-        strokes_by_track.setdefault(int(s["track_id"]), []).append(s)
     out = []
     for player, tracklets in sorted(players_doc["players"].items(), key=lambda kv: int(kv[0])):
         moves = [by_track[t] for t in tracklets if t in by_track]
@@ -369,10 +364,6 @@ def player_summaries(people: list[PersonMovement], players_doc: dict, strokes_do
             sum(m.moving_share * m.tracked_frames for m in timed) / sum(m.tracked_frames for m in timed)
             if timed else None
         )
-        hits = [s for t in tracklets for s in strokes_by_track.get(t, []) if s["hit_confirmed"]]
-        swings = [s for t in tracklets for s in strokes_by_track.get(t, [])]
-        hands = [s["racket_hand"] for s in swings if s.get("racket_hand_source") == "racket"]
-        mix = {k: sum(1 for s in hits if s["stroke"] == k) for k in STROKE_TYPES}
         starts = [m.start_frame for m in moves] or [0]
         ends = [m.end_frame for m in moves] or [0]
         out.append({
@@ -385,10 +376,6 @@ def player_summaries(people: list[PersonMovement], players_doc: dict, strokes_do
             "distance_measured_m": round(measured, 1),
             "distance_estimated_m": round(estimated, 1),
             "moving_share": None if moving is None else round(moving, 3),
-            "confirmed_hits": len(hits),
-            "hits_per_minute_on_camera": round(len(hits) / (frames / fps / 60.0), 1) if frames else None,
-            "stroke_mix": mix,
-            "swings_without_ball": len(swings) - len(hits),
-            "racket_hand": (max(set(hands), key=hands.count) if hands else None),
+            "confirmed_hits": sum(m.confirmed_contacts or 0 for m in moves),
         })
     return out

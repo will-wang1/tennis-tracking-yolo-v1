@@ -12,8 +12,7 @@ ones) picks up where it stopped. --force redoes everything.
     1. normalise    -> data/videos/<name>.mp4            1080p, 25fps
     2. ball + court -> outputs/<name>/replay_cache.pkl    slow: neural nets
     3. people       -> outputs/<name>/person_tracks.pkl   slow: neural net
-       pose         -> outputs/<name>/poses.pkl           ~5 min per 2 min of video
-       strokes      -> outputs/<name>/strokes.json
+       pose         -> outputs/<name>/poses.pkl           ~5 min per 2 min of video (tells people from objects)
        players      -> outputs/<name>/players.json
     4. report       -> outputs/<name>/session_report.json
     5. feedback     -> outputs/<name>/session_feedback.json (or .prompt.txt without an API key)
@@ -110,8 +109,8 @@ def main() -> None:
     step("pose for every person", poses, [PY, s("track_poses.py"), "--input", str(video),
          "--people", str(people), "--output", str(poses)], args.force)
 
-    # Strokes and players need the court and cutaways from a first report;
-    # the report is then rebuilt with them (both report passes are cheap).
+    # Player identity needs the cutaways from a first report; the report is
+    # then rebuilt with the players (both report passes are cheap).
     report_cmd = [PY, s("session_report.py"), "--ball-cache", str(ball_cache), "--people", str(people),
                   "--video", str(video), "--name", args.name, "--out", str(report)]
     tp_cache = out / "tennisproject_ball_track.pkl"
@@ -130,15 +129,10 @@ def main() -> None:
         report_cmd += ["--second-opinion", str(tp_cache)]
     # The report is cheap and depends on every cache above, so it is always rebuilt.
     step("session report (court, cutaways)", report, report_cmd, force=True)
-    strokes = out / "strokes.json"
     players = out / "players.json"
-    step("strokes for every person", strokes, [PY, s("classify_strokes.py"), "--video", str(video),
-         "--poses", str(poses), "--people", str(people), "--ball-cache", str(ball_cache),
-         "--report", str(report), "--out", str(strokes)], force=True)
     step("stable player identity", players, [PY, s("assign_players.py"), "--video", str(video),
          "--people", str(people), "--poses", str(poses), "--report", str(report), "--out", str(players)], force=True)
-    step("session report (players, strokes)", report,
-         report_cmd + ["--players", str(players), "--strokes", str(strokes)], force=True)
+    step("session report (players)", report, report_cmd + ["--players", str(players)], force=True)
 
     if not args.no_feedback:
         step("AI feedback", feedback, [PY, s("session_feedback.py"), "--report", str(report),
@@ -151,7 +145,7 @@ def main() -> None:
     if not args.no_video:
         step("annotated video", out / "annotated.mp4", [PY, s("render_from_cache.py"), "--cache", str(ball_cache),
              "--input", str(video), "--people", str(people), "--report", str(report),
-             "--players", str(players), "--strokes", str(strokes),
+             "--players", str(players),
              "--on-court-only", "--no-track-labels",
              "--output", str(out / "annotated.mp4")], force=True)
 
