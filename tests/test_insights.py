@@ -41,6 +41,30 @@ class CoachTest(unittest.TestCase):
         self.assertEqual((s["coach_player"], s["coach_source"]), (3, "set"))
 
 
+class BallsHitTest(unittest.TestCase):
+    def _players(self, rates):
+        out = []
+        for n, r in enumerate(rates, start=1):
+            p = _player(n)
+            p["shots"], p["shots_per_minute"] = round(r * 2), r
+            out.append(p)
+        return out
+
+    def test_a_player_hitting_under_half_the_group_is_flagged(self):
+        s = build_summary(_report(self._players([7, 7.5, 3, 8, 7])))
+        self.assertIn("Player 3 hit far fewer balls", [f["title"] for f in s["to_improve"]])
+        self.assertIn("hit 6 balls", next(c["line"] for c in s["players"] if c["player"] == 3))
+
+    def test_a_gap_short_of_half_is_not_flagged_nor_called_even(self):
+        s = build_summary(_report(self._players([7, 7.5, 4.2, 8, 7])))
+        titles = [f["title"] for f in s["to_improve"] + s["went_well"]]
+        self.assertFalse(any("balls" in t.lower() for t in titles))
+
+    def test_a_tight_spread_is_balls_shared_evenly(self):
+        s = build_summary(_report(self._players([7, 7.5, 6.5, 8, 7])))
+        self.assertIn("Balls shared evenly", [f["title"] for f in s["went_well"]])
+
+
 class FindingsTest(unittest.TestCase):
     def test_a_busy_evenly_shared_session_has_nothing_to_fix(self):
         s = build_summary(_report([_player(n) for n in range(1, 6)]))

@@ -157,8 +157,10 @@ def main() -> None:
     if not args.no_video:
         step("annotated video", out / "annotated.mp4", [PY, s("render_from_cache.py"), "--cache", str(ball_cache),
              "--input", str(video), "--people", str(people), "--report", str(report),
-             "--players", str(players),
-             "--on-court-only", "--no-track-labels",
+             "--players", str(players), "--swings", str(swings),
+             # Players, their swings and the ball's flight; no bounce or
+             # contact markers, which pile up and clutter the picture.
+             "--on-court-only", "--no-track-labels", "--no-impacts", "--no-candidates",
              "--output", str(out / "annotated.mp4")], force=True)
 
     print(f"\nDone. Open {_short(str(out / 'coach_report.html'))}")

@@ -190,19 +190,6 @@
     </div>
   </section>
 
-  <section>
-    <h2>How often the ball was hit or bounced</h2>
-    <div class="panel">
-      <div class="legend">
-        <span><i style="background:var(--s-bounce)"></i>bounce</span>
-        <span><i style="background:var(--s-contact)"></i>racket contact</span>
-        <span><i style="background:var(--s-unknown)"></i>not classified</span>
-      </div>
-      <div class="chart" id="bars"></div>
-      <p class="note">Impacts per 10 seconds. "Not classified" means the ball clearly changed direction but the system
-        couldn't tell whether a racket or the court did it.</p>
-    </div>
-  </section>
 
   <section>
     <h2>Where the ball landed, and where people were</h2>
@@ -335,14 +322,15 @@ $("meta").innerHTML = `<span><b>${clip.analysed_s.toFixed(0)}s</b> analysed of $
     moving: [1, med(group.map((c) => c.moving_share))],
     ground: [Math.max(...group.map((c) => c.metres_per_minute || 0), 1), med(group.map((c) => c.metres_per_minute))],
     wait: [Math.max(0.2, ...group.map((c) => c.wait_share || 0)), med(group.map((c) => c.wait_share))],
+    shots: [Math.max(...group.map((c) => c.shots_per_minute || 0), 1), med(group.map((c) => c.shots_per_minute))],
     net: [Math.max(0.4, ...group.map((c) => (players[c.player] && players[c.player].zone_shares ? players[c.player].zone_shares.net : 0))),
           med(group.map((c) => players[c.player] && players[c.player].zone_shares ? players[c.player].zone_shares.net : null))],
   };
-  const bar = (label, v, key, fmt, warnIfHigh) => {
+  const bar = (label, v, key, fmt, warnIfHigh, lowRatio = 0.6) => {
     if (v == null) return "";
     const [max, typ] = scale[key];
     const w = Math.min(100, 100 * v / max), tk = typ == null ? null : Math.min(100, 100 * typ / max);
-    const warn = warnIfHigh ? (typ != null && v > 2 * Math.max(typ, 0.02)) : (typ != null && v < 0.6 * typ);
+    const warn = warnIfHigh ? (typ != null && v > 2 * Math.max(typ, 0.02)) : (typ != null && v < lowRatio * typ);
     return `<div class="bar"><span>${label}</span><span class="track"><span class="fill${warn ? " warn" : ""}" style="width:${w}%"></span>`
       + (tk == null ? "" : `<span class="tick" style="left:${tk}%"></span>`) + `</span><span class="v">${fmt(v)}</span></div>`;
   };
@@ -353,6 +341,9 @@ $("meta").innerHTML = `<span><b>${clip.analysed_s.toFixed(0)}s</b> analysed of $
     const bars = c.role === "coach" ? "" :
       bar("Moving", c.moving_share, "moving", pct0, false)
       + bar("Ground", c.metres_per_minute, "ground", (v) => Math.round(v) + " m/min", false)
+      // Same half-the-group line as the report's flag (Targets.shots_low_ratio).
+      + bar("Balls hit", c.shots_per_minute, "shots", (v) => v.toFixed(1) + "/min", false,
+            (S.targets && S.targets.shots_low_ratio) || 0.5)
       + bar("Waiting", c.wait_share, "wait", pct0, true)
       + bar("At the net", net, "net", pct0, false);
     return `<div class="card${c.flags.length ? " flagged" : ""}${c.role === "coach" ? " coach" : ""}">
@@ -372,9 +363,8 @@ $("meta").innerHTML = `<span><b>${clip.analysed_s.toFixed(0)}s</b> analysed of $
 // ---------- tiles
 const tiles = [
   ["ball_in_play", (m) => pct(m.value), "ball in play"],
-  ["impacts_per_minute", (m) => m.value, "impacts / minute"],
-  ["confirmed_contacts_per_minute", (m) => "≥ " + m.value, "racket hits / minute"],
-  ["two_balls_in_play", (m) => pct(m.value), "two balls at once"],
+  // Impacts per minute, confirmed racket hits and two-balls-at-once stay in
+  // the JSON but not on the page: a coach cannot read them as good or bad.
   ["movement_near_court", (m) => Math.round(m.value) + " m", "run by near-court players"],
   ["near_court_moving_share", (m) => pct(m.value), "of near-court players' time spent moving"],
   ["players_identified", (m) => m.value, "players followed"],
@@ -418,36 +408,6 @@ $("tiles").innerHTML = tiles.filter(([k]) => M[k]).map(([k, f, label]) => {
     el("text", { x: x(t), y: top + h + 24, "text-anchor": t === 0 ? "start" : "middle" }, svg).textContent = t + "s";
   }
   $("timeline").appendChild(svg); bindTips($("timeline"));
-})();
-
-// ---------- impacts bars
-(function () {
-  const win = dur > 600 ? 60 : 10;
-  const n = Math.ceil(dur / win);
-  const W_ = Array.from({ length: n }, (_, i) => ({ t0: i * win, bounce: 0, contact: 0, unknown: 0 }));
-  R.raw.impacts.forEach((i) => { const k = Math.min(n - 1, Math.floor(i.t_s / win)); W_[k][i.kind] = (W_[k][i.kind] || 0) + 1; });
-  const W = 900, H = 240, L = 34, R_ = 8, T = 16, B = 30;
-  const band = (W - L - R_) / n, bw = Math.min(46, band * 0.62);
-  const tot = W_.map((w) => w.bounce + w.contact + w.unknown), max = Math.max(1, ...tot), yMax = Math.ceil(max / 5) * 5;
-  const y = (v) => T + (H - T - B) * (1 - v / yMax);
-  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `Impacts per ${win} seconds by kind` });
-  for (let v = 0; v <= yMax; v += 5) {
-    el("line", { x1: L, x2: W - R_, y1: y(v), y2: y(v), stroke: "var(--rule)", "stroke-width": v === 0 ? 1 : 0.6 }, svg);
-    el("text", { x: L - 6, y: y(v) + 4, "text-anchor": "end" }, svg).textContent = v;
-  }
-  W_.forEach((w, i) => {
-    const cx = L + band * i + band / 2, x0 = cx - bw / 2, end = Math.min(w.t0 + win, dur);
-    let acc = 0;
-    [["bounce", "var(--s-bounce)", "bounce"], ["contact", "var(--s-contact)", "racket contact"], ["unknown", "var(--s-unknown)", "not classified"]].forEach(([k, c, label]) => {
-      const v = w[k]; if (!v) return;
-      el("rect", { x: x0, y: y(acc + v), width: bw, height: Math.max(0, y(acc) - y(acc + v) - 2), fill: c, rx: 2,
-        "data-tip": `${w.t0}–${end.toFixed(0)}s · ${label}: ${v}\nwindow total ${tot[i]}` }, svg);
-      acc += v;
-    });
-    el("text", { x: cx, y: H - B + 18, "text-anchor": "middle" }, svg).textContent = `${w.t0}s`;
-    if (tot[i] === max) el("text", { x: cx, y: y(tot[i]) - 6, "text-anchor": "middle", style: "fill:var(--ink-2)" }, svg).textContent = tot[i];
-  });
-  $("bars").appendChild(svg); bindTips($("bars"));
 })();
 
 // ---------- courts

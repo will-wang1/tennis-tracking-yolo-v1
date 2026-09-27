@@ -52,6 +52,11 @@ class Targets:
     net_drill_min: float = 0.10  # group median time at the net at or above: a drill that involves the net
     net_low_ratio: float = 0.40  # ...then a player at the net under this share of the group's median is flagged
     intensity_drop: float = 0.20  # last third this much below the first (movement or ball in play): a drop
+    # A player hitting under this share of the group's balls/minute is
+    # flagged. Half, not less: swing detection misses roughly one swing in
+    # six (more at the far end), so a smaller gap could be the detector.
+    shots_low_ratio: float = 0.50
+    shots_even_ratio: float = 1.5  # highest/lowest balls/minute within this: balls shared evenly
 
 
 def _off_court_share(coverage: dict) -> float:
@@ -163,6 +168,24 @@ def build_summary(report: dict, targets: Optional[Targets] = None, coach_overrid
                          "detail": f"Everyone covered a similar amount of ground: {round(lo)}-{round(hi)} m a minute.",
                          "basis": "group"})
 
+    # ---- balls hit (group), from detected swings
+    hits = {p["player"]: p["shots_per_minute"] for p in group if p.get("shots_per_minute") is not None}
+    if len(hits) >= 3:
+        hm = median(hits.values())
+        few = [pl for pl, v in hits.items() if hm > 0 and v < t.shots_low_ratio * hm]
+        for pl in few:
+            ratio = hits[pl] / hm
+            improve.append({"title": f"Player {pl} hit far fewer balls", "priority": 1, "player": pl,
+                            "short": f"hit only {_pct(ratio)} as many balls as the group",
+                            "detail": f"Player {pl} hit about {hits[pl]:.1f} balls a minute against a typical {hm:.1f} - "
+                                      "check they get as many turns hitting as everyone else.",
+                            "basis": "group"})
+        lo, hi = min(hits.values()), max(hits.values())
+        if not few and lo > 0 and hi / lo <= t.shots_even_ratio:
+            well.append({"title": "Balls shared evenly",
+                         "detail": f"Every player hit a similar number of balls: {lo:.1f}-{hi:.1f} a minute.",
+                         "basis": "group"})
+
     # ---- waiting (target + group)
     waits = {p["player"]: p["queue_share"] for p in group if p.get("queue_share") is not None}
     if waits:
@@ -262,6 +285,7 @@ def build_summary(report: dict, targets: Optional[Targets] = None, coach_overrid
     # ---- player cards
     cards = []
     pm = median(pace.values()) if pace else None
+    hm = median(hits.values()) if hits else None
     wm = median(waits.values()) if waits else None
     for p in players:
         role = "coach" if p["player"] == coach else "player"
@@ -274,6 +298,9 @@ def build_summary(report: dict, targets: Optional[Targets] = None, coach_overrid
                 rel = pace[p["player"]] / pm
                 bits.append("covered " + ("about the typical ground" if 0.9 <= rel <= 1.1 else
                                           f"{_pct(abs(1 - rel))} {'more' if rel > 1 else 'less'} ground than typical"))
+            if p.get("shots") is not None:
+                bits.append(f"hit {p['shots']} ball{'s' if p['shots'] != 1 else ''}"
+                            + (f" ({p['shots_per_minute']:.1f} a minute)" if p.get("shots_per_minute") is not None else ""))
             if p.get("queue_share") is not None:
                 bits.append("barely waited" if p["queue_share"] < 0.02 else f"waited {_pct(p['queue_share'])} of the drill")
             if p.get("zone_shares"):
@@ -285,6 +312,8 @@ def build_summary(report: dict, targets: Optional[Targets] = None, coach_overrid
             "moving_share": p.get("moving_share"),
             "metres_per_minute": round(pace[p["player"]], 1) if p["player"] in pace else None,
             "wait_share": p.get("queue_share"),
+            "shots": p.get("shots"),
+            "shots_per_minute": p.get("shots_per_minute"),
         })
 
     return {
@@ -299,6 +328,7 @@ def build_summary(report: dict, targets: Optional[Targets] = None, coach_overrid
         "group_reference": {
             "metres_per_minute": round(pm, 1) if pm else None,
             "wait_share": round(wm, 3) if wm is not None else None,
+            "shots_per_minute": round(hm, 2) if hm is not None else None,
         },
     }
 

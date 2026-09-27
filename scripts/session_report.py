@@ -341,6 +341,17 @@ def main() -> None:
 
     from src.session.insights import Targets, build_summary, load_targets, play_note
 
+    swings = []
+    if args.swings:
+        swings = [s for s in json.loads(Path(args.swings).read_text())["swings"] if s["frame"] not in skip]
+        # Balls hit per player: their swings, per minute they were on camera
+        # during drills (so a player who arrived late is not penalised).
+        for p in report.get("players") or []:
+            n = sum(1 for s in swings if s["player"] == p["player"])
+            p["shots"] = n
+            minutes = (p.get("on_camera_in_drills_s") or p.get("on_camera_s") or 0) / 60.0
+            p["shots_per_minute"] = round(n / minutes, 2) if minutes > 0 else None
+
     report["summary"] = build_summary(
         report, load_targets(args.targets) if args.targets else Targets(), coach_override=args.coach_player
     )
@@ -348,7 +359,6 @@ def main() -> None:
         # Fed or live needs the coach, which the summary has just decided.
         from src.session.feeding import feeding_summary
 
-        swings = [s for s in json.loads(Path(args.swings).read_text())["swings"] if s["frame"] not in skip]
         feeding = report["feeding"] = feeding_summary(swings, fps, report["summary"]["coach_player"])
         caveats = feeding["caveats"]
         live_share = feeding["live_rallies"] / feeding["rallies"] if feeding["rallies"] else None

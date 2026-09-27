@@ -207,6 +207,7 @@ def render(args) -> None:
     calibrations = calibrations_from_cache(cache)
 
     cutaway_frames: set[int] = set()
+    coach_player = None
     if args.report:
         # Use the court the session report was measured on, and its
         # cutaways, so the video and the numbers cannot disagree about where
@@ -221,6 +222,7 @@ def render(args) -> None:
         for a_s, b_s in report["clip"]["cutaways_s"]:
             cutaway_frames.update(range(int(round(a_s * fps)), int(round(b_s * fps))))
         print(f"Court: from {args.report} ({len(report['clip']['cutaways_s'])} cutaway(s))")
+        coach_player = (report.get("summary") or {}).get("coach_player")
     elif args.static_court:
         # A fixed camera's per-frame fits are many noisy readings of one
         # homography; refitting each frame just re-rolls the noise and the
@@ -397,7 +399,12 @@ def render(args) -> None:
                 # the player's feet, every movement number is off too.
                 cv2.circle(frame, (int((x1 + x2) / 2), int(y2)), 5, color, -1)
                 if player_of is not None:
-                    label = f"Player {player_of[track_id]}" if track_id in player_of else "?"
+                    if track_id not in player_of:
+                        label = "?"
+                    elif player_of[track_id] == coach_player:
+                        label = "Coach"  # decided (or set) in the session report
+                    else:
+                        label = f"Player {player_of[track_id]}"
                 else:
                     label = f"P{track_id}" if track_id is not None else "?"
                 if swing_frames:
@@ -414,7 +421,9 @@ def render(args) -> None:
                     if hit["tracklet"] == track_id:
                         _draw_stroke(frame, hit, int(x1), int(y1) - 30)
 
-        if not in_cutaway and other_bounces is not None:
+        if not args.impacts:
+            pass  # clean video: no bounce or contact markers, which pile up over a clip
+        elif not in_cutaway and other_bounces is not None:
             frame = _draw_other_bounces(frame, frame_idx, other_bounces, fps, args.bounces_label)
         elif not in_cutaway:
             frame = impact_drawer.draw(
@@ -471,6 +480,8 @@ def main() -> None:
              "calibration, which is correct for a fixed camera and stops the jitter.",
     )
     parser.add_argument("--no-court", dest="court", action="store_false", help="Skip the court wireframe")
+    parser.add_argument("--no-impacts", dest="impacts", action="store_false",
+                        help="Skip the bounce and contact markers (they accumulate and clutter a long clip)")
     parser.add_argument(
         "--no-candidates", dest="candidates", action="store_false",
         help="Skip the rejected-candidate dots",
