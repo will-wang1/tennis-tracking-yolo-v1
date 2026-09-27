@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>__TITLE__</title>
+<style>
+  :root {
+    --bg:#f3f5f4; --surface:#fff; --ink:#15201d; --ink-2:#4b5d58; --ink-3:#7a8a85; --rule:#d6dfdc;
+    --accent:#0e6a5b; --accent-soft:#dcede9; --warn:#a2551c; --warn-soft:#f7e8da; --guess:#6b6fa0; --guess-soft:#e6e7f2;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0c1413; --surface:#131e1c; --ink:#e4edea; --ink-2:#a3b6b1; --ink-3:#778a85; --rule:#24352f;
+      --accent:#5fc3ae; --accent-soft:#102a26; --warn:#de9a5e; --warn-soft:#2a1c10; --guess:#a3a6d2; --guess-soft:#1a1b2a; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.5 var(--sans); }
+  header { display:flex; flex-wrap:wrap; gap:8px 18px; align-items:baseline; padding:14px 18px; border-bottom:1px solid var(--rule); background:var(--surface); }
+  header h1 { font-size:17px; margin:0; }
+  header .progress { font-family:var(--mono); color:var(--ink-2); }
+  header .spacer { flex:1; }
+  button { font:inherit; cursor:pointer; border:1px solid var(--rule); background:var(--surface); color:var(--ink); border-radius:6px; padding:6px 11px; }
+  button:hover { border-color:var(--accent); }
+  main { display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:18px; padding:18px; max-width:1180px; margin:0 auto; }
+  @media (max-width:820px) { main { grid-template-columns:1fr; } }
+  .stage { background:var(--surface); border:1px solid var(--rule); border-radius:10px; padding:16px; }
+  .meta { display:flex; flex-wrap:wrap; gap:6px 16px; font-family:var(--mono); font-size:12.5px; color:var(--ink-2); margin-bottom:10px; }
+  .clipwrap { display:flex; justify-content:center; background:#000; border-radius:8px; padding:8px; }
+  .clip { width:360px; height:480px; max-width:100%; background-repeat:no-repeat; image-rendering:auto; }
+  .scrub { position:relative; height:10px; margin:10px 0 2px; background:var(--rule); border-radius:5px; }
+  .scrub .pos { position:absolute; top:0; height:10px; width:4px; background:var(--ink); border-radius:2px; }
+  .scrub .peak { position:absolute; top:-3px; height:16px; width:2px; background:var(--warn); }
+  .hint { font-size:12px; color:var(--ink-3); }
+  .controls { display:flex; gap:8px; justify-content:center; margin-top:8px; }
+  aside { display:flex; flex-direction:column; gap:14px; }
+  .panel { background:var(--surface); border:1px solid var(--rule); border-radius:10px; padding:14px; }
+  .panel h2 { font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-3); margin:0 0 10px; }
+  .keys { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+  .keys button { text-align:left; display:flex; gap:8px; align-items:center; }
+  .keys kbd, .toggles kbd { font-family:var(--mono); font-size:11px; border:1px solid var(--rule); border-radius:4px; padding:0 5px; background:var(--bg); }
+  .keys button.on { background:var(--accent-soft); border-color:var(--accent); font-weight:600; }
+  .keys button.guess { background:var(--guess-soft); border-color:var(--guess); }
+  .toggles { display:flex; gap:6px; margin-top:8px; }
+  .toggles button.on { background:var(--accent-soft); border-color:var(--accent); font-weight:600; }
+  .toggles button.guess { background:var(--guess-soft); border-color:var(--guess); }
+  .state { margin-top:10px; font-size:13px; }
+  .state.done { color:var(--accent); }
+  .state.guess { color:var(--guess); }
+  .list { max-height:320px; overflow:auto; font-family:var(--mono); font-size:12px; }
+  .list div { display:flex; justify-content:space-between; padding:3px 6px; border-radius:4px; cursor:pointer; }
+  .list div.cur { background:var(--accent-soft); }
+  .list .lab { color:var(--accent); }
+  .list .gss { color:var(--guess); }
+  .help { font-size:12.5px; color:var(--ink-2); }
+  .help p { margin:0 0 6px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>__TITLE__</h1>
+  <span class="progress" id="progress"></span>
+  <span class="spacer"></span>
+  <button id="save">Save labels</button>
+  <label><button id="loadbtn" type="button">Load labels</button><input id="load" type="file" accept=".json" hidden></label>
+</header>
+<main>
+  <section class="stage">
+    <div class="meta" id="meta"></div>
+    <div class="clipwrap"><div class="clip" id="clip" role="img" aria-label="Swing clip"></div></div>
+    <div class="scrub" id="scrub"><span class="peak" id="peak"></span><span class="pos" id="pos"></span></div>
+    <div class="hint">Orange tick: where the swing peaked. <kbd>Space</kbd> play/pause · <kbd>,</kbd> <kbd>.</kbd> step a frame · <kbd>Z</kbd> slow motion</div>
+    <div class="controls"><button id="prev">← Previous</button><button id="play">Pause</button><button id="next">Next →</button></div>
+  </section>
+  <aside>
+    <div class="panel">
+      <h2>Stroke</h2>
+      <div class="keys" id="keys"></div>
+      <div class="toggles" id="toggles"></div>
+      <div class="state" id="state"></div>
+    </div>
+    <div class="panel help">
+      <h2>How</h2>
+      <p>Press the stroke key: it is saved and the next swing plays. Press <kbd>V</kbd> / <kbd>L</kbd> first for a volley or a slice.</p>
+      <p>Purple is the model's guess. <kbd>Enter</kbd> accepts it. <kbd>U</kbd> skips a swing you can't judge.</p>
+      <p>Labels stay in this browser as you go. Use <b>Save labels</b> to write them to a file for training.</p>
+    </div>
+    <div class="panel">
+      <h2>All swings</h2>
+      <div class="list" id="list"></div>
+    </div>
+  </aside>
+</main>
+<script>
+const ITEMS = __ITEMS__;
+const SESSION = __SESSION__;
+const FPS = __FPS__;
+const STORE = "swing-labels:" + SESSION;
+const STROKES = [["f", "forehand"], ["b", "backhand"], ["s", "serve"], ["o", "overhead"], ["n", "not a swing"], ["u", "skip"]];
+const $ = (id) => document.getElementById(id);
+
+let labels = {};
+try { labels = JSON.parse(localStorage.getItem(STORE) || "{}"); } catch (e) { labels = {}; }
+function persist() { try { localStorage.setItem(STORE, JSON.stringify(labels)); } catch (e) {} }
+
+let cur = ITEMS.findIndex((it) => !labels[it.id]);
+if (cur < 0) cur = 0;
+let frame = 0, playing = true, slow = false, pending = { volley: false, slice: false }, timer = null;
+
+function stateFor(it) {
+  const l = labels[it.id];
+  if (l) return { ...l, confirmed: true };
+  return { ...(it.guess || {}), confirmed: false };
+}
+
+function drawFrame() {
+  const it = ITEMS[cur];
+  const clip = $("clip");
+  const w = clip.clientWidth, h = clip.clientHeight;
+  clip.style.backgroundImage = `url("${it.sprite}")`;
+  clip.style.backgroundSize = `${w * it.n}px ${h}px`;
+  clip.style.backgroundPosition = `${-frame * w}px 0`;
+  $("pos").style.left = `calc(${(100 * frame) / Math.max(1, it.n - 1)}% - 2px)`;
+}
+
+function tick() {
+  if (playing) { frame = (frame + 1) % ITEMS[cur].n; drawFrame(); }
+  timer = setTimeout(tick, 1000 / (slow ? FPS / 3 : FPS));
+}
+
+function render() {
+  const it = ITEMS[cur];
+  const st = stateFor(it);
+  $("meta").innerHTML = `<span>${cur + 1} / ${ITEMS.length}</span><span>${it.t_s.toFixed(2)}s</span>`
+    + `<span>${it.player != null ? "Player " + it.player : "unnamed person"}</span>`;
+  $("peak").style.left = `${(100 * it.peak) / Math.max(1, it.n - 1)}%`;
+  $("keys").innerHTML = STROKES.map(([k, name]) => {
+    const cls = st.stroke === name ? (st.confirmed ? "on" : "guess") : "";
+    return `<button class="${cls}" data-k="${k}"><kbd>${k.toUpperCase()}</kbd>${name}</button>`;
+  }).join("");
+  const tog = (key, field, name) => {
+    const on = pending[field] || (st[field] && !pending.touched);
+    const cls = on ? (st.confirmed || pending.touched ? "on" : "guess") : "";
+    return `<button class="${cls}" data-t="${field}"><kbd>${key}</kbd>${name}</button>`;
+  };
+  $("toggles").innerHTML = tog("V", "volley", "volley") + tog("L", "slice", "slice");
+  const s = $("state");
+  if (st.confirmed) {
+    s.className = "state done";
+    s.textContent = "Labelled: " + describe(st);
+  } else if (st.stroke) {
+    s.className = "state guess";
+    s.textContent = "Model's guess: " + describe(st) + " (Enter to accept)";
+  } else {
+    s.className = "state"; s.textContent = "Not labelled yet.";
+  }
+  const done = ITEMS.filter((x) => labels[x.id]).length;
+  $("progress").textContent = `${done} of ${ITEMS.length} labelled`;
+  $("list").innerHTML = ITEMS.map((x, i) => {
+    const l = labels[x.id];
+    const g = x.guess && x.guess.stroke ? describe(x.guess) : "";
+    return `<div class="${i === cur ? "cur" : ""}" data-i="${i}"><span>${x.t_s.toFixed(1)}s P${x.player ?? "?"}</span>`
+      + (l ? `<span class="lab">${describe(l)}</span>` : `<span class="gss">${g}</span>`) + `</div>`;
+  }).join("");
+  const row = $("list").querySelector(".cur");
+  if (row) row.scrollIntoView({ block: "nearest" });
+  drawFrame();
+}
+
+function describe(l) {
+  if (!l.stroke) return "";
+  return [l.stroke, l.volley ? "volley" : "", l.slice ? "slice" : ""].filter(Boolean).join(" + ");
+}
+
+function go(i) {
+  cur = Math.max(0, Math.min(ITEMS.length - 1, i));
+  frame = 0; playing = true; pending = { volley: false, slice: false };
+  $("play").textContent = "Pause";
+  render();
+}
+
+function commit(stroke) {
+  const it = ITEMS[cur];
+  const st = stateFor(it);
+  const touched = pending.touched;
+  const volley = touched ? pending.volley : (st.volley || false);
+  const slice = touched ? pending.slice : (st.slice || false);
+  const plain = stroke === "not a swing" || stroke === "skip";
+  labels[it.id] = {
+    id: it.id, session: SESSION, frame: it.frame, t_s: it.t_s, tracklet: it.tracklet, player: it.player,
+    stroke, volley: plain ? false : volley, slice: plain ? false : slice,
+    from_guess: !!(it.guess && it.guess.stroke === stroke && !!it.guess.volley === volley && !slice),
+  };
+  persist();
+  go(cur + 1);
+}
+
+function toggle(field) {
+  const st = stateFor(ITEMS[cur]);
+  if (!pending.touched) pending = { volley: !!st.volley, slice: !!st.slice, touched: true };
+  pending[field] = !pending[field];
+  render();
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const k = e.key.toLowerCase();
+  const stroke = STROKES.find(([key]) => key === k);
+  if (stroke) { commit(stroke[1]); e.preventDefault(); return; }
+  if (k === "v") toggle("volley");
+  else if (k === "l") toggle("slice");
+  else if (k === "enter") { const g = ITEMS[cur].guess; if (g && g.stroke) { if (!pending.touched) pending = { volley: !!g.volley, slice: false, touched: true }; commit(g.stroke); } }
+  else if (k === "arrowright") go(cur + 1);
+  else if (k === "arrowleft") go(cur - 1);
+  else if (k === " ") { playing = !playing; $("play").textContent = playing ? "Pause" : "Play"; }
+  else if (k === ",") { playing = false; frame = Math.max(0, frame - 1); drawFrame(); $("play").textContent = "Play"; }
+  else if (k === ".") { playing = false; frame = Math.min(ITEMS[cur].n - 1, frame + 1); drawFrame(); $("play").textContent = "Play"; }
+  else if (k === "z") slow = !slow;
+  else return;
+  e.preventDefault();
+});
+
+$("keys").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) commit(STROKES.find(([k]) => k === b.dataset.k)[1]); });
+$("toggles").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) toggle(b.dataset.t); });
+$("list").addEventListener("click", (e) => { const d = e.target.closest("[data-i]"); if (d) go(+d.dataset.i); });
+$("prev").onclick = () => go(cur - 1);
+$("next").onclick = () => go(cur + 1);
+$("play").onclick = () => { playing = !playing; $("play").textContent = playing ? "Pause" : "Play"; };
+$("save").onclick = () => {
+  const out = { session: SESSION, saved: new Date().toISOString(), labels: Object.values(labels) };
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(out, null, 1)], { type: "application/json" }));
+  a.download = `swing_labels_${SESSION}.json`;
+  a.click();
+};
+$("loadbtn").onclick = () => $("load").click();
+$("load").onchange = async (e) => {
+  const f = e.target.files[0]; if (!f) return;
+  try {
+    const doc = JSON.parse(await f.text());
+    for (const l of doc.labels || []) labels[l.id] = l;
+    persist(); render();
+  } catch (err) { alert("Could not read that file: " + err.message); }
+};
+window.addEventListener("resize", drawFrame);
+render();
+tick();
+</script>
+</body>
+</html>
