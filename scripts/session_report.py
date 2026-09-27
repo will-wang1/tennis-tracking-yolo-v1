@@ -183,6 +183,7 @@ def add_structure(report: dict, tracks: dict, players_doc: dict, fps: float, num
         players_gathered,
         queue_and_idle,
         zone_shares,
+        zone_windows,
     )
 
     analysed = np.ones(num_frames, dtype=bool)
@@ -212,6 +213,7 @@ def add_structure(report: dict, tracks: dict, players_doc: dict, fps: float, num
             by_player[player].update(queue_and_idle(positions, fps, drill_mask))
             by_player[player]["zone_shares"] = zone_shares(positions, drill_mask)
     report["raw"]["intensity"] = intensity_windows(positions_by_player, in_play & analysed, drill_mask, fps)
+    report["raw"]["net_windows"] = zone_windows(positions_by_player, drill_mask, fps)
     report["segments"] = [s.to_dict(fps) for s in segments]
     report["raw"]["player_coverage"] = {
         str(player): coverage_grid(tracks, fps, track_ids=[int(t) for t in tracklets]).to_dict()
@@ -255,6 +257,8 @@ def main() -> None:
     parser.add_argument("--second-opinion", help="scripts/tennisproject_bounces.py cache, to mark agreed bounces")
     parser.add_argument("--name", help="Clip name (default: the cache's folder)")
     parser.add_argument("--players", help="scripts/assign_players.py players.json - per-player section")
+    parser.add_argument("--theme", help="What the session was on, comma-separated: netplay, consistency, "
+                        "adjustment, around_backhand. Judged start vs end of the session.")
     parser.add_argument("--swings", help="scripts/detect_swings.py output - adds fed vs live play")
     parser.add_argument("--targets", help="JSON of coaching targets overriding the defaults (src/session/insights.py Targets)")
     parser.add_argument("--coach-player", type=int, help="Which player is the coach, if the guess is wrong")
@@ -375,6 +379,13 @@ def main() -> None:
         note = play_note(report["feeding"])
         if note:
             report["summary"]["notes"].insert(0, note)
+
+    if args.theme:
+        # What the session was ON, judged start vs end (src/session/themes.py).
+        from src.session.themes import evaluate
+
+        report["themes"] = evaluate([t.strip() for t in args.theme.split(",") if t.strip()], report, swings,
+                                    report["summary"]["coach_player"])
 
     # The court this report was measured on, so everything downstream (the
     # rendered video) uses the same one rather than re-deriving its own.

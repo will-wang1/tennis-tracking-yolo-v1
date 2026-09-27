@@ -59,6 +59,19 @@
   section { margin:0 0 30px; }
   .panel { background:var(--surface); border:1px solid var(--rule); padding:18px 20px; }
 
+  .themes { display:flex; flex-direction:column; gap:10px; margin:0 0 18px; }
+  .theme { background:var(--surface); border:1px solid var(--rule); border-left:4px solid var(--rule-2); padding:14px 18px; }
+  .theme.improved { border-left-color:var(--good); }
+  .theme.dropped { border-left-color:var(--look); }
+  .theme .top { display:flex; flex-wrap:wrap; align-items:center; gap:6px 12px; }
+  .theme .name { font-family:var(--display); font-weight:700; font-size:15px; }
+  .theme .v { font-family:var(--mono); font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; padding:2px 7px; border-radius:2px; background:var(--surface-2); color:var(--ink-2); }
+  .theme.improved .v { background:var(--good-soft); color:var(--good); }
+  .theme.dropped .v { background:var(--look-soft); color:var(--look); }
+  .theme p { margin:6px 0 0; }
+  .theme .ms { display:flex; flex-wrap:wrap; gap:6px 18px; margin-top:8px; font-size:13px; color:var(--ink-2); }
+  .theme .ms b { font-family:var(--mono); color:var(--ink); font-weight:500; }
+  .theme .small { font-size:12.5px; color:var(--ink-3); }
   .verdict .col { background:var(--surface); border:1px solid var(--rule); padding:16px 18px; }
   .verdict .good { border-top:4px solid var(--good); }
   .verdict .look { border-top:4px solid var(--look); }
@@ -147,6 +160,7 @@
   </header>
 
   <section id="verdict">
+    <div class="themes" id="themes" hidden></div>
     <p class="headline" id="headline"></p>
     <div class="two verdict">
       <div class="col good"><h3>What went well</h3><ul class="find" id="went-well"></ul></div>
@@ -303,6 +317,20 @@ $("meta").innerHTML = `<span><b>${clip.analysed_s.toFixed(0)}s</b> analysed of $
   const S = R.summary;
   if (!S) { $("verdict").hidden = true; return; }
   $("headline").textContent = S.headline;
+  // ---- lesson themes first: what the session was on, start vs end
+  const TH = R.themes || [];
+  if (TH.length) {
+    $("themes").hidden = false;
+    const fmt = (m) => (m.early <= 1 && m.late <= 1 && !/per rally/.test(m.name))
+      ? `${Math.round(100 * m.early)}% → ${Math.round(100 * m.late)}%` : `${m.early} → ${m.late}`;
+    $("themes").innerHTML = TH.map((t) => `<div class="theme ${esc(t.verdict.replace(/ /g, "-"))}">
+      <div class="top"><span class="name">Theme: ${esc(t.name)}</span><span class="v">${esc(t.verdict)}</span></div>
+      <p>${esc(t.headline)}</p>`
+      + (t.measures.length ? `<div class="ms">${t.measures.map((m) => `<span>${esc(m.name)}: <b>${fmt(m)}</b></span>`).join("")}</div>` : "")
+      + (t.players_line ? `<p class="small">${esc(t.players_line)}</p>` : "")
+      + (t.caveats.length ? `<p class="small">${t.caveats.map(esc).join(" ")}</p>` : "")
+      + `</div>`).join("");
+  }
   const item = (f) => `<li><strong>${esc(f.title)}</strong><span>${esc(f.detail)}</span></li>`;
   $("went-well").innerHTML = S.went_well.length ? S.went_well.map(item).join("") : `<li class="empty">Nothing stood out as a strength.</li>`;
   $("to-improve").innerHTML = S.to_improve.length ? S.to_improve.map(item).join("") : `<li class="empty">Nothing stands out to fix.</li>`;

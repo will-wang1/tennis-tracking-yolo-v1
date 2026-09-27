@@ -8,12 +8,17 @@ coach wants to see ("I fed for 20 minutes and they barely rallied").
 
 HOW. Everything comes from the swings (src/analysis/swings.py), each one a
 person moving their arm fast with the ball close:
-  - A RALLY is a run of swings with no gap over RALLY_GAP_S between them.
-    Not split where the ball tracker lost the ball: on Dingles that cut 13
-    of 23 rallies down to a single shot while play went on. With several
-    balls in play at once (two groups rallying side by side) rallies from
-    different groups can merge, so rally counts in a multi-ball drill are
-    approximate; the fed/live split and the coach's share hold up better.
+  - A RALLY is a chain of REPLIES: a swing's reply is the next swing from
+    the OTHER end within RALLY_GAP_S. Two pairs often rally side by side
+    (two players a side is the usual squad setup), so when two swings could
+    be the reply, the one by the hitter's usual partner - whoever they
+    exchanged with most within PARTNER_WINDOW_S - wins. A swing nobody
+    replies to ends its rally. Grouping by time alone merged side-by-side
+    rallies into one; following the ball does not work either, because the
+    ball tracker hops between two balls in play. Not split where the ball
+    was lost: on Dingles that cut 13 of 23 rallies down to a single shot.
+    Swings without a court end (an older swings file) fall back to time
+    alone.
   - A rally is FED when its first swing is the coach's, LIVE when it is a
     player's.
   - The coach's share of all swings says how much of the hitting the
@@ -52,8 +57,57 @@ class Rally:
         return coach is not None and self.starter == coach
 
 
+MIN_REPLY_S = 0.4  # a reply cannot come sooner than the ball takes to cross
+PARTNER_WINDOW_S = 30.0
+
+
 def rallies(swings: list[dict], fps: float, coach: Optional[int], gap_s: float = RALLY_GAP_S) -> list[Rally]:
-    """Swings (dicts with frame and player) grouped into rallies."""
+    """Swings (dicts with frame, player and end) grouped into rallies."""
+    ordered = sorted(swings, key=lambda s: s["frame"])
+    if any("end" not in s for s in ordered):
+        return _rallies_by_time(ordered, fps, coach, gap_s)
+    lo, hi = MIN_REPLY_S * fps, gap_s * fps
+
+    def replies_to(i):
+        a = ordered[i]
+        return [j for j in range(i + 1, len(ordered))
+                if lo <= ordered[j]["frame"] - a["frame"] <= hi and ordered[j]["end"] != a["end"]]
+
+    # Who exchanges with whom: every possible reply, by time.
+    exchanges = [(ordered[i]["frame"], ordered[i]["player"], ordered[j]["player"])
+                 for i in range(len(ordered)) for j in replies_to(i)]
+
+    def partner_score(i, j):
+        f, p, q = ordered[i]["frame"], ordered[i]["player"], ordered[j]["player"]
+        if p is None or q is None:
+            return 0
+        return sum(1 for g, a, b in exchanges if abs(g - f) <= PARTNER_WINDOW_S * fps and {a, b} == {p, q})
+
+    reply_of: dict[int, int] = {}
+    claimed: set[int] = set()
+    for i in range(len(ordered)):
+        options = [j for j in replies_to(i) if j not in claimed]
+        if options:
+            j = max(options, key=lambda j: (partner_score(i, j), -ordered[j]["frame"]))
+            reply_of[i] = j
+            claimed.add(j)
+
+    out = []
+    for i in range(len(ordered)):
+        if i in claimed:
+            continue  # someone's reply: inside a rally, not its start
+        chain = [i]
+        while chain[-1] in reply_of:
+            chain.append(reply_of[chain[-1]])
+        members = [ordered[k] for k in chain]
+        out.append(Rally(
+            start=members[0]["frame"], end=members[-1]["frame"], starter=members[0]["player"], shots=len(members),
+            coach_shots=sum(1 for m in members if coach is not None and m["player"] == coach),
+        ))
+    return sorted(out, key=lambda r: r.start)
+
+
+def _rallies_by_time(ordered: list[dict], fps: float, coach: Optional[int], gap_s: float) -> list[Rally]:
     out: list[Rally] = []
     current: list[dict] = []
 
@@ -64,7 +118,7 @@ def rallies(swings: list[dict], fps: float, coach: Optional[int], gap_s: float =
                 shots=len(current), coach_shots=sum(1 for s in current if coach is not None and s["player"] == coach),
             ))
 
-    for s in sorted(swings, key=lambda s: s["frame"]):
+    for s in ordered:
         if current and s["frame"] - current[-1]["frame"] > gap_s * fps:
             close()
             current = []
@@ -100,12 +154,13 @@ def feeding_summary(swings: list[dict], fps: float, coach: Optional[int]) -> dic
              "fed": r.fed(coach), "shots": r.shots}
             for r in rs
         ],
-        "method": f"Rallies are runs of detected swings under {RALLY_GAP_S:g}s apart; a rally is fed when "
+        "method": f"A rally is a chain of replies - the next swing from the other end within {RALLY_GAP_S:g}s, "
+                  "preferring the hitter's usual partner when two pairs rally side by side. A rally is fed when "
                   "the coach's swing starts it. Shots are swings (arm moving fast with the ball close).",
         "caveats": [
             "Checked only on a drill where players start every point; recognising a coach's feed "
             "(especially a gentle hand feed) is not yet tested on footage with feeding.",
-            "With several balls in play at once, rallies of different groups can merge: rally counts "
-            "and lengths are approximate.",
+            "A missed swing (about one in six) ends a rally early, so rallies read a little shorter than "
+            "they were.",
         ] + ([] if coach is not None else ["No coach identified, so every rally counts as live."]),
     }

@@ -75,6 +75,8 @@ def main() -> None:
     parser.add_argument("--no-feedback", action="store_true")
     parser.add_argument("--no-video", action="store_true")
     parser.add_argument("--force", action="store_true", help="Redo steps even if their output exists")
+    parser.add_argument("--theme", help="What the session was on: netplay, consistency, adjustment, around_backhand "
+                        "(comma-separated)")
     parser.add_argument("--title", help="Coach page title (default: from --name). Keep it fixed if the page is published.")
     args = parser.parse_args()
 
@@ -121,6 +123,8 @@ def main() -> None:
     # then rebuilt with the players (both report passes are cheap).
     report_cmd = [PY, s("session_report.py"), "--ball-cache", str(ball_cache), "--people", str(people),
                   "--video", str(video), "--name", args.name, "--out", str(report)]
+    if args.theme:
+        report_cmd += ["--theme", args.theme]
     tp_cache = out / "tennisproject_ball_track.pkl"
     if args.second_opinion:
         video_720 = REPO_ROOT / "data" / "videos" / f"{args.name}_720p30.mp4"

@@ -259,3 +259,30 @@ def intensity_windows(
             "metres_per_minute": per_player,
         })
     return windows
+
+
+def zone_windows(
+    positions_by_player: dict[int, dict[int, tuple[float, float]]],
+    drill_mask: np.ndarray,
+    fps: float,
+    parts: int = 3,
+) -> list[dict]:
+    """Drill time cut into `parts` equal windows (thirds by default, as
+    intensity_windows), each with every player's share of that window at
+    the net - for 'are players getting to the net more as the session goes
+    on'. A player seen under 2s in a window has no share there."""
+    drill_frames = np.flatnonzero(drill_mask)
+    if len(drill_frames) < fps * 6:
+        return []
+    out = []
+    for chunk in np.array_split(drill_frames, parts):
+        frames = set(int(f) for f in chunk)
+        shares = {}
+        for player, pos in positions_by_player.items():
+            seen = [f for f in frames if f in pos]
+            if len(seen) < fps * 2:
+                continue
+            shares[str(player)] = round(sum(1 for f in seen if zone_of(pos[f]) == "net") / len(seen), 3)
+        out.append({"start_s": round(int(chunk[0]) / fps, 1), "end_s": round((int(chunk[-1]) + 1) / fps, 1),
+                    "net_share": shares})
+    return out
