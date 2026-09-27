@@ -133,6 +133,20 @@ def _draw_other_bounces(frame, frame_idx, bounces, fps, label):
 
 
 _STROKE_BEFORE, _STROKE_AFTER = 10, 28
+_SWING_BEFORE, _SWING_AFTER = 8, 18
+_SWING_COLOR = (60, 230, 255)
+
+
+def _draw_swing(frame, swing: dict, frame_idx: int, box: tuple[int, int, int, int]) -> None:
+    """A thick box and "SWING" over the player, brightest at the swing's
+    peak frame so it reads as one event rather than a sticky label."""
+    x1, y1, x2, y2 = box
+    fade = max(0.35, 1.0 - abs(frame_idx - swing["frame"]) / 18.0)
+    color = tuple(int(c * fade) for c in _SWING_COLOR)
+    cv2.rectangle(frame, (x1 - 4, y1 - 4), (x2 + 4, y2 + 4), color, 4)
+    y = max(20, y1 - 30)
+    cv2.putText(frame, "SWING", (x1, y), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 5)
+    cv2.putText(frame, "SWING", (x1, y), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
 _STROKE_COLORS = {"forehand": (60, 200, 255), "backhand": (255, 170, 60), "serve": (120, 255, 120)}
 
 
@@ -292,6 +306,21 @@ def render(args) -> None:
                 strokes_at.setdefault(f, []).append(hit)
         print(f"Strokes: {len(hits)} hits from {args.strokes}")
 
+    swings_at: dict[int, list[dict]] = {}
+    swing_frames: dict[int, list[int]] = {}  # player (or tracklet) -> swing frames, for a running count
+    if args.swings:
+        # scripts/detect_swings.py output: "SWING" over the player around
+        # each swing, and each player's running count in their label.
+        import json
+
+        swings = json.loads(Path(args.swings).read_text())["swings"]
+        for sw in swings:
+            for f in range(sw["frame"] - _SWING_BEFORE, sw["frame"] + _SWING_AFTER):
+                swings_at.setdefault(f, []).append(sw)
+            key = sw["player"] if sw["player"] is not None else -sw["tracklet"]
+            swing_frames.setdefault(key, []).append(sw["frame"])
+        print(f"Swings: {len(swings)} from {args.swings}")
+
     other_bounces = None
     if args.bounces_from:
         other_bounces = load_other_bounces(args.bounces_from, fps, width / 1280.0)
@@ -368,6 +397,13 @@ def render(args) -> None:
                     label = f"Player {player_of[track_id]}" if track_id in player_of else "?"
                 else:
                     label = f"P{track_id}" if track_id is not None else "?"
+                if swing_frames:
+                    key = player_of.get(track_id) if player_of is not None and track_id in player_of else -(track_id or 0)
+                    done = sum(1 for f in swing_frames.get(key, []) if f <= frame_idx)
+                    label += f"  {done} swing{'s' if done != 1 else ''}"
+                for sw in swings_at.get(frame_idx, []):
+                    if sw["tracklet"] == track_id:
+                        _draw_swing(frame, sw, frame_idx, (int(x1), int(y1), int(x2), int(y2)))
                 cv2.putText(frame, label, (int(x1), int(y1) - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 4)
                 cv2.putText(frame, label, (int(x1), int(y1) - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
                 for hit in strokes_at.get(frame_idx, []):
@@ -408,6 +444,7 @@ def main() -> None:
     )
     parser.add_argument("--bounces-label", default="CatBoost")
     parser.add_argument("--players", help="scripts/assign_players.py players.json - label people as stable players")
+    parser.add_argument("--swings", help="scripts/detect_swings.py output - mark each swing and count them per player")
     parser.add_argument("--strokes", help="scripts/classify_strokes_bst.py output - label each hit over its hitter")
     parser.add_argument(
         "--report",
