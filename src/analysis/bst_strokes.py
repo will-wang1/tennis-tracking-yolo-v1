@@ -121,13 +121,24 @@ def build_input(
     return jnb.astype(np.float32), pos.astype(np.float32), shuttle.astype(np.float32), video_len
 
 
+STROKES = ("forehand", "backhand", "serve", "net", "unsure")
+
+
 def stroke_name(label: str, probability: float, serve_probability: float, half_agrees: bool,
-                left_handed: bool = False, at_baseline: bool = False) -> str:
-    """forehand | backhand | serve | unsure, from one hit's two clips."""
+                left_handed: bool = False, at_baseline: bool = False, at_net: bool = False) -> str:
+    """forehand | backhand | serve | net | unsure, from one hit's two clips.
+
+    A shot from inside the service line is "net" whichever side it was
+    hit on - the model has no volley class, and at the net which side
+    matters less to a coach than that the player was up there. It still
+    needs the model's near/far to agree with the tracking, the check that
+    screens out non-strokes."""
     if serve_probability >= SERVE_MIN or (label.startswith("S") and probability >= SERVE_MIN):
         return "serve"
     if at_baseline and serve_probability >= SERVE_MIN_AT_BASELINE:
         return "serve"
+    if at_net and half_agrees:
+        return "net"
     if not half_agrees or probability < HIT_MIN or label.startswith("S"):
         return "unsure"
     forehand = (label in FOREHAND_RIGHT_HANDED) != left_handed

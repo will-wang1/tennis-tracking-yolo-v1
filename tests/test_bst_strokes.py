@@ -52,6 +52,11 @@ class StrokeNameTest(unittest.TestCase):
         self.assertEqual(stroke_name("HNR", 0.9, 0.1, False), "unsure")
         self.assertEqual(stroke_name("HNR", 0.5, 0.1, True), "unsure")
 
+    def test_a_shot_from_the_net_is_net_whichever_side(self):
+        self.assertEqual(stroke_name("HFL", 0.9, 0.1, True, at_net=True), "net")
+        self.assertEqual(stroke_name("HFR", 0.4, 0.1, True, at_net=True), "net")
+        self.assertEqual(stroke_name("HFL", 0.9, 0.1, False, at_net=True), "unsure")  # near/far disagrees
+
     def test_a_middling_serve_score_counts_only_from_the_baseline(self):
         self.assertEqual(stroke_name("HFL", 0.8, 0.6, True, at_baseline=True), "serve")
         self.assertEqual(stroke_name("HFL", 0.8, 0.6, True, at_baseline=False), "forehand")

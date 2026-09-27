@@ -33,7 +33,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from src.analysis.bst_strokes import (  # noqa: E402
-    BASELINE_ZONE_M, CLASSES, HIT_AFTER, HIT_BEFORE, SERVE_AFTER, SERVE_BEFORE, PersonFrame, build_input, classify,
+    BASELINE_ZONE_M, CLASSES, STROKES, HIT_AFTER, HIT_BEFORE, SERVE_AFTER, SERVE_BEFORE, PersonFrame, build_input, classify,
     fold_serve_tosses, load_model, stroke_name,
 )
 from src.analysis.court_calibration import CourtCalibration  # noqa: E402
@@ -247,7 +247,7 @@ def main() -> None:
         serve_prob = float(p_serve[4] + p_serve[5])
         # No player (not a person - the ball cart) is never a stroke.
         stroke = stroke_name(label, float(p_hit.max()), serve_prob, model_half == h["hitter_half"],
-                             at_baseline=h["at_baseline"]) \
+                             at_baseline=h["at_baseline"], at_net=h["at_net"]) \
             if player_of.get(h["hitter"]) is not None or not player_of else "unsure"
         out_hits.append({
             "t_s": round(h["frame"] / fps, 2),
@@ -274,7 +274,7 @@ def main() -> None:
     print(f"model's near/far agrees with tracking on {agree}/{len(out_hits)} hits")
     for h in out_hits:
         print(f"  {h['t_s']:6.2f}s {h['impact_kind']:8s} player {h['player']!s:4s} {h['hitter_half']:4s} "
-              f"{h['stroke']:8s}{' (net)' if h['at_net'] else '      '} <- {h['label']} "
+              f"{h['stroke']:8s} <- {h['label']} "
               f"{max(h['probabilities'].values()):.2f}  serve-window {h['serve_window_label']} ({h['serve_window_serve_prob']:.2f})"
               f"{'' if h['half_agrees'] else '  HALF MISMATCH'}")
     Path(args.out).write_text(json.dumps({
@@ -283,7 +283,7 @@ def main() -> None:
                     "HNR": "hit, near player, right", "SF": "serve, far player", "SN": "serve, near player"},
         "half_agreement": [agree, len(out_hits)],
         "assumes": "right-handed players (forehand = near-right or far-left as the camera sees it)",
-        "strokes": {k: sum(h["stroke"] == k for h in out_hits) for k in ("forehand", "backhand", "serve", "unsure")},
+        "strokes": {k: sum(h["stroke"] == k for h in out_hits) for k in STROKES},
         "hits": out_hits,
     }, indent=1))
     print(f"Wrote {args.out}")

@@ -149,7 +149,8 @@ def _draw_swing(frame, swing: dict, frame_idx: int, box: tuple[int, int, int, in
     y = max(20, y1 - 30)
     cv2.putText(frame, "SWING", (x1, y), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 5)
     cv2.putText(frame, "SWING", (x1, y), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
-_STROKE_COLORS = {"forehand": (60, 200, 255), "backhand": (255, 170, 60), "serve": (120, 255, 120)}
+_STROKE_COLORS = {"forehand": (60, 200, 255), "backhand": (255, 170, 60), "serve": (120, 255, 120),
+                  "net": (230, 120, 255)}
 
 
 def _draw_stroke(frame, hit: dict, x: int, y: int) -> None:
@@ -159,7 +160,7 @@ def _draw_stroke(frame, hit: dict, x: int, y: int) -> None:
     if stroke == "unsure":
         text, color, scale = f"? {hit['label']} {max(hit['probabilities'].values()):.2f}", (170, 170, 170), 0.55
     else:
-        text, color, scale = stroke.upper() + (" (net)" if hit.get("at_net") else ""), _STROKE_COLORS[stroke], 0.8
+        text, color, scale = stroke.upper(), _STROKE_COLORS[stroke], 0.8
     y = max(20, y)
     cv2.putText(frame, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, scale, (0, 0, 0), 5)
     cv2.putText(frame, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, scale, color, 2)
