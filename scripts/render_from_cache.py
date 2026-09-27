@@ -137,13 +137,15 @@ _SWING_BEFORE, _SWING_AFTER = 8, 18
 _SWING_COLOR = (60, 230, 255)
 
 
-def _draw_swing(frame, swing: dict, frame_idx: int, box: tuple[int, int, int, int]) -> None:
+def _draw_swing(frame, swing: dict, frame_idx: int, box: tuple[int, int, int, int], text: bool = True) -> None:
     """A thick box and "SWING" over the player, brightest at the swing's
     peak frame so it reads as one event rather than a sticky label."""
     x1, y1, x2, y2 = box
     fade = max(0.35, 1.0 - abs(frame_idx - swing["frame"]) / 18.0)
     color = tuple(int(c * fade) for c in _SWING_COLOR)
     cv2.rectangle(frame, (x1 - 4, y1 - 4), (x2 + 4, y2 + 4), color, 4)
+    if not text:
+        return
     y = max(20, y1 - 30)
     cv2.putText(frame, "SWING", (x1, y), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 5)
     cv2.putText(frame, "SWING", (x1, y), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
@@ -403,7 +405,8 @@ def render(args) -> None:
                     label += f"  {done} swing{'s' if done != 1 else ''}"
                 for sw in swings_at.get(frame_idx, []):
                     if sw["tracklet"] == track_id:
-                        _draw_swing(frame, sw, frame_idx, (int(x1), int(y1), int(x2), int(y2)))
+                        # With stroke labels, the stroke name takes the text slot.
+                        _draw_swing(frame, sw, frame_idx, (int(x1), int(y1), int(x2), int(y2)), text=not strokes_at)
                 cv2.putText(frame, label, (int(x1), int(y1) - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 4)
                 cv2.putText(frame, label, (int(x1), int(y1) - 7), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
                 for hit in strokes_at.get(frame_idx, []):

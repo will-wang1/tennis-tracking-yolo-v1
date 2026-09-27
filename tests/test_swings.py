@@ -62,8 +62,10 @@ class DetectSwingsTest(unittest.TestCase):
         poses, _ = _swing_poses(80, at=40)
         rows = [[(1, 0.0, 0.0, 100.0, 100.0, 0.9), (2, 300.0, 0.0, 400.0, 100.0, 0.9)] for _ in range(80)]
         by_frame = [{1: poses[f], 2: poses[f]} for f in range(80)]
-        found = detect_swings(rows, by_frame, {}, skip_tracklets={2})
-        self.assertEqual([(s.tracklet, s.ball_near) for s in found], [(1, None)])
+        self.assertEqual(detect_swings(rows, by_frame, {}, skip_tracklets={2}), [])  # no ball seen
+        near_ball = {f: [(50.0, 50.0)] for f in range(80)}
+        found = detect_swings(rows, by_frame, near_ball, skip_tracklets={2})
+        self.assertEqual([(s.tracklet, s.ball_near) for s in found], [(1, True)])
         far_ball = {f: [(2000.0, 2000.0)] for f in range(80)}
         self.assertEqual(detect_swings(rows, by_frame, far_ball, skip_tracklets={2}), [])
 

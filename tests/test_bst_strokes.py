@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 
 from src.analysis.bst_strokes import (
-    SEQ_LEN, PersonFrame, bones, build_input, normalize_joints, stroke_name,
+    SEQ_LEN, PersonFrame, bones, build_input, fold_serve_tosses, normalize_joints, stroke_name,
 )
 
 WEIGHTS = Path(__file__).resolve().parent.parent / "weights" / "bst" / "bst_AP_JnB_bone.pt"
@@ -51,6 +51,23 @@ class StrokeNameTest(unittest.TestCase):
         self.assertEqual(stroke_name("HNR", 0.9, 0.85, True), "serve")
         self.assertEqual(stroke_name("HNR", 0.9, 0.1, False), "unsure")
         self.assertEqual(stroke_name("HNR", 0.5, 0.1, True), "unsure")
+
+    def test_a_middling_serve_score_counts_only_from_the_baseline(self):
+        self.assertEqual(stroke_name("HFL", 0.8, 0.6, True, at_baseline=True), "serve")
+        self.assertEqual(stroke_name("HFL", 0.8, 0.6, True, at_baseline=False), "forehand")
+
+
+class FoldServeTossesTest(unittest.TestCase):
+    def test_the_toss_before_a_serve_is_folded_into_it(self):
+        hits = [
+            {"frame": 900, "player": 6, "tracklet": 1, "stroke": "forehand", "at_baseline": True},   # toss
+            {"frame": 925, "player": 6, "tracklet": 1, "stroke": "serve", "at_baseline": True},      # toss, as serve
+            {"frame": 950, "player": 6, "tracklet": 1, "stroke": "serve", "at_baseline": True},      # the hit
+            {"frame": 930, "player": 2, "tracklet": 2, "stroke": "forehand", "at_baseline": True},   # someone else
+            {"frame": 800, "player": 6, "tracklet": 1, "stroke": "forehand", "at_baseline": True},   # 6s earlier
+        ]
+        kept = fold_serve_tosses(hits, 25.0)
+        self.assertEqual(sorted(h["frame"] for h in kept), [800, 930, 950])
 
 
 @unittest.skipUnless(WEIGHTS.exists(), "BST weights not downloaded")

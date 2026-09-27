@@ -51,6 +51,11 @@ BONE_PAIRS = (
 # holding balls, the ball cart); and a real hit's top class almost always
 # scored 0.55+ where the non-strokes that slipped through scored ~0.5.
 SERVE_MIN = 0.8
+# From the baseline a lower serve score is enough: on the Dingles swings
+# (checked by eye) far-end serves often scored 0.45-0.75, and no
+# groundstroke hit from the baseline scored over 0.4.
+SERVE_MIN_AT_BASELINE = 0.45
+BASELINE_ZONE_M = 1.5  # within this of the player's own baseline, either side
 HIT_MIN = 0.55
 FOREHAND_RIGHT_HANDED = {"HNR", "HFL"}
 DOUBLES_WIDTH_M = 10.97
@@ -117,14 +122,37 @@ def build_input(
 
 
 def stroke_name(label: str, probability: float, serve_probability: float, half_agrees: bool,
-                left_handed: bool = False) -> str:
+                left_handed: bool = False, at_baseline: bool = False) -> str:
     """forehand | backhand | serve | unsure, from one hit's two clips."""
     if serve_probability >= SERVE_MIN or (label.startswith("S") and probability >= SERVE_MIN):
+        return "serve"
+    if at_baseline and serve_probability >= SERVE_MIN_AT_BASELINE:
         return "serve"
     if not half_agrees or probability < HIT_MIN or label.startswith("S"):
         return "unsure"
     forehand = (label in FOREHAND_RIGHT_HANDED) != left_handed
     return "forehand" if forehand else "backhand"
+
+
+def fold_serve_tosses(hits: list[dict], fps: float, window_s: float = 2.0) -> list[dict]:
+    """A serve's ball toss moves the arm fast enough to register as a
+    swing of its own (on Dingles, one serve came out as three swings over
+    2.2s). Any swing by the same player, from the baseline, in the
+    `window_s` before one of their serves is that serve's toss: dropped -
+    including one itself labelled a serve, so a serve counts once, at the
+    last swing, which is the hit.
+    Each hit needs frame, player-or-tracklet, stroke and at_baseline."""
+    serves = [h for h in hits if h["stroke"] == "serve"]
+    def who(h):
+        return h.get("player") if h.get("player") is not None else ("t", h["tracklet"])
+    kept = []
+    for h in hits:
+        tossed = h.get("at_baseline") and any(
+            who(s) == who(h) and 0 < s["frame"] - h["frame"] <= window_s * fps for s in serves
+        )
+        if not tossed:
+            kept.append(h)
+    return kept
 
 
 def load_model(weights: str, device: str = "cpu"):

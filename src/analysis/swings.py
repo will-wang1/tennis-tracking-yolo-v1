@@ -46,8 +46,14 @@ THRESHOLD = 0.30
 # apart: a backswing and its follow-through counted twice.
 MIN_GAP = 25
 MIN_WRIST_CONF = 0.3
-BALL_NEAR_HEIGHTS = 2.0  # ball within this many player heights of the box...
-BALL_WINDOW = 12  # ...within this many frames of the swing
+# The ball must come within BALL_NEAR_HEIGHTS player heights of the
+# player's box within BALL_WINDOW frames of the swing, and must be SEEN.
+# The first version (2 heights, 12 frames, unseen allowed) let every
+# swing through. Measured on the Dingles swings sorted by eye: at 1 height
+# and 8 frames, 92% of real swings pass against 3 of 7 false ones and 5 of
+# 11 of the coach's; half a height kept only 86% of the real ones.
+BALL_NEAR_HEIGHTS = 1.0
+BALL_WINDOW = 8
 WRISTS = (9, 10)
 SHOULDERS = (5, 6)
 
@@ -145,9 +151,11 @@ def detect_swings(
     threshold: float = THRESHOLD,
     min_gap: int = MIN_GAP,
 ) -> list[Swing]:
-    """Every swing of every tracked person. A swing with the ball seen but
-    never near is dropped (a shadow swing, waving, a bounce of the ball
-    before serving is usually caught by the threshold instead)."""
+    """Every swing of every tracked person that the ball came close to.
+    A swing with no ball near - a shadow swing, waving, the coach
+    gesturing - is dropped, and so is one where the ball was not seen at
+    all: a hit needs a ball, and a ball-tracking gap costs a few real
+    swings at the far end rather than letting every gesture through."""
     n = len(people_rows)
     boxes: dict[int, dict[int, tuple]] = {}
     for f, row in enumerate(people_rows):
@@ -163,7 +171,7 @@ def detect_swings(
             if f in skip_frames:
                 continue
             near = ball_near(f, box_at, ball_at)
-            if near is False:
+            if not near:
                 continue
             swings.append(Swing(frame=f, tracklet=t, strength=float(signal[f]), ball_near=near))
     return sorted(swings, key=lambda s: s.frame)

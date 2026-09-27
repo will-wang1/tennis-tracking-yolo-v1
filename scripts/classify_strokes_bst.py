@@ -24,6 +24,7 @@ import argparse
 import json
 import pickle
 import sys
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
@@ -32,8 +33,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from src.analysis.bst_strokes import (  # noqa: E402
-    CLASSES, HIT_AFTER, HIT_BEFORE, SERVE_AFTER, SERVE_BEFORE, PersonFrame, build_input, classify, load_model,
-    stroke_name,
+    BASELINE_ZONE_M, CLASSES, HIT_AFTER, HIT_BEFORE, SERVE_AFTER, SERVE_BEFORE, PersonFrame, build_input, classify,
+    fold_serve_tosses, load_model, stroke_name,
 )
 from src.analysis.court_calibration import CourtCalibration  # noqa: E402
 from src.analysis.impact_pipeline import analyze_impacts  # noqa: E402
@@ -87,6 +88,7 @@ def main() -> None:
     parser.add_argument("--people", required=True)
     parser.add_argument("--report", required=True)
     parser.add_argument("--players")
+    parser.add_argument("--swings", help="scripts/detect_swings.py output: classify these swings instead of the ball-based hits")
     parser.add_argument("--weights", default=str(REPO_ROOT / "weights" / "bst" / "bst_AP_JnB_bone.pt"))
     parser.add_argument("--pose-model", default=str(REPO_ROOT / "weights" / "yolo" / "yolov8s-pose.pt"))
     parser.add_argument("--device", default=None)
@@ -121,20 +123,41 @@ def main() -> None:
     def boxes_at(f):
         return {int(t): (x1, y1, x2, y2) for t, x1, y1, x2, y2, _c in (rows[f] if 0 <= f < len(rows) else []) if t is not None}
 
+    # What gets classified: swings (scripts/detect_swings.py) when given,
+    # else the ball-based impacts with a person in reach.
+    events = []  # (frame, hitter tracklet, ball x, ball y, kind)
+    if args.swings:
+        by_frame: dict[int, list] = {}
+        for t in tracks:
+            for f, d in t.detections.items():
+                by_frame.setdefault(f, []).append((d.x, d.y))
+        for sw in json.loads(Path(args.swings).read_text())["swings"]:
+            f, t = sw["frame"], sw["tracklet"]
+            box = boxes_at(f).get(t)
+            if box is None:
+                continue
+            cx, cy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
+            # The ball nearest the player around the swing anchors its path.
+            near = [p for g in range(f - 8, f + 9) for p in by_frame.get(g, [])]
+            x, y = min(near, key=lambda p: np.hypot(p[0] - cx, p[1] - cy)) if near else (cx, cy)
+            events.append((f, t, x, y, "swing"))
+    else:
+        for imp in impacts.impacts:
+            f = imp.frame_idx
+            if f in skip or imp.kind == "bounce":
+                continue
+            hitter = nearest_in_reach(rows[f], imp.x, imp.y)
+            if hitter is not None:
+                events.append((f, hitter, imp.x, imp.y, imp.kind))
+
     hits = []
-    for imp in impacts.impacts:
-        f = imp.frame_idx
-        if f in skip or imp.kind == "bounce":
-            continue
-        hitter = nearest_in_reach(rows[f], imp.x, imp.y)
-        if hitter is None:
-            continue
+    for f, hitter, x0, y0, kind in events:
         hx, hy = feet(boxes_at(f)[hitter])
         hitter_far = hy < NET_Y_M
         # The other player: someone in the opposite half, on or near this
         # court, nearest where the ball is HIT_AFTER frames later (else
         # nearest the middle of that half).
-        later = ball_path(tracks, f, imp.x, imp.y, list(range(f, min(n, f + HIT_AFTER + 1))))[-1]
+        later = ball_path(tracks, f, x0, y0, list(range(f, min(n, f + HIT_AFTER + 1))))[-1]
         candidates = []
         for t, box in boxes_at(f).items():
             if t == hitter:
@@ -147,9 +170,10 @@ def main() -> None:
                     key = abs(x - 5.485)
                 candidates.append((key, t))
         other = min(candidates)[1] if candidates else None
-        hits.append({"frame": f, "x": imp.x, "y": imp.y, "kind": imp.kind, "hitter": hitter, "other": other,
-                     "hitter_half": "far" if hitter_far else "near", "at_net": abs(hy - NET_Y_M) <= NET_ZONE_M})
-    print(f"{len(hits)} hits with a person in reach ({sum(h['kind'] == 'contact' for h in hits)} confirmed contacts)")
+        hits.append({"frame": f, "x": x0, "y": y0, "kind": kind, "hitter": hitter, "other": other,
+                     "hitter_half": "far" if hitter_far else "near", "at_net": abs(hy - NET_Y_M) <= NET_ZONE_M,
+                     "at_baseline": abs(min(hy, 2 * NET_Y_M - hy)) <= BASELINE_ZONE_M})
+    print(f"{len(hits)} to classify ({', '.join(f'{k}: {v}' for k, v in sorted(Counter(h['kind'] for h in hits).items()))})")
 
     # Poses for the two people over each clip's frames (serve window is the widest).
     need: dict[int, set[int]] = {}
@@ -222,7 +246,8 @@ def main() -> None:
         model_half = "far" if label[1] == "F" else "near"
         serve_prob = float(p_serve[4] + p_serve[5])
         # No player (not a person - the ball cart) is never a stroke.
-        stroke = stroke_name(label, float(p_hit.max()), serve_prob, model_half == h["hitter_half"]) \
+        stroke = stroke_name(label, float(p_hit.max()), serve_prob, model_half == h["hitter_half"],
+                             at_baseline=h["at_baseline"]) \
             if player_of.get(h["hitter"]) is not None or not player_of else "unsure"
         out_hits.append({
             "t_s": round(h["frame"] / fps, 2),
@@ -234,12 +259,17 @@ def main() -> None:
             "other_tracklet": h["other"],
             "stroke": stroke,
             "at_net": bool(h["at_net"]),
+            "at_baseline": bool(h["at_baseline"]),
             "label": label,
             "probabilities": {c: round(float(v), 3) for c, v in zip(CLASSES, p_hit)},
             "serve_window_label": CLASSES[int(np.argmax(p_serve))],
             "serve_window_serve_prob": round(serve_prob, 3),
             "half_agrees": model_half == h["hitter_half"],
         })
+    before = len(out_hits)
+    out_hits = fold_serve_tosses(out_hits, fps)
+    if before != len(out_hits):
+        print(f"{before - len(out_hits)} swings folded into the serve they were the ball toss of")
     agree = sum(h["half_agrees"] for h in out_hits)
     print(f"model's near/far agrees with tracking on {agree}/{len(out_hits)} hits")
     for h in out_hits:
