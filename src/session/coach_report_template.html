@@ -378,6 +378,9 @@ const tiles = [
   ["movement_near_court", (m) => Math.round(m.value) + " m", "run by near-court players"],
   ["near_court_moving_share", (m) => pct(m.value), "of near-court players' time spent moving"],
   ["players_identified", (m) => m.value, "players followed"],
+  ["live_rally_share", (m) => pct(m.value), "rallies started by players (rest fed by the coach)"],
+  ["shots_per_rally", (m) => m.value, "shots per rally"],
+  ["coach_shot_share", (m) => pct(m.value), "of the hitting done by the coach"],
 ];
 $("tiles").innerHTML = tiles.filter(([k]) => M[k]).map(([k, f, label]) => {
   const m = M[k];

@@ -106,8 +106,16 @@ def main() -> None:
          "--output", str(people)], args.force)
 
     poses = out / "poses.pkl"
+    # Every frame: swings (fed vs live) need the wrist on every frame - a
+    # pose every 2nd frame kept only 57 of 73 swings on Dingles.
+    sampled = False
+    if poses.exists() and not args.force:
+        import pickle
+
+        with open(poses, "rb") as handle:
+            sampled = pickle.load(handle).get("every", 1) != 1  # from before swings needed every frame
     step("pose for every person", poses, [PY, s("track_poses.py"), "--input", str(video),
-         "--people", str(people), "--output", str(poses)], args.force)
+         "--people", str(people), "--output", str(poses), "--every", "1"], args.force or sampled)
 
     # Player identity needs the cutaways from a first report; the report is
     # then rebuilt with the players (both report passes are cheap).
@@ -132,7 +140,11 @@ def main() -> None:
     players = out / "players.json"
     step("stable player identity", players, [PY, s("assign_players.py"), "--video", str(video),
          "--people", str(people), "--poses", str(poses), "--report", str(report), "--out", str(players)], force=True)
-    step("session report (players)", report, report_cmd + ["--players", str(players)], force=True)
+    swings = out / "swings.json"
+    step("swings", swings, [PY, s("detect_swings.py"), "--ball-cache", str(ball_cache), "--people", str(people),
+         "--poses", str(poses), "--report", str(report), "--players", str(players), "--out", str(swings)], force=True)
+    step("session report (players, fed vs live)", report,
+         report_cmd + ["--players", str(players), "--swings", str(swings)], force=True)
 
     if not args.no_feedback:
         step("AI feedback", feedback, [PY, s("session_feedback.py"), "--report", str(report),

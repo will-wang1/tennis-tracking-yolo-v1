@@ -2,7 +2,8 @@
 
 Used to tell people from objects (the ball cart has no skeleton), for
 which a pose on every 5th frame is plenty (--every, default 5) - a 5x
-saving; skipped frames carry an empty dict and the output
+saving - and for swings (scripts/detect_swings.py), which need every frame
+(--every 1, what scripts/run_session.py runs); skipped frames carry an empty dict and the output
 records `every`. Pose needs the far-court players as much as near ones. Running a pose model on the whole frame does not
 give that: measured on dingles_serve_volley, YOLOv8s-pose over the full
 1080p frame finds only the 2 near players (boxes ~280px tall) and misses

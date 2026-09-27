@@ -255,6 +255,7 @@ def main() -> None:
     parser.add_argument("--second-opinion", help="scripts/tennisproject_bounces.py cache, to mark agreed bounces")
     parser.add_argument("--name", help="Clip name (default: the cache's folder)")
     parser.add_argument("--players", help="scripts/assign_players.py players.json - per-player section")
+    parser.add_argument("--swings", help="scripts/detect_swings.py output - adds fed vs live play")
     parser.add_argument("--targets", help="JSON of coaching targets overriding the defaults (src/session/insights.py Targets)")
     parser.add_argument("--coach-player", type=int, help="Which player is the coach, if the guess is wrong")
     parser.add_argument("--out", required=True)
@@ -338,11 +339,32 @@ def main() -> None:
     if args.players and people_cache:
         add_structure(report, tracks, players_doc, fps, num_frames, skip)
 
-    from src.session.insights import Targets, build_summary, load_targets
+    from src.session.insights import Targets, build_summary, load_targets, play_note
 
     report["summary"] = build_summary(
         report, load_targets(args.targets) if args.targets else Targets(), coach_override=args.coach_player
     )
+    if args.swings:
+        # Fed or live needs the coach, which the summary has just decided.
+        from src.session.feeding import feeding_summary
+
+        swings = [s for s in json.loads(Path(args.swings).read_text())["swings"] if s["frame"] not in skip]
+        feeding = report["feeding"] = feeding_summary(swings, fps, report["summary"]["coach_player"])
+        caveats = feeding["caveats"]
+        live_share = feeding["live_rallies"] / feeding["rallies"] if feeding["rallies"] else None
+        report["metrics"]["live_rally_share"] = {
+            "value": round(live_share, 3) if live_share is not None else None, "unit": "share of rallies started by a player",
+            "basis": "estimated", "method": feeding["method"], "caveats": caveats}
+        report["metrics"]["shots_per_rally"] = {
+            "value": feeding["shots_per_rally"]["all"], "unit": "shots per rally (detected swings)",
+            "basis": "estimated", "method": feeding["method"], "caveats": caveats}
+        report["metrics"]["coach_shot_share"] = {
+            "value": feeding["coach_shot_share"] if feeding["coach_player"] is not None else None,
+            "unit": "share of all shots hit by the coach", "basis": "estimated", "method": feeding["method"],
+            "caveats": caveats}
+        note = play_note(report["feeding"])
+        if note:
+            report["summary"]["notes"].insert(0, note)
 
     # The court this report was measured on, so everything downstream (the
     # rendered video) uses the same one rather than re-deriving its own.

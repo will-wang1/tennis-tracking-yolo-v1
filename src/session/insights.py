@@ -301,3 +301,35 @@ def build_summary(report: dict, targets: Optional[Targets] = None, coach_overrid
             "wait_share": round(wm, 3) if wm is not None else None,
         },
     }
+
+
+# Fed vs live is a coaching choice with no right answer, so it is a note -
+# what kind of session it was - never a verdict.
+MOSTLY = 0.7
+
+
+def play_note(feeding: dict) -> Optional[dict]:
+    """One note saying whether the session was fed or live, from the
+    report's feeding section (src/session/feeding.py)."""
+    n = feeding.get("rallies") or 0
+    if not n:
+        return None
+    fed, live = feeding["fed_rallies"], feeding["live_rallies"]
+    per = feeding["shots_per_rally"]
+    coach_share = feeding.get("coach_shot_share")
+    hitting = f" The coach did {_pct(coach_share)} of the hitting." if coach_share is not None else ""
+    if feeding.get("coach_player") is None:
+        return {"title": "Fed or live: unknown",
+                "detail": f"{n} rallies, averaging {per['all']} shots, but with no coach identified a feed cannot "
+                          "be told from a player starting the point. Set the coach when running the report."}
+    if live / n >= MOSTLY:
+        title = "Mostly live play"
+        detail = f"Players started {live} of {n} rallies themselves, averaging {per['live']} shots a rally."
+    elif fed / n >= MOSTLY:
+        title = "Mostly fed"
+        detail = f"The coach started {fed} of {n} rallies, with about {per['fed']} shots from each feed."
+    else:
+        title = "A mix of fed and live play"
+        detail = (f"The coach fed {fed} of {n} rallies (about {per['fed']} shots each); players started "
+                  f"{live} (about {per['live']} shots each).")
+    return {"title": title, "detail": detail + hitting, "basis": "session"}

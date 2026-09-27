@@ -77,6 +77,22 @@ def _median(x: np.ndarray, size: int) -> np.ndarray:
     return out
 
 
+# Poses may be sampled every other frame to save time (track_poses.py
+# --every 2); gaps up to this long are filled by straight-line
+# interpolation before smoothing, so the signal is computed as if every
+# frame had a pose.
+MAX_FILL = 2
+
+
+def _fill_short_gaps(x: np.ndarray, max_gap: int) -> np.ndarray:
+    out = x.copy()
+    ok = np.flatnonzero(np.isfinite(x))
+    for a, b in zip(ok, ok[1:]):
+        if 1 < b - a <= max_gap + 1:
+            out[a + 1:b] = np.interp(np.arange(a + 1, b), [a, b], [x[a], x[b]])
+    return out
+
+
 def wrist_travel(
     poses: dict[int, tuple[np.ndarray, np.ndarray]], heights: dict[int, float], n: int,
     span: int = SPAN, median: int = MEDIAN,
@@ -94,7 +110,7 @@ def wrist_travel(
                 rel[f, i] = xy[w] - shoulders
     for i in range(2):
         for d in range(2):
-            rel[:, i, d] = _median(rel[:, i, d], median)
+            rel[:, i, d] = _median(_fill_short_gaps(rel[:, i, d], MAX_FILL), median)
     out = np.full(n, np.nan)
     for f in range(span, n - span):
         h = heights.get(f)
