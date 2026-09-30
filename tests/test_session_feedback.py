@@ -137,3 +137,31 @@ class LocalQwenTest(unittest.TestCase):
             request_feedback_local(REPORT, post=lambda u, p, t: {"message": {"content": "not json"}})
         with self.assertRaises(RuntimeError):
             request_feedback_local(REPORT, post=lambda u, p, t: {"message": {"content": '{"headline": "x"}'}})
+
+
+class MlxQwenTest(unittest.TestCase):
+    def test_fenced_json_is_accepted_and_labelled(self):
+        import json as _json
+
+        from src.session.feedback import request_feedback_mlx
+
+        out = request_feedback_mlx(REPORT, generate_fn=lambda m: "```json\n" + _json.dumps(GOOD) + "\n```")
+        self.assertEqual(out["headline"], GOOD["headline"])
+        self.assertIn("MLX", out["model"])
+
+    def test_one_retry_then_a_loud_failure(self):
+        import json as _json
+
+        from src.session.feedback import request_feedback_mlx
+
+        replies = iter(["sorry, here you go: not json", _json.dumps(GOOD)])
+        calls = []
+
+        def gen(messages):
+            calls.append(len(messages))
+            return next(replies)
+
+        self.assertEqual(request_feedback_mlx(REPORT, generate_fn=gen)["headline"], GOOD["headline"])
+        self.assertEqual(calls, [2, 4])  # the retry sees its own bad reply and the complaint
+        with self.assertRaises(RuntimeError):
+            request_feedback_mlx(REPORT, generate_fn=lambda m: "never json")

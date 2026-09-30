@@ -1,17 +1,17 @@
 """Write coaching feedback for a session report by asking a language model to
 read it (src/session/feedback.py).
 
-By default the model is Qwen3 8B running on this computer through Ollama,
-so nothing leaves the machine:
+By default the model is Qwen3 8B running on this computer, so nothing
+leaves the machine - through Apple's MLX (pip install mlx-lm; the model,
+~4.6GB, downloads from Hugging Face on first use), or through Ollama with
+--backend ollama:
 
     python scripts/session_feedback.py \\
         --report outputs/dingles_serve_volley/session_report.json \\
         --out outputs/dingles_serve_volley/session_feedback.json
 
-One-off setup: install Ollama (https://ollama.com/download), open it once,
-then `ollama pull qwen3:8b`. If Ollama is not running or the model is not
-downloaded, this writes the exact prompt to `<out>.prompt.txt` instead and
-says what to do.
+If the model cannot run here, this writes the exact prompt to
+`<out>.prompt.txt` instead and says what to do.
 
 --provider claude uses the Anthropic API instead (needs ANTHROPIC_API_KEY).
 """
@@ -26,8 +26,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from src.session.feedback import (  # noqa: E402
-    LOCAL_MODEL, OLLAMA, FeedbackRefused, compact_report, local_model_status, offline_prompt, request_feedback,
-    request_feedback_local,
+    LOCAL_MODEL, MLX_MODEL, OLLAMA, FeedbackRefused, compact_report, local_model_status, mlx_status, offline_prompt,
+    request_feedback, request_feedback_local, request_feedback_mlx,
 )
 
 
@@ -36,7 +36,9 @@ def main() -> None:
     parser.add_argument("--report", required=True)
     parser.add_argument("--out", required=True)
     parser.add_argument("--provider", default="qwen", choices=["qwen", "claude"])
-    parser.add_argument("--model", default=LOCAL_MODEL, help="Ollama model name (with --provider qwen)")
+    parser.add_argument("--backend", default="mlx", choices=["mlx", "ollama"], help="How to run Qwen here")
+    parser.add_argument("--model", default=None,
+                        help=f"Model to run (default {MLX_MODEL} with mlx, {LOCAL_MODEL} with ollama)")
     parser.add_argument("--host", default=OLLAMA, help="Where Ollama is listening")
     parser.add_argument("--effort", default="high", choices=["low", "medium", "high", "xhigh", "max"],
                         help="With --provider claude")
@@ -49,20 +51,33 @@ def main() -> None:
     prompt_path = out.with_suffix(".prompt.txt")
 
     if args.provider == "qwen":
-        status = "offline" if args.offline else local_model_status(args.model, args.host)
+        model = args.model or (MLX_MODEL if args.backend == "mlx" else LOCAL_MODEL)
+        if args.offline:
+            status = "offline"
+        elif args.backend == "mlx":
+            status = mlx_status(model)
+            if status == "not downloaded":
+                print(f"Downloading {model} (~4.6GB, once)...", flush=True)
+                status = "ready"  # load() fetches it
+        else:
+            status = local_model_status(model, args.host)
         if status != "ready":
             prompt_path.write_text(offline_prompt(compact_report(report)))
-            print(f"Wrote the prompt to {prompt_path} instead of calling {args.model}:")
-            if status == "no server":
-                print("  Ollama is not running. Install it from https://ollama.com/download and open it once.")
-            if status in ("no server", "not pulled"):
-                print(f"  Then download the model:  ollama pull {args.model}")
+            print(f"Wrote the prompt to {prompt_path} instead of calling {model}:")
+            hints = {"no mlx": "  MLX is not installed: pip install mlx-lm (needs an Apple silicon Mac)",
+                     "no server": "  Ollama is not running: install it from https://ollama.com/download and open it",
+                     "not pulled": f"  Download the model: ollama pull {model}"}
+            if status in hints:
+                print(hints[status])
             return
-        print(f"Asking {args.model} (on this computer) - a minute or two...", flush=True)
+        print(f"Asking {model} on this computer - a minute or two...", flush=True)
         try:
-            feedback = request_feedback_local(report, model=args.model, host=args.host)
+            if args.backend == "mlx":
+                feedback = request_feedback_mlx(report, model_id=model)
+            else:
+                feedback = request_feedback_local(report, model=model, host=args.host)
         except (RuntimeError, OSError) as error:
-            raise SystemExit(f"{args.model} failed: {error}")
+            raise SystemExit(f"{model} failed: {error}")
     else:
         have_credentials = bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")) or (
             Path.home() / ".config" / "anthropic"

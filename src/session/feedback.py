@@ -1,6 +1,7 @@
 """Turn a session report (report.py) into written feedback for a coach, by
-asking a language model to interpret it: Qwen running on this computer
-through Ollama (the default), or Claude through the Anthropic API.
+asking a language model to interpret it: Qwen3 8B running on this computer
+(through Apple's MLX by default - a Python library, nothing to install
+beyond pip - or through Ollama), or Claude through the Anthropic API.
 
 The report does the measuring; this does the reading. The model is given
 the whole report and told the one rule the report is built around: a value
@@ -160,6 +161,86 @@ def _post_json(url: str, payload: dict, timeout: float) -> dict:
     request = urllib.request.Request(url, data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(request, timeout=timeout) as response:
         return json.loads(response.read())
+
+
+# ---- local Qwen through MLX (Apple silicon, pip only) ---------------------
+
+MLX_MODEL = "mlx-community/Qwen3-8B-4bit"  # ~4.6GB, from Hugging Face on first use
+_mlx_cache: dict = {}
+
+
+def _parse_feedback(text: str) -> dict:
+    """The JSON object in a model's reply (it may wrap it in ``` fences),
+    checked against the schema's required fields."""
+    start, end = text.find("{"), text.rfind("}")
+    if start < 0 or end <= start:
+        raise ValueError("no JSON object in the reply")
+    feedback = json.loads(text[start:end + 1])
+    missing = [k for k in FEEDBACK_SCHEMA["required"] if k not in feedback]
+    if missing:
+        raise ValueError(f"missing {missing}")
+    for o in feedback.get("observations", []):
+        if o.get("kind") not in ("strength", "worth_a_look", "neutral"):
+            o["kind"] = "neutral"
+    return feedback
+
+
+def request_feedback_mlx(report: dict, model_id: str = MLX_MODEL, generate_fn=None, max_tokens: int = 2500) -> dict:
+    """Ask Qwen through MLX. There is no schema-constrained decoding here, so
+    the schema goes in the prompt, the reply is checked, and a reply that
+    does not fit gets one retry with the problem pointed out.
+    `generate_fn(messages) -> str` is injectable for tests."""
+    if generate_fn is None:
+        generate_fn = _mlx_generator(model_id, max_tokens)
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT + "\n\nReply with a single JSON object and nothing else, matching "
+                                                     "this schema:\n" + json.dumps(FEEDBACK_SCHEMA)},
+        {"role": "user", "content": build_user_message(compact_report(report))},
+    ]
+    reply = generate_fn(messages)
+    try:
+        feedback = _parse_feedback(reply)
+    except (ValueError, json.JSONDecodeError) as error:
+        messages += [{"role": "assistant", "content": reply},
+                     {"role": "user", "content": f"That was not valid ({error}). Reply again with only the JSON object."}]
+        reply = generate_fn(messages)
+        try:
+            feedback = _parse_feedback(reply)
+        except (ValueError, json.JSONDecodeError) as error2:
+            raise RuntimeError(f"{model_id} did not return usable JSON: {error2}; reply began {reply[:200]!r}")
+    feedback["model"] = "Qwen3 8B (on this computer, via MLX)"
+    return feedback
+
+
+def _mlx_generator(model_id: str, max_tokens: int):
+    from mlx_lm import generate, load
+    from mlx_lm.sample_utils import make_sampler
+
+    if model_id not in _mlx_cache:
+        _mlx_cache[model_id] = load(model_id)
+    model, tokenizer = _mlx_cache[model_id]
+
+    def run(messages):
+        prompt = tokenizer.apply_chat_template(messages, add_generation_prompt=True, enable_thinking=False)
+        return generate(model, tokenizer, prompt=prompt, max_tokens=max_tokens, sampler=make_sampler(temp=0.3))
+
+    return run
+
+
+def mlx_status(model_id: str = MLX_MODEL) -> str:
+    """'ready', 'no mlx' (not installed / not Apple silicon) or 'not downloaded'."""
+    try:
+        import mlx.core  # noqa: F401
+        import mlx_lm  # noqa: F401
+    except ImportError:
+        return "no mlx"
+    try:
+        from huggingface_hub import snapshot_download
+
+        snapshot_download(model_id, local_files_only=True)
+    except Exception:
+        return "not downloaded"
+    return "ready"
 
 
 def local_model_status(model: str = LOCAL_MODEL, host: str = OLLAMA) -> str:
