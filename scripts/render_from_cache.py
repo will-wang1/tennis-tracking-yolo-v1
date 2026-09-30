@@ -197,7 +197,8 @@ def _draw_event_panel(frame, frame_idx, fps, log):
     recent = [e for e in log if 0 <= frame_idx - e[0] <= _EVENT_PANEL_S * fps][-9:][::-1]
     x = frame.shape[1] - 430
     cv2.rectangle(frame, (x - 12, 12), (frame.shape[1] - 12, 52 + 30 * max(1, len(recent))), (0, 0, 0), -1)
-    cv2.putText(frame, "E2E-Spot (pink)  vs  ours (yellow)", (x, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+    title = "E2E-Spot (pink)  vs  ours (yellow)" if any(c == _OURS_COLOR for _, c, _ in log) else "E2E-Spot events"
+    cv2.putText(frame, title, (x, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
     for i, (f, color, text) in enumerate(recent):
         fresh = frame_idx - f <= 8
         cv2.putText(frame, f"{f / fps:6.2f}s  {text}", (x, 72 + 30 * i), cv2.FONT_HERSHEY_SIMPLEX, 0.62,
@@ -356,11 +357,11 @@ def render(args) -> None:
             if kind == "bounce":
                 for f in range(e["frame"], e["frame"] + 10):
                     e2e_bounces.setdefault(f, []).append(e["frame"])
-        if swings_at:
+        if swings_at and args.ours:
             for sw in swings:
                 who = f"P{sw['player']}" if sw.get("player") is not None else "?"
                 event_log.append((sw["frame"], _OURS_COLOR, f"ours swing {who} {sw.get('end', '')}"))
-        if args.report:
+        if args.report and args.ours:
             for b in report["raw"].get("bounces", []):
                 event_log.append((b["frame"], _OURS_COLOR, f"ours bounce {b.get('half', '')}"))
                 px = calibrations[b["frame"]].world_to_pixel(*b["position_m"]) if b.get("position_m") else None
@@ -513,6 +514,8 @@ def main() -> None:
     )
     parser.add_argument("--bounces-label", default="CatBoost")
     parser.add_argument("--players", help="scripts/assign_players.py players.json - label people as stable players")
+    parser.add_argument("--no-ours", dest="ours", action="store_false",
+                        help="With --events: show only E2E-Spot's calls, not our swings and bounces")
     parser.add_argument("--events", help="scripts/e2e_spot_events.py output - compare its calls with ours on screen")
     parser.add_argument("--swings", help="scripts/detect_swings.py output - mark each swing and count them per player")
     parser.add_argument("--strokes", help="scripts/classify_strokes_bst.py output - label each hit over its hitter")
