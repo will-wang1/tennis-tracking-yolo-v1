@@ -66,3 +66,19 @@ class ModelTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CompareVocabularyTest(unittest.TestCase):
+    def test_fine_classes_fold_to_what_bst_can_say(self):
+        import importlib.util
+        from pathlib import Path
+
+        spec = importlib.util.spec_from_file_location(
+            "classify_strokes_tcn", Path(__file__).resolve().parent.parent / "scripts" / "classify_strokes_tcn.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        self.assertEqual(mod.coarse("backhand_slice"), "backhand")
+        self.assertEqual(mod.coarse("forehand_volley"), "forehand")
+        self.assertEqual(mod.coarse("not_a_swing"), "not_a_swing")
+        self.assertEqual(mod.bst_coarse({"stroke": "net", "label": "HFL"}), "forehand")
+        self.assertEqual(mod.bst_coarse({"stroke": "serve", "label": "SF"}), "serve")

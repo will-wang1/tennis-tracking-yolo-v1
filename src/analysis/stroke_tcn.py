@@ -142,3 +142,24 @@ def build_model(n_classes: int = len(CLASSES), width: int = 128, levels: int = 4
             return self.head(torch.cat([h.mean(dim=2), h.amax(dim=2)], dim=1))
 
     return StrokeTCN()
+
+
+def window_for_swing(frame: int, tracklet: int, people_rows: list, poses_by_frame: list, fps: float):
+    """One player's keypoints, confidences and boxes over the window around
+    a swing (its wrist-speed peak), from a session's person tracks and
+    per-frame poses - the same cut for training data and for classifying."""
+    kp = np.full((SEQ_LEN, 17, 2), np.nan, np.float32)
+    conf = np.zeros((SEQ_LEN, 17), np.float32)
+    box = np.full((SEQ_LEN, 4), np.nan, np.float32)
+    for k, ts in enumerate(window_times(frame / fps)):
+        f = int(round(ts * fps))
+        if not 0 <= f < len(people_rows):
+            continue
+        b = next((r[1:5] for r in people_rows[f] if r[0] == tracklet), None)
+        if b is None:
+            continue
+        box[k] = b
+        p = poses_by_frame[f].get(tracklet) if f < len(poses_by_frame) else None
+        if p is not None:
+            kp[k], conf[k] = p
+    return kp, conf, box

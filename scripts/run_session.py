@@ -153,6 +153,12 @@ def main() -> None:
     step("swings", swings, [PY, s("detect_swings.py"), "--ball-cache", str(ball_cache), "--people", str(people),
          "--poses", str(poses), "--report", str(report), "--players", str(players), "--e2e", str(e2e),
          "--out", str(swings)], force=True)
+    # Stroke type per swing, once a model has been trained (docs/gpu_stroke_training.html).
+    # Not in the report yet: kept beside it until it is shown to beat BST on labels.
+    stroke_weights = REPO_ROOT / "weights" / "stroke_tcn.pt"
+    if stroke_weights.exists():
+        step("stroke type per swing", out / "strokes_tcn.json", [PY, s("classify_strokes_tcn.py"), "--session", str(out),
+             "--weights", str(stroke_weights), "--out", str(out / "strokes_tcn.json")], force=True)
     step("session report (players, fed vs live)", report,
          report_cmd + ["--players", str(players), "--swings", str(swings)], force=True)
 

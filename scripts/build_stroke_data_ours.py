@@ -19,7 +19,7 @@ import numpy as np
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from src.analysis.stroke_tcn import CLASSES, FPS, SEQ_LEN, class_of_label, window_times  # noqa: E402
+from src.analysis.stroke_tcn import CLASSES, FPS, class_of_label, window_for_swing  # noqa: E402
 
 
 def main() -> None:
@@ -43,21 +43,7 @@ def main() -> None:
         sw = swings.get(lab["frame"])
         if cls is None or sw is None or "end" not in sw:
             continue
-        t = lab["tracklet"]
-        kp = np.full((SEQ_LEN, 17, 2), np.nan, np.float32)
-        conf = np.zeros((SEQ_LEN, 17), np.float32)
-        box = np.full((SEQ_LEN, 4), np.nan, np.float32)
-        for k, ts in enumerate(window_times(sw["frame"] / fps)):
-            f = int(round(ts * fps))
-            if not 0 <= f < len(rows):
-                continue
-            b = next((r[1:5] for r in rows[f] if r[0] == t), None)
-            if b is None:
-                continue
-            box[k] = b
-            p = poses["poses"][f].get(t) if f < len(poses["poses"]) else None
-            if p is not None:
-                kp[k], conf[k] = p
+        kp, conf, box = window_for_swing(sw["frame"], lab["tracklet"], rows, poses["poses"], fps)
         out["kp"].append(kp); out["conf"].append(conf); out["box"].append(box)
         out["far"].append(sw["end"] == "far"); out["label"].append(CLASSES.index(cls))
         out["meta"].append(f"{lab['session']}@{lab['t_s']}")
