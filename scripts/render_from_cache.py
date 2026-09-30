@@ -186,6 +186,24 @@ def calibrations_from_cache(cache: dict) -> dict[int, CourtCalibration]:
     }
 
 
+_E2E_COLOR = (200, 80, 255)  # pink: E2E-Spot's calls
+_OURS_COLOR = (60, 230, 255)  # yellow: ours
+_EVENT_PANEL_S = 3.0
+
+
+def _draw_event_panel(frame, frame_idx, fps, log):
+    """The last few seconds of events from both sources, newest first, so
+    who called what and when can be compared while the clip plays."""
+    recent = [e for e in log if 0 <= frame_idx - e[0] <= _EVENT_PANEL_S * fps][-9:][::-1]
+    x = frame.shape[1] - 430
+    cv2.rectangle(frame, (x - 12, 12), (frame.shape[1] - 12, 52 + 30 * max(1, len(recent))), (0, 0, 0), -1)
+    cv2.putText(frame, "E2E-Spot (pink)  vs  ours (yellow)", (x, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+    for i, (f, color, text) in enumerate(recent):
+        fresh = frame_idx - f <= 8
+        cv2.putText(frame, f"{f / fps:6.2f}s  {text}", (x, 72 + 30 * i), cv2.FONT_HERSHEY_SIMPLEX, 0.62,
+                    color if fresh else tuple(int(c * 0.6) for c in color), 2 if fresh else 1)
+
+
 def _draw_hud(frame, frame_idx, fps, live_tracks, total_tracks):
     """Frame/time plus how many balls are live RIGHT NOW - the number that
     makes a two-ball stretch legible while scrubbing."""
@@ -326,6 +344,32 @@ def render(args) -> None:
             swing_frames.setdefault(key, []).append(sw["frame"])
         print(f"Swings: {len(swings)} from {args.swings}")
 
+    event_log: list[tuple[int, tuple, str]] = []  # (frame, colour, text) for the comparison panel
+    e2e_bounces: dict[int, list[int]] = {}  # frame -> E2E bounce frames to ring around then
+    our_bounces: dict[int, list[tuple[float, float]]] = {}
+    if args.events:
+        import json
+
+        for e in json.loads(Path(args.events).read_text())["events"]:
+            court_end, kind = e["label"].split("_court_")
+            event_log.append((e["frame"], _E2E_COLOR, f"E2E  {kind} {court_end}"))
+            if kind == "bounce":
+                for f in range(e["frame"], e["frame"] + 10):
+                    e2e_bounces.setdefault(f, []).append(e["frame"])
+        if swings_at:
+            for sw in swings:
+                who = f"P{sw['player']}" if sw.get("player") is not None else "?"
+                event_log.append((sw["frame"], _OURS_COLOR, f"ours swing {who} {sw.get('end', '')}"))
+        if args.report:
+            for b in report["raw"].get("bounces", []):
+                event_log.append((b["frame"], _OURS_COLOR, f"ours bounce {b.get('half', '')}"))
+                px = calibrations[b["frame"]].world_to_pixel(*b["position_m"]) if b.get("position_m") else None
+                if px is not None:
+                    for f in range(b["frame"], b["frame"] + 10):
+                        our_bounces.setdefault(f, []).append(px)
+        event_log.sort(key=lambda e: e[0])
+        print(f"Events: {len(event_log)} for the comparison panel")
+
     other_bounces = None
     if args.bounces_from:
         other_bounces = load_other_bounces(args.bounces_from, fps, width / 1280.0)
@@ -429,6 +473,18 @@ def render(args) -> None:
             frame = impact_drawer.draw(
                 frame, frame_idx, impacts_by_frame, calibrations.get(frame_idx)
             )
+        if args.events and not in_cutaway:
+            for f0 in e2e_bounces.get(frame_idx, []):
+                # E2E-Spot says when, not where: ring the ball it most likely means.
+                pts = [(t.detections[f0].x, t.detections[f0].y) for t in tracks if f0 in t.detections]
+                for bx, by in pts[:1]:
+                    cv2.circle(frame, (int(bx), int(by)), 26, _E2E_COLOR, 3)
+                    cv2.putText(frame, "E2E bounce", (int(bx) + 30, int(by) + 6), cv2.FONT_HERSHEY_SIMPLEX, 0.6, _E2E_COLOR, 2)
+            for bx, by in our_bounces.get(frame_idx, []):
+                cv2.drawMarker(frame, (int(bx), int(by)), (255, 255, 255), cv2.MARKER_TILTED_CROSS, 26, 3)
+                cv2.putText(frame, "our bounce", (int(bx) + 16, int(by) + 28), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
+        if args.events:
+            _draw_event_panel(frame, frame_idx, fps, event_log)
         frame = _draw_hud(frame, frame_idx, fps, live, len(tracks))
 
         writer.write(frame)
@@ -457,6 +513,7 @@ def main() -> None:
     )
     parser.add_argument("--bounces-label", default="CatBoost")
     parser.add_argument("--players", help="scripts/assign_players.py players.json - label people as stable players")
+    parser.add_argument("--events", help="scripts/e2e_spot_events.py output - compare its calls with ours on screen")
     parser.add_argument("--swings", help="scripts/detect_swings.py output - mark each swing and count them per player")
     parser.add_argument("--strokes", help="scripts/classify_strokes_bst.py output - label each hit over its hitter")
     parser.add_argument(
