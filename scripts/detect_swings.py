@@ -24,7 +24,7 @@ sys.path.insert(0, str(REPO_ROOT))
 import numpy as np  # noqa: E402
 
 from src.analysis.court_calibration import CourtCalibration  # noqa: E402
-from src.analysis.swings import THRESHOLD, detect_swings  # noqa: E402
+from src.analysis.swings import THRESHOLD, ball_reversal, detect_swings  # noqa: E402
 from src.session.structure import NET_Y_M, SERVICE_LINE_FROM_NET_M as NET_ZONE_M  # noqa: E402
 from src.tracking.candidate_tracker import track_ball_paths  # noqa: E402
 
@@ -37,6 +37,7 @@ def main() -> None:
     parser.add_argument("--report", help="session_report.json - to skip its cutaways")
     parser.add_argument("--players", help="players.json - to name players and drop the ball cart")
     parser.add_argument("--threshold", type=float, default=THRESHOLD)
+    parser.add_argument("--e2e", help="scripts/e2e_spot_events.py output - its swings and serves confirm ours")
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
 
@@ -66,6 +67,7 @@ def main() -> None:
 
     swings = detect_swings(people["people"], poses["poses"], ball, skip_tracklets=not_people,
                            skip_frames=skip_frames, threshold=args.threshold)
+    e2e_events = json.loads(Path(args.e2e).read_text())["events"] if args.e2e else []
     boxes = {(f, int(t)): (x1, y1, x2, y2) for f, row in enumerate(people["people"])
              for t, x1, y1, x2, y2, _c in row if t is not None}
     out = []
@@ -80,6 +82,17 @@ def main() -> None:
             item["court_m"] = [round(x, 2), round(y, 2)]
             item["end"] = "far" if y < NET_Y_M else "near"
             item["at_net"] = abs(y - NET_Y_M) <= NET_ZONE_M
+            # Contact: when the ball turned round beside them, if seen; else
+            # the wrist-speed peak. Confirmed: that turn, or E2E-Spot calling
+            # a swing or serve at the same end.
+            box_at = {f: b for (f, t), b in boxes.items() if t == s.tracklet and abs(f - s.frame) <= 15}
+            turn = ball_reversal(s.frame, item["end"], box_at, ball)
+            item["contact_frame"] = turn if turn is not None else s.frame
+            confirmed = ["ball"] if turn is not None else []
+            if any(e["label"] in (f"{item['end']}_court_swing", f"{item['end']}_court_serve")
+                   and abs(e["frame"] - s.frame) <= 12 for e in e2e_events):
+                confirmed.append("e2e")
+            item["confirmed_by"] = confirmed
         out.append(item)
     per_player = Counter(s["player"] for s in out)
     Path(args.out).write_text(json.dumps({
@@ -88,6 +101,9 @@ def main() -> None:
         "per_player": {str(k): v for k, v in sorted(per_player.items(), key=lambda kv: str(kv[0]))},
         "swings": out,
     }, indent=1))
+    if any("confirmed_by" in s for s in out):
+        print(f"{sum(1 for s in out if s.get('confirmed_by'))} of {len(out)} confirmed by the ball turning round "
+              f"or by E2E-Spot")
     print(f"{len(out)} swings: " + ", ".join(f"Player {k}: {v}" for k, v in sorted(per_player.items(), key=lambda kv: str(kv[0]))))
     print(f"Wrote {args.out}")
 

@@ -88,6 +88,8 @@ def main() -> None:
     parser.add_argument("--people", required=True)
     parser.add_argument("--report", required=True)
     parser.add_argument("--players")
+    parser.add_argument("--at-contact", action="store_true",
+                        help="With --swings: centre each clip on the swing's contact frame rather than its wrist peak")
     parser.add_argument("--swings", help="scripts/detect_swings.py output: classify these swings instead of the ball-based hits")
     parser.add_argument("--weights", default=str(REPO_ROOT / "weights" / "bst" / "bst_AP_JnB_bone.pt"))
     parser.add_argument("--pose-model", default=str(REPO_ROOT / "weights" / "yolo" / "yolov8s-pose.pt"))
@@ -132,7 +134,9 @@ def main() -> None:
             for f, d in t.detections.items():
                 by_frame.setdefault(f, []).append((d.x, d.y))
         for sw in json.loads(Path(args.swings).read_text())["swings"]:
-            f, t = sw["frame"], sw["tracklet"]
+            # Centre the clip on the contact when it was seen (the ball
+            # turning round beside the player), else the wrist-speed peak.
+            f, t = (sw.get("contact_frame", sw["frame"]) if args.at_contact else sw["frame"]), sw["tracklet"]
             box = boxes_at(f).get(t)
             if box is None:
                 continue
@@ -140,7 +144,7 @@ def main() -> None:
             # The ball nearest the player around the swing anchors its path.
             near = [p for g in range(f - 8, f + 9) for p in by_frame.get(g, [])]
             x, y = min(near, key=lambda p: np.hypot(p[0] - cx, p[1] - cy)) if near else (cx, cy)
-            events.append((f, t, x, y, "swing"))
+            events.append((f, t, x, y, "swing", sw["frame"]))
     else:
         for imp in impacts.impacts:
             f = imp.frame_idx
@@ -148,10 +152,10 @@ def main() -> None:
                 continue
             hitter = nearest_in_reach(rows[f], imp.x, imp.y)
             if hitter is not None:
-                events.append((f, hitter, imp.x, imp.y, imp.kind))
+                events.append((f, hitter, imp.x, imp.y, imp.kind, f))
 
     hits = []
-    for f, hitter, x0, y0, kind in events:
+    for f, hitter, x0, y0, kind, swing_frame in events:
         hx, hy = feet(boxes_at(f)[hitter])
         hitter_far = hy < NET_Y_M
         # The other player: someone in the opposite half, on or near this
@@ -170,7 +174,7 @@ def main() -> None:
                     key = abs(x - 5.485)
                 candidates.append((key, t))
         other = min(candidates)[1] if candidates else None
-        hits.append({"frame": f, "x": x0, "y": y0, "kind": kind, "hitter": hitter, "other": other,
+        hits.append({"frame": f, "swing_frame": swing_frame, "x": x0, "y": y0, "kind": kind, "hitter": hitter, "other": other,
                      "hitter_half": "far" if hitter_far else "near", "at_net": abs(hy - NET_Y_M) <= NET_ZONE_M,
                      "at_baseline": abs(min(hy, 2 * NET_Y_M - hy)) <= BASELINE_ZONE_M})
     print(f"{len(hits)} to classify ({', '.join(f'{k}: {v}' for k, v in sorted(Counter(h['kind'] for h in hits).items()))})")
@@ -252,6 +256,7 @@ def main() -> None:
         out_hits.append({
             "t_s": round(h["frame"] / fps, 2),
             "frame": h["frame"],
+            "swing_frame": h["swing_frame"],
             "impact_kind": h["kind"],
             "tracklet": h["hitter"],
             "player": player_of.get(h["hitter"]),

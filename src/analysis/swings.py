@@ -191,3 +191,58 @@ def detect_swings(
                 continue
             swings.append(Swing(frame=f, tracklet=t, strength=float(signal[f]), ball_near=near))
     return sorted(swings, key=lambda s: s.frame)
+
+
+# ---- contact: the ball turning round beside the player -------------------
+#
+# A hit sends the ball back the way it came. Beside a near-end player the
+# ball comes DOWN the picture and leaves UP it; beside a far-end player the
+# reverse. Where that turn is seen, its frame is the CONTACT frame - on the
+# hand-labelled Dingles swings the true contact sat anywhere from 8 frames
+# before to 10 after the wrist-speed peak, so the peak alone is a rough
+# time. Measured there as a filter it did not pay: near the camera it
+# confirmed 17 of 21 real swings (and 1 of 2 false ones), but at the far end,
+# where the ball is 2-3px and often lost, only 18 of 34 real ones while still
+# passing 6 of 16 false ones - and serves (nothing coming in) often fail it.
+# So it CONFIRMS a swing and times it; it never drops one.
+
+REVERSAL_BEFORE = 10  # frames before the swing peak to look at the ball
+REVERSAL_AFTER = 12
+REVERSAL_REACH = 2.0  # ball within this many player heights of the box
+REVERSAL_SPAN = 6  # frames either side of the turn to measure the ball's direction over
+MIN_SPEED_PX = 0.5  # vertical pixels a frame, each way, to count as moving
+
+
+def ball_reversal(
+    frame: int, end: str, box_at: dict[int, tuple], ball_at: dict[int, list[tuple[float, float]]],
+) -> Optional[int]:
+    """The frame the ball turned round beside this player, or None."""
+    if frame not in box_at:
+        return None
+    b0 = box_at[frame]
+    height = max(b0[3] - b0[1], 1.0)
+    points: dict[int, tuple[float, float]] = {}
+    for g in range(frame - REVERSAL_BEFORE, frame + REVERSAL_AFTER + 1):
+        x1, y1, x2, y2 = box_at.get(g, b0)[:4]
+        best = None
+        for x, y in ball_at.get(g, []):
+            d = np.hypot(max(x1 - x, 0.0, x - x2), max(y1 - y, 0.0, y - y2)) / height
+            if d <= REVERSAL_REACH and (best is None or d < best[0]):
+                best = (d, (x, y))
+        if best:
+            points[g] = best[1]
+    frames = sorted(points)
+    if len(frames) < 5:
+        return None
+    toward = 1 if end == "near" else -1  # image-y direction of a ball coming at this player
+    turns = []
+    for c in frames:
+        pre = [g for g in frames if c - REVERSAL_SPAN <= g < c]
+        post = [g for g in frames if c < g <= c + REVERSAL_SPAN]
+        if len(pre) < 2 or len(post) < 2:
+            continue
+        v_in = (points[pre[-1]][1] - points[pre[0]][1]) / max(1, pre[-1] - pre[0])
+        v_out = (points[post[-1]][1] - points[post[0]][1]) / max(1, post[-1] - post[0])
+        if v_in * toward > MIN_SPEED_PX and v_out * toward < -MIN_SPEED_PX:
+            turns.append(c)
+    return min(turns, key=lambda c: abs(c - frame)) if turns else None

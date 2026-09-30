@@ -72,3 +72,20 @@ class DetectSwingsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BallReversalTest(unittest.TestCase):
+    def _ball(self, turn, toward):
+        # A ball coming at the player (y moving by `toward` a frame) that turns round at `turn`.
+        return {f: [(120.0, 150.0 + toward * 4.0 * (f - turn) * (1 if f <= turn else -1))] for f in range(20, 60)}
+
+    def test_near_player_ball_down_then_up_is_a_contact_at_the_turn(self):
+        from src.analysis.swings import ball_reversal
+        boxes = {f: (100.0, 100.0, 150.0, 200.0) for f in range(20, 60)}
+        self.assertEqual(ball_reversal(40, "near", boxes, self._ball(43, toward=1)), 43)
+
+    def test_the_wrong_way_round_is_not_a_contact(self):
+        from src.analysis.swings import ball_reversal
+        boxes = {f: (100.0, 100.0, 150.0, 200.0) for f in range(20, 60)}
+        self.assertIsNone(ball_reversal(40, "far", boxes, self._ball(43, toward=1)))
+        self.assertIsNone(ball_reversal(40, "near", boxes, {}))
