@@ -37,7 +37,7 @@ class LandingZone:
     half: str  # "far" | "near" - which baseline's side of the net
     side: str  # "left" | "right" - as the camera sees it, see module docstring
     depth: str  # "short" (net-to-service-line) | "deep" (service-line-to-baseline)
-    bounds: str  # "singles" | "doubles_alley" | "out"
+    bounds: str  # "singles" | "doubles_alley" | "out" (wide or long)
 
     def label(self) -> str:
         return f"{self.half}_{self.side}_{self.depth}"
@@ -64,7 +64,9 @@ def classify_landing_zone(world_x: float, world_y: float) -> LandingZone:
     else:
         depth = "deep" if world_y >= _SERVICE_LINE_NEAR_Y else "short"
 
-    if _SINGLES_LEFT_X <= world_x <= _SINGLES_RIGHT_X:
+    if world_y < 0.0 or world_y > _COURT_LENGTH:
+        bounds = "out"  # long: beyond a baseline
+    elif _SINGLES_LEFT_X <= world_x <= _SINGLES_RIGHT_X:
         bounds = "singles"
     elif _DOUBLES_LEFT_X <= world_x <= _DOUBLES_RIGHT_X:
         bounds = "doubles_alley"

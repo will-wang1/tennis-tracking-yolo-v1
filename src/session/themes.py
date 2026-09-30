@@ -93,7 +93,7 @@ def netplay(report: dict, swings: list[dict], coach: Optional[int]) -> dict:
     return out
 
 
-def consistency(feeding: Optional[dict]) -> dict:
+def consistency(feeding: Optional[dict], bounces: Optional[list] = None) -> dict:
     out = {"theme": "consistency", "name": THEMES["consistency"], "measures": [], "caveats": [
         "A rally ending is not always an error: a winner, or the coach stopping play, ends one too. "
         "The tool cannot tell which.",
@@ -117,6 +117,15 @@ def consistency(feeding: Optional[dict]) -> dict:
         {"name": "shots per rally", "early": round(mean(a), 1), "late": round(mean(b), 1),
          "detail": f"Rallies averaged {mean(a):.1f} shots in the first half and {mean(b):.1f} in the second."},
     ]
+    # Depth, when bounces are placed (E2E-Spot): deeper balls late is the
+    # same story told by the ball. Shown, not part of the verdict.
+    inside = sorted((b for b in bounces or [] if b.get("bounds") not in (None, "out")), key=lambda b: b["t_s"])
+    if len(inside) >= 2 * MIN_SHOTS_PER_HALF:
+        h = len(inside) // 2
+        da = sum(b["depth"] == "deep" for b in inside[:h]) / h
+        db = sum(b["depth"] == "deep" for b in inside[h:]) / (len(inside) - h)
+        out["measures"].append({"name": "bounces landing deep", "early": round(da, 3), "late": round(db, 3),
+                                "detail": f"{_pct(da)} of in-court bounces landed deep in the first half, {_pct(db)} in the second."})
     out["verdict"] = _verdict(sa - sb, SHORT_SHARE_CHANGE)  # fewer short rallies is better
     lead = {"improved": "Rallies lasted longer as the session went on",
             "dropped": "Rallies got shorter as the session went on",
@@ -140,7 +149,7 @@ def evaluate(themes: list[str], report: dict, swings: list[dict], coach: Optiona
         if key == "netplay":
             out.append(netplay(report, swings, coach))
         elif key == "consistency":
-            out.append(consistency(report.get("feeding")))
+            out.append(consistency(report.get("feeding"), report.get("raw", {}).get("bounces")))
         else:
             out.append(not_measured(key))
     return out

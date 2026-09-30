@@ -210,11 +210,11 @@
     <div class="panel">
       <div class="courts">
         <div>
-          <h3>Confirmed bounces</h3>
+          <h3>Where the ball bounced</h3>
           <svg class="court-svg" id="landing" role="img" aria-label="Bounce positions on the court"></svg>
           <div class="legend" style="justify-content:center">
-            <span><i style="background:var(--s-bounce);border-radius:50%"></i>confirmed by both methods</span>
-            <span><i style="border:2px solid var(--s-bounce);border-radius:50%;width:9px;height:9px"></i>one method only</span>
+            <span><i style="background:var(--s-bounce);border-radius:50%"></i><span id="legend-solid">in</span></span>
+            <span><i style="border:2px solid var(--s-bounce);border-radius:50%;width:9px;height:9px"></i><span id="legend-open">out</span></span>
           </div>
         </div>
         <div>
@@ -396,6 +396,7 @@ const tiles = [
   ["movement_near_court", (m) => Math.round(m.value) + " m", "run by near-court players"],
   ["near_court_moving_share", (m) => pct(m.value), "of near-court players' time spent moving"],
   ["players_identified", (m) => m.value, "players followed"],
+  ["deep_share", (m) => pct(m.value), "of bounces in the court landed deep (past the service line)"],
   ["live_rally_share", (m) => pct(m.value), "rallies started by players (rest fed by the coach)"],
   ["shots_per_rally", (m) => m.value, "shots per rally"],
   ["coach_shot_share", (m) => pct(m.value), "of the hitting done by the coach"],
@@ -454,6 +455,7 @@ function drawCourt(svg, margin) {
 (function () {
   const svg = $("landing"), S = drawCourt(svg, [1.5, 1.5]);
   const hasSecond = R.raw.bounces.some((b) => "agreed_by_second_method" in b);
+  if (hasSecond) { $("legend-solid").textContent = "confirmed by both methods"; $("legend-open").textContent = "one method only"; }
   R.raw.bounces.forEach((b) => {
     const solid = hasSecond ? b.agreed_by_second_method : b.bounds !== "out";
     el("circle", { cx: b.position_m[0] * S, cy: b.position_m[1] * S, r: 6.5,

@@ -71,3 +71,11 @@ class ClassifyCourtHalfTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LongIsOutTest(unittest.TestCase):
+    def test_beyond_either_baseline_is_out(self):
+        self.assertEqual(classify_landing_zone(world_x=5.485, world_y=-0.5).bounds, "out")
+        self.assertEqual(classify_landing_zone(world_x=5.485, world_y=24.3).bounds, "out")
+        self.assertEqual(classify_landing_zone(world_x=5.485, world_y=23.5).bounds, "singles")
+

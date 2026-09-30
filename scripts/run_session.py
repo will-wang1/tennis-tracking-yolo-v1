@@ -119,10 +119,15 @@ def main() -> None:
     step("pose for every person", poses, [PY, s("track_poses.py"), "--input", str(video),
          "--people", str(people), "--output", str(poses), "--every", "1"], args.force or sampled)
 
+    # Bounces (and a second opinion on near-end swings) from E2E-Spot, a video
+    # model that needs no ball tracking; its bounces beat ours on Dingles.
+    e2e = out / "e2e_spot.json"
+    step("E2E-Spot events", e2e, [PY, s("e2e_spot_events.py"), "--video", str(video), "--out", str(e2e)], args.force)
+
     # Player identity needs the cutaways from a first report; the report is
     # then rebuilt with the players (both report passes are cheap).
     report_cmd = [PY, s("session_report.py"), "--ball-cache", str(ball_cache), "--people", str(people),
-                  "--video", str(video), "--name", args.name, "--out", str(report)]
+                  "--video", str(video), "--name", args.name, "--out", str(report), "--e2e", str(e2e)]
     if args.theme:
         report_cmd += ["--theme", args.theme]
     tp_cache = out / "tennisproject_ball_track.pkl"
@@ -146,7 +151,8 @@ def main() -> None:
          "--people", str(people), "--poses", str(poses), "--report", str(report), "--out", str(players)], force=True)
     swings = out / "swings.json"
     step("swings", swings, [PY, s("detect_swings.py"), "--ball-cache", str(ball_cache), "--people", str(people),
-         "--poses", str(poses), "--report", str(report), "--players", str(players), "--out", str(swings)], force=True)
+         "--poses", str(poses), "--report", str(report), "--players", str(players), "--e2e", str(e2e),
+         "--out", str(swings)], force=True)
     step("session report (players, fed vs live)", report,
          report_cmd + ["--players", str(players), "--swings", str(swings)], force=True)
 

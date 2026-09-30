@@ -172,6 +172,45 @@ def best_fit(per_frame: dict, score) -> tuple[CourtCalibration, float]:
     return fit, s
 
 
+def add_e2e_bounces(report: dict, events: list, ball_tracks, court, fps: float, skip: set) -> None:
+    """Replace the bounce list with E2E-Spot's (src/analysis/e2e_bounces.py),
+    keeping ours as bounces_trajectory. Only placed bounces go on the landing
+    map; the count includes the ones the ball was not seen for."""
+    from collections import Counter
+
+    from src.analysis.e2e_bounces import e2e_bounces
+
+    found = e2e_bounces(events, ball_tracks, court, fps, skip)
+    placed = [b for b in found if b["position_m"]]
+    report["raw"]["bounces_trajectory"] = report["raw"]["bounces"]
+    report["raw"]["bounces"] = placed
+
+    def deep_share(half=None):
+        inside = [b for b in placed if b["bounds"] != "out" and (half is None or b["half"] == half)]
+        return (round(sum(b["depth"] == "deep" for b in inside) / len(inside), 3) if inside else None), len(inside)
+
+    caveats = [
+        "E2E-Spot (a video model trained on broadcast tennis) says when and at which end; the position is the "
+        "tracked ball's lowest point there, so bounces with no ball seen count but are not mapped.",
+        "Far-half positions are ~10x less precise than near-half (fence-height camera): trust near-end depth and "
+        "in/out most.",
+    ]
+    report["metrics"]["bounce_landing"] = {
+        "value": len(found), "unit": "bounces", "basis": "estimated",
+        "method": "E2E-Spot bounce calls (tennis_rny008gsm_gru_rgb), placed with the tracked ball.",
+        "caveats": caveats, "placed": len(placed),
+        "zone_counts": dict(Counter(b["zone"] for b in placed)),
+        "out_count": sum(1 for b in placed if b["bounds"] == "out"),
+        "by_half": {h: sum(1 for b in found if b["half"] == h) for h in ("near", "far")},
+    }
+    share, n = deep_share()
+    report["metrics"]["deep_share"] = {
+        "value": share, "unit": "share of in-court bounces landing beyond the service line", "basis": "estimated",
+        "method": f"Of {n} placed bounces inside the court, the share between the service line and the baseline.",
+        "caveats": caveats[1:], "near": deep_share("near")[0], "far": deep_share("far")[0],
+    }
+
+
 def add_structure(report: dict, tracks: dict, players_doc: dict, fps: float, num_frames: int, cutaway: set) -> None:
     """Drill/break segments, per-player queue and idle time, and a movement
     heatmap per player (src/session/structure.py)."""
@@ -257,6 +296,7 @@ def main() -> None:
     parser.add_argument("--second-opinion", help="scripts/tennisproject_bounces.py cache, to mark agreed bounces")
     parser.add_argument("--name", help="Clip name (default: the cache's folder)")
     parser.add_argument("--players", help="scripts/assign_players.py players.json - per-player section")
+    parser.add_argument("--e2e", help="scripts/e2e_spot_events.py output - use its bounces (placed with the ball)")
     parser.add_argument("--theme", help="What the session was on, comma-separated: netplay, consistency, "
                         "adjustment, around_backhand. Judged start vs end of the session.")
     parser.add_argument("--swings", help="scripts/detect_swings.py output - adds fed vs live play")
@@ -321,6 +361,8 @@ def main() -> None:
         second_opinion_bounce_frames=second,
         people_tracked=people_cache is not None,
     )
+    if args.e2e:
+        add_e2e_bounces(report, json.loads(Path(args.e2e).read_text())["events"], ball_tracks, static, fps, skip)
     if args.players:
         from src.session.report import player_summaries
 

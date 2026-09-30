@@ -7,12 +7,16 @@ bounce and contact detection is weakest. It was trained on broadcast
 matches (Wimbledon at 25fps, US Open at 30fps), so how it transfers to a
 fence camera is the question this script exists to answer.
 
-Needs the E2E-Spot code (github.com/jhong93/spot, BSD-3) and its tennis
-model (github.com/jhong93/e2e-spot-models, tennis_rny008gsm_gru_rgb):
+The model is vendored in src/third_party/e2e_spot (BSD-3) with its tennis
+weights in weights/e2e_spot:
 
     python scripts/e2e_spot_events.py --video data/videos/dingles_serve_volley.mp4 \\
-        --spot-dir <spot clone> --model-dir <models clone>/tennis_rny008gsm_gru_rgb \\
         --out outputs/dingles_serve_volley/e2e_spot.json [--full-width]
+
+MEASURED on dingles_serve_volley against the hand-labelled swings: near
+end 13 of 21 swings found and 13 of 14 calls real; far end 2 of 34 -
+nearly blind there, and full-width or larger frames did not help. Its
+bounces looked better than ours on video.
 
 Frames are shrunk to 224px high, as the model was trained. By default each
 is centre-cropped to 224x224 - also as trained - which on a 16:9 frame
@@ -26,6 +30,9 @@ import sys
 from pathlib import Path
 
 import numpy as np
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))
 
 CLASSES = ["far_court_bounce", "far_court_swing", "far_court_serve",
            "near_court_bounce", "near_court_swing", "near_court_serve"]  # data/tennis/class.txt
@@ -51,9 +58,7 @@ def peaks(scores: np.ndarray, min_score: float = MIN_SCORE, window: int = PEAK_W
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--video", required=True)
-    parser.add_argument("--spot-dir", required=True)
-    parser.add_argument("--model-dir", required=True)
-    parser.add_argument("--checkpoint", default="checkpoint_041.pt")
+    parser.add_argument("--weights", default=str(REPO_ROOT / "weights" / "e2e_spot" / "tennis_rny008gsm_gru_rgb.pt"))
     parser.add_argument("--full-width", action="store_true")
     parser.add_argument("--height", type=int, default=HEIGHT,
                         help="Frame height fed to the model (trained at 224; larger makes far players bigger)")
@@ -62,35 +67,12 @@ def main() -> None:
     args = parser.parse_args()
 
     import cv2
-    import timm
     import torch
 
-    sys.path.insert(0, args.spot_dir)
-    # E2E-Spot was written against timm 0.5, where layers lived under
-    # timm.models.layers; timm 1.x moved them to timm.layers.
-    import timm.layers
-    import timm.models
-    timm.models.layers = timm.layers
-    # The checkpoint holds every weight; stop timm fetching ImageNet ones first.
-    create = timm.create_model
-    timm.create_model = lambda name, pretrained=False, **kw: create(name, pretrained=False, **kw)
-    from train_e2e import E2EModel  # noqa: E402
-    from model.impl import gsm  # noqa: E402
+    from src.third_party.e2e_spot.model import load
 
-    # GSM builds its zero padding as torch.cuda.FloatTensor, which exists
-    # only on NVIDIA GPUs; the same shift, built on whatever device x is on.
-    def _lshift(self, x):
-        return torch.cat((x[:, :, 1:], torch.zeros_like(x[:, :, :1])), dim=2)
-
-    def _rshift(self, x):
-        return torch.cat((torch.zeros_like(x[:, :, :1]), x[:, :, :-1]), dim=2)
-
-    gsm._GSM.lshift_zeroPad, gsm._GSM.rshift_zeroPad = _lshift, _rshift
-
-    device = args.device or ("mps" if torch.backends.mps.is_available() else "cpu")
-    model = E2EModel(len(CLASSES) + 1, "rny008_gsm", "gru", clip_len=CLIP_LEN, modality="rgb", device=device)
-    model.load(torch.load(str(Path(args.model_dir) / args.checkpoint), map_location=device))
-    model._model.eval()
+    device = args.device or ("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
+    model = load(args.weights, device)
 
     capture = cv2.VideoCapture(args.video)
     fps = capture.get(cv2.CAP_PROP_FPS)
@@ -120,11 +102,7 @@ def main() -> None:
         clip = (clip - IMAGENET_MEAN) / IMAGENET_STD
         x = torch.from_numpy(clip).permute(0, 3, 1, 2).unsqueeze(0).to(device)
         with torch.no_grad():
-            pred = model._model(x)
-            if isinstance(pred, tuple):
-                pred = pred[0]
-            if pred.dim() > 3:
-                pred = pred[-1]
+            pred = model(x)
             prob = torch.softmax(pred, dim=2)[0].float().cpu().numpy()
         scores[s:s + len(prob)] += prob
         counts[s:s + len(prob)] += 1
@@ -136,7 +114,7 @@ def main() -> None:
             events.append({"frame": f, "t_s": round(f / fps, 2), "label": name, "score": round(float(scores[f, c + 1]), 3)})
     events.sort(key=lambda e: e["frame"])
     Path(args.out).write_text(json.dumps({
-        "model": f"E2E-Spot tennis_rny008gsm_gru_rgb ({args.checkpoint})", "full_width": args.full_width, "height": args.height,
+        "model": "E2E-Spot tennis_rny008gsm_gru_rgb (checkpoint 41)", "full_width": args.full_width, "height": args.height,
         "fps": fps, "min_score": MIN_SCORE, "events": events,
         "scores": np.round(scores[:, 1:], 3).tolist(),
     }))
