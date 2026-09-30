@@ -245,4 +245,6 @@ def ball_reversal(
         v_out = (points[post[-1]][1] - points[post[0]][1]) / max(1, post[-1] - post[0])
         if v_in * toward > MIN_SPEED_PX and v_out * toward < -MIN_SPEED_PX:
             turns.append(c)
-    return min(turns, key=lambda c: abs(c - frame)) if turns else None
+    # Every frame near the turn passes the test above; the turn itself is
+    # where the ball got furthest toward the player before going back.
+    return max(turns, key=lambda c: (points[c][1] * toward, -abs(c - frame))) if turns else None
