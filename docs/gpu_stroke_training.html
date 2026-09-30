@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stroke Model Training</title>
+<style>
+  :root {
+    --bg:#f3f5f4; --surface:#ffffff; --code:#eef2f0; --ink:#15201d; --ink-2:#4b5d58; --ink-3:#7a8a85;
+    --rule:#d6dfdc; --accent:#0e6a5b; --accent-soft:#dcede9; --warn:#a2551c; --warn-soft:#f7e8da;
+    --mono: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, "Segoe UI", BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --bg:#0c1413; --surface:#131e1c; --code:#0f1917; --ink:#e4edea; --ink-2:#a3b6b1;
+      --ink-3:#778a85; --rule:#24352f; --accent:#5fc3ae; --accent-soft:#102a26; --warn:#de9a5e; --warn-soft:#2a1c10; }
+  }
+  :root[data-theme="dark"] { --bg:#0c1413; --surface:#131e1c; --code:#0f1917; --ink:#e4edea; --ink-2:#a3b6b1;
+    --ink-3:#778a85; --rule:#24352f; --accent:#5fc3ae; --accent-soft:#102a26; --warn:#de9a5e; --warn-soft:#2a1c10; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.6 var(--sans); }
+  .wrap { max-width:860px; margin:0 auto; padding:32px 16px 72px; }
+  h1 { font-size:clamp(24px,4vw,32px); line-height:1.15; margin:0 0 8px; }
+  h2 { font-size:19px; margin:0 0 6px; display:flex; gap:10px; align-items:baseline; }
+  h2 .n { font-family:var(--mono); font-size:13px; color:var(--accent); background:var(--accent-soft); padding:2px 8px; border-radius:4px; }
+  p { margin:0 0 10px; }
+  .lede { color:var(--ink-2); font-size:16px; }
+  .meta { font-family:var(--mono); font-size:12px; color:var(--ink-3); margin-top:10px; }
+  section { background:var(--surface); border:1px solid var(--rule); border-radius:10px; padding:18px 20px; margin:16px 0; }
+  .note { font-size:14px; color:var(--ink-2); }
+  .warn { background:var(--warn-soft); color:var(--warn); border-radius:6px; padding:8px 12px; font-size:14px; margin:10px 0; }
+  .cmd { position:relative; margin:10px 0; }
+  .cmd pre { margin:0; background:var(--code); border:1px solid var(--rule); border-radius:8px; padding:12px 14px; padding-right:74px;
+    font:13px/1.55 var(--mono); overflow-x:auto; white-space:pre; }
+  .cmd button { position:absolute; top:8px; right:8px; font:12px var(--sans); border:1px solid var(--rule); background:var(--surface);
+    color:var(--ink); border-radius:5px; padding:3px 9px; cursor:pointer; }
+  .cmd button:hover { border-color:var(--accent); }
+  .cmd .label { font-family:var(--mono); font-size:11px; color:var(--ink-3); margin-bottom:3px; letter-spacing:.04em; text-transform:uppercase; }
+  code { font-family:var(--mono); font-size:.9em; background:var(--code); padding:1px 5px; border-radius:3px; }
+  table { border-collapse:collapse; width:100%; font-size:14px; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--rule); vertical-align:top; }
+  th { color:var(--ink-3); font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:.05em; }
+  .scroll { overflow-x:auto; }
+  ul { margin:6px 0 10px; padding-left:20px; }
+  li { margin-bottom:4px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Stroke Model Training</h1>
+  <p class="lede">Train the new stroke classifier on the GPU laptop: download 9 broadcast matches, turn E2E-Spot's
+    ~9,800 labelled strokes into training data, train, and bring the model back to the Mac.</p>
+  <p class="meta">Commands are for Windows PowerShell. Run them in order. Code: branch claude/bounce-contact-classifier, commit 3e2a1a9 or later.</p>
+
+  <section>
+    <h2>What happens where</h2>
+    <div class="scroll"><table>
+      <thead><tr><th>Step</th><th>Machine</th><th>Roughly</th></tr></thead>
+      <tbody>
+        <tr><td>1–2. Set up Python with the GPU</td><td>GPU laptop</td><td>15 min</td></tr>
+        <tr><td>3. Download the 9 matches</td><td>GPU laptop</td><td>depends on internet; several GB each</td></tr>
+        <tr><td>4. Quick check on one match</td><td>GPU laptop</td><td>5 min</td></tr>
+        <tr><td>5. Build the training data</td><td>GPU laptop</td><td>a few hours; can be stopped and restarted</td></tr>
+        <tr><td>6. Train</td><td>GPU laptop</td><td>10–30 min</td></tr>
+        <tr><td>7. Bring the model back</td><td>OneDrive syncs it; tell Claude</td><td>—</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note" style="margin-top:10px">Your 73 Dingles labels are already turned into a test file
+      (<code>data/strokes/ours/dingles_serve_volley.npz</code>). Training scores the model on them. It never trains on them,
+      so the score is honest.</p>
+  </section>
+
+  <section>
+    <h2><span class="n">1</span>Get the project onto the GPU laptop</h2>
+    <p>The project folder is in OneDrive, so on a laptop signed in to the same OneDrive it is already there. Open
+      PowerShell and go to it. The path is usually this; change it if your OneDrive folder is named differently:</p>
+    <div class="cmd"><div class="label">PowerShell</div><pre>cd "$env:USERPROFILE\OneDrive - Knox Grammar School\Documents\tennis-tracking-yolo-v1"
+git log --oneline -1</pre></div>
+    <p class="note">The last line should show commit <code>3e2a1a9</code> or newer. If OneDrive is not on that laptop,
+      copy the whole <code>tennis-tracking-yolo-v1</code> folder across instead. It needs the <code>weights</code> folder.</p>
+    <div class="warn">Keep the Python environment and the downloaded videos <b>outside</b> OneDrive (the commands below
+      use <code>C:\venvs</code> and <code>C:\tennis_videos</code>). Otherwise OneDrive will try to sync tens of gigabytes.</div>
+  </section>
+
+  <section>
+    <h2><span class="n">2</span>Python with the GPU</h2>
+    <p>Check the GPU and its CUDA version (top right of the output):</p>
+    <div class="cmd"><div class="label">PowerShell</div><pre>nvidia-smi</pre></div>
+    <p>Make an environment and install PyTorch for CUDA. <code>cu124</code> suits CUDA 12.4 and newer. If
+      <code>nvidia-smi</code> shows an older version, pick the matching command at pytorch.org/get-started.</p>
+    <div class="cmd"><div class="label">PowerShell</div><pre>Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+py -3.12 -m venv C:\venvs\tennis-gpu
+C:\venvs\tennis-gpu\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+pip install ultralytics opencv-python numpy scipy sympy</pre></div>
+    <p>Check PyTorch sees the GPU. It should print <code>True</code> and the GPU's name:</p>
+    <div class="cmd"><div class="label">PowerShell</div><pre>python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"</pre></div>
+    <p class="note">In a new PowerShell window later, activate the environment again with
+      <code>C:\venvs\tennis-gpu\Scripts\Activate.ps1</code> and <code>cd</code> into the project (step 1).</p>
+  </section>
+
+  <section>
+    <h2><span class="n">3</span>Download the 9 matches</h2>
+    <p>Only the 9 matches that have stroke labels. The download is video only (no sound), 1080p, at up to 30
+      frames a second, to match what the labels were made on.</p>
+    <div class="cmd"><div class="label">PowerShell, from the project folder</div><pre>$videos = "C:\tennis_videos"
+New-Item -ItemType Directory -Force $videos | Out-Null
+Import-Csv data\external\e2e_spot_tennis\videos.csv | ForEach-Object {
+  yt-dlp -f "bv*[height=1080][fps&lt;=30][vcodec^=avc1]/bv*[height=1080][fps&lt;=30]" `
+         -o "$videos\$($_.name).%(ext)s" "https://www.youtube.com/watch?v=$($_.yt_id)"
+}
+Get-ChildItem $videos | Select-Object Name, @{n="GB";e={[math]::Round($_.Length/1GB,1)}}</pre></div>
+    <p class="note">You should end up with 9 files named after the matches, e.g.
+      <code>wimbledon_2019_mens_final_djokovic_federer.mp4</code>. If one is no longer on YouTube, carry on; the next
+      step skips it and says so. If yt-dlp says the format is not available, run
+      <code>yt-dlp -F &lt;link&gt;</code> to list formats and send me the output.</p>
+  </section>
+
+  <section>
+    <h2><span class="n">4</span>Quick check: do the videos line up with the labels?</h2>
+    <p>The labels point at exact frames in the YouTube videos. If an upload was re-cut, the labels will point at the
+      wrong moments. Check one match on 20 points first:</p>
+    <div class="cmd"><div class="label">PowerShell</div><pre>python scripts\build_stroke_data_e2e.py --videos C:\tennis_videos --out data\strokes\e2e_check `
+  --matches wimbledon_2019_womens_final_halep_williams --max-points 20</pre></div>
+    <p>Then open the picture it writes:</p>
+    <div class="cmd"><div class="label">PowerShell</div><pre>start data\strokes\e2e_check\wimbledon_2019_womens_final_halep_williams_preview.jpg</pre></div>
+    <ul class="note">
+      <li><b>Good:</b> each picture shows a player at the moment of the stroke named above it (a serve looks like a
+        serve, a backhand like a backhand).</li>
+      <li><b>Bad:</b> players standing around, crowd shots or replays. The video and labels do not line up; stop and tell me.</li>
+      <li>The last line printed also shows how many strokes were skipped and why. "no court" is a camera angle the court
+        detector could not read; a few are normal.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2><span class="n">5</span>Build the training data</h2>
+    <p>All 9 matches. This takes a few hours. It writes one file per match, and a finished match is skipped, so you
+      can stop it (Ctrl+C) and run the same command again later to carry on.</p>
+    <div class="cmd"><div class="label">PowerShell</div><pre>python scripts\build_stroke_data_e2e.py --videos C:\tennis_videos --out data\strokes\e2e</pre></div>
+    <p class="note">Each match writes a <code>_preview.jpg</code> next to its data. Glance at a couple as they finish,
+      as in step 4. When all 9 are done you can delete <code>C:\tennis_videos</code>, since training does not need the videos.</p>
+    <p class="note">If it runs out of GPU memory, open <code>scripts\build_stroke_data_e2e.py</code>, change
+      <code>BATCH = 16</code> to <code>BATCH = 4</code>, and run the same command again.</p>
+  </section>
+
+  <section>
+    <h2><span class="n">6</span>Train</h2>
+    <p>Trains on 8 matches, holds the 9th out to check itself each round, and finally scores it on your
+      Dingles labels:</p>
+    <div class="cmd"><div class="label">PowerShell</div><pre>python scripts\train_stroke_tcn.py --train "data/strokes/e2e/*.npz" `
+  --val-match wimbledon_2019_womens_final_halep_williams `
+  --test data/strokes/ours/dingles_serve_volley.npz --out weights/stroke_tcn.pt</pre></div>
+    <p class="note">Each round prints an accuracy on the held-out match. It should climb over the first 10–20 rounds.
+      At the end it prints a score per stroke on Dingles, and saves <code>weights\stroke_tcn.pt</code> and
+      <code>weights\stroke_tcn.json</code> (all the scores).</p>
+  </section>
+
+  <section>
+    <h2><span class="n">7</span>Bring the model back</h2>
+    <p><code>weights\stroke_tcn.pt</code> and <code>weights\stroke_tcn.json</code> are in the project folder, so OneDrive
+      syncs them to the Mac by itself. Tell Claude once they are there. It will compare the new model with BST on your
+      labels and wire it into the pipeline if it wins.</p>
+    <p class="note">If the folder was copied rather than synced, copy those two files into the Mac's
+      <code>tennis-tracking-yolo-v1\weights</code> folder.</p>
+  </section>
+
+  <section>
+    <h2>If something goes wrong</h2>
+    <div class="scroll"><table>
+      <thead><tr><th>You see</th><th>Do this</th></tr></thead>
+      <tbody>
+        <tr><td><code>False</code> in step 2's check</td><td>PyTorch was installed without CUDA. Run
+          <code>pip uninstall torch torchvision</code>, then the <code>--index-url</code> install again with the CUDA
+          version <code>nvidia-smi</code> shows.</td></tr>
+        <tr><td><code>Activate.ps1 cannot be loaded</code></td><td>Run <code>Set-ExecutionPolicy -Scope CurrentUser RemoteSigned</code>
+          and try again.</td></tr>
+        <tr><td><code>ModuleNotFoundError: src</code></td><td>You are not in the project folder; <code>cd</code> into it (step 1).</td></tr>
+        <tr><td><code>[missing] &lt;match&gt;</code></td><td>That video did not download; fine to carry on without it.</td></tr>
+        <tr><td>Mostly "no court" or "player not found" skips</td><td>Send me the printed lines and the preview picture.</td></tr>
+        <tr><td><code>CUDA out of memory</code></td><td>Step 5's <code>BATCH</code> tip, or for training add <code>--batch 64</code>.</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+</div>
+<script>
+  document.querySelectorAll(".cmd").forEach((box) => {
+    const btn = document.createElement("button");
+    btn.textContent = "Copy";
+    btn.onclick = async () => {
+      const text = box.querySelector("pre").innerText;
+      try { await navigator.clipboard.writeText(text); btn.textContent = "Copied"; }
+      catch (e) {
+        const r = document.createRange(); r.selectNodeContents(box.querySelector("pre"));
+        const s = getSelection(); s.removeAllRanges(); s.addRange(r); btn.textContent = "Selected";
+      }
+      setTimeout(() => (btn.textContent = "Copy"), 1500);
+    };
+    box.appendChild(btn);
+  });
+</script>
+</body>
+</html>
