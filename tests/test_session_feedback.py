@@ -94,3 +94,46 @@ class PromptTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LocalQwenTest(unittest.TestCase):
+    def test_compact_report_drops_raw_arrays_and_keeps_what_feedback_needs(self):
+        from src.session.feedback import compact_report
+
+        report = {"clip": {"name": "x", "analysed_s": 100}, "raw": {"ball_tracks": [1] * 1000},
+                  "metrics": {"ball_in_play": {"value": 0.8, "unit": "share", "basis": "estimated", "method": "m",
+                                               "caveats": ["c"]}},
+                  "summary": {"headline": "h", "targets": {"a": 1}}, "feeding": {"rallies": 3, "rally_list": [1, 2]},
+                  "players": [{"player": 2, "shots": 5, "zone_shares": {"net": 0.1}}]}
+        c = compact_report(report)
+        self.assertNotIn("raw", c)
+        self.assertEqual(c["metrics"]["ball_in_play"], {"value": 0.8, "unit": "share", "basis": "estimated", "caveats": ["c"]})
+        self.assertNotIn("rally_list", c["feeding"])
+        self.assertNotIn("targets", c["summary"])
+        self.assertEqual(c["players"][0]["shots"], 5)
+
+    def test_asks_ollama_for_the_schema_and_labels_the_model(self):
+        import json as _json
+
+        from src.session.feedback import FEEDBACK_SCHEMA, request_feedback_local
+
+        seen = {}
+
+        def post(url, payload, timeout):
+            seen.update(url=url, payload=payload)
+            return {"message": {"content": _json.dumps(GOOD)}}
+
+        out = request_feedback_local(REPORT, model="qwen3:8b", host="http://h:1", post=post)
+        self.assertEqual(seen["url"], "http://h:1/api/chat")
+        self.assertEqual(seen["payload"]["format"], FEEDBACK_SCHEMA)
+        self.assertFalse(seen["payload"]["think"])
+        self.assertEqual(out["headline"], GOOD["headline"])
+        self.assertIn("qwen3:8b", out["model"])
+
+    def test_bad_json_or_missing_fields_fail_loudly(self):
+        from src.session.feedback import request_feedback_local
+
+        with self.assertRaises(RuntimeError):
+            request_feedback_local(REPORT, post=lambda u, p, t: {"message": {"content": "not json"}})
+        with self.assertRaises(RuntimeError):
+            request_feedback_local(REPORT, post=lambda u, p, t: {"message": {"content": '{"headline": "x"}'}})

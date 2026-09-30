@@ -1,5 +1,6 @@
 """Turn a session report (report.py) into written feedback for a coach, by
-asking Claude to interpret it.
+asking a language model to interpret it: Qwen running on this computer
+through Ollama (the default), or Claude through the Anthropic API.
 
 The report does the measuring; this does the reading. The model is given
 the whole report and told the one rule the report is built around: a value
@@ -71,8 +72,9 @@ values are real readings with a known error - present them as approximate. "lowe
 values are minimums - say "at least", and use the caveat to explain the gap.
 - Each metric's `caveats` list its known failure modes. If a caveat affects a point you \
 make, say so in that point's evidence.
-- A tracked "identity" is one continuous stretch of one person on screen, not a named \
-player. Never talk about "Player 3" as if the system knows who that is.
+- "Player 3" is the same person all session (the system joins them up by their \
+clothes), but the system does not know their name. Refer to players by number. \
+The player marked as the coach is a guess unless the report says it was set.
 
 What the report can and cannot tell you:
 - It measures activity: time the ball is in play, how often it is hit or bounces, where \
@@ -85,6 +87,92 @@ example, a low ball-in-play share could be deliberate teaching time), ask it in 
 Write for a working coach: short, concrete, no jargon from the report's field names \
 unless you quote them as evidence. Prefer three well-supported observations to eight \
 thin ones."""
+
+
+# ---- local Qwen through Ollama --------------------------------------------
+
+LOCAL_MODEL = "qwen3:8b"  # ~5GB; runs on a 16GB M2 alongside the rest
+OLLAMA = "http://localhost:11434"
+LOCAL_CONTEXT = 16384  # tokens; the compact report is a few thousand
+
+
+def compact_report(report: dict) -> dict:
+    """The report without its raw arrays (ball tracks, events, heatmaps),
+    which make the whole thing ~40k tokens - too much for a local model on
+    16GB, and not needed to write feedback: the verdicts, metrics with their
+    basis and caveats, players, themes and fed/live play all stay."""
+    clip = report.get("clip", {})
+    metrics = {
+        k: {f: m.get(f) for f in ("value", "unit", "basis", "caveats") if f in m}
+        for k, m in (report.get("metrics") or {}).items()
+    }
+    players = [
+        {k: p.get(k) for k in ("player", "on_camera_s", "distance_m", "moving_share", "shots", "shots_per_minute",
+                               "queue_share", "longest_queue_s", "idle_share", "zone_shares") if k in p}
+        for p in report.get("players") or []
+    ]
+    feeding = {k: v for k, v in (report.get("feeding") or {}).items() if k != "rally_list"}
+    summary = {k: v for k, v in (report.get("summary") or {}).items() if k not in ("targets",)}
+    return {
+        "clip": {k: clip.get(k) for k in ("name", "duration_s", "analysed_s", "cutaways_s") if k in clip},
+        "summary": summary,
+        "themes": report.get("themes") or [],
+        "metrics": metrics,
+        "players": players,
+        "feeding": feeding or None,
+        "segments": report.get("segments") or [],
+    }
+
+
+def request_feedback_local(report: dict, model: str = LOCAL_MODEL, host: str = OLLAMA, post=None,
+                           timeout: float = 900) -> dict:
+    """Ask a model served by Ollama on this computer, constrained to
+    FEEDBACK_SCHEMA. `post(url, payload) -> dict` is injectable for tests."""
+    if post is None:
+        post = _post_json
+    payload = {
+        "model": model,
+        "stream": False,
+        "think": False,  # Qwen3's reasoning mode: slow on a laptop, and the schema does the structuring
+        "format": FEEDBACK_SCHEMA,
+        "options": {"num_ctx": LOCAL_CONTEXT, "temperature": 0.3},
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": build_user_message(compact_report(report))},
+        ],
+    }
+    reply = post(f"{host}/api/chat", payload, timeout)
+    text = (reply.get("message") or {}).get("content") or ""
+    try:
+        feedback = json.loads(text)
+    except json.JSONDecodeError as error:
+        raise RuntimeError(f"{model} did not return JSON: {text[:200]!r}") from error
+    missing = [k for k in FEEDBACK_SCHEMA["required"] if k not in feedback]
+    if missing:
+        raise RuntimeError(f"{model} left out {missing}")
+    feedback["model"] = f"{model} (on this computer, via Ollama)"
+    return feedback
+
+
+def _post_json(url: str, payload: dict, timeout: float) -> dict:
+    import urllib.request
+
+    request = urllib.request.Request(url, data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.loads(response.read())
+
+
+def local_model_status(model: str = LOCAL_MODEL, host: str = OLLAMA) -> str:
+    """'ready', 'no server' (Ollama not installed or not running) or
+    'not pulled' (running, but the model is not downloaded)."""
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(f"{host}/api/tags", timeout=3) as response:
+            names = {m.get("name") for m in json.loads(response.read()).get("models", [])}
+    except OSError:
+        return "no server"
+    return "ready" if model in names or f"{model}:latest" in names else "not pulled"
 
 
 def build_user_message(report: dict) -> str:

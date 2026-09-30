@@ -169,6 +169,15 @@
     <ul class="notes" id="notes"></ul>
   </section>
 
+  <section id="ai-section" hidden>
+    <h2>AI commentary</h2>
+    <div class="panel">
+      <p class="headline" id="ai-headline"></p><ul class="obs" id="observations"></ul>
+      <div id="ai-questions-wrap" hidden><h3>Questions for the coach</h3><ul class="obs" id="ai-questions"></ul></div>
+      <p class="note" id="ai-model"></p>
+    </div>
+  </section>
+
   <section id="cards-section" hidden>
     <h2>Each player</h2>
     <div class="cards" id="cards"></div>
@@ -272,10 +281,6 @@
     </details>
   </section>
 
-        <section id="ai-section" hidden>
-          <h2>AI commentary</h2>
-          <div class="panel"><p class="headline" id="ai-headline"></p><ul class="obs" id="observations"></ul></div>
-        </section>
         <section>
           <details><summary>Targets used</summary><ul class="method" id="targets"></ul></details>
         </section>
@@ -386,6 +391,13 @@ $("meta").innerHTML = `<span><b>${clip.analysed_s.toFixed(0)}s</b> analysed of $
   $("ai-headline").textContent = F.headline;
   $("observations").innerHTML = (F.observations || []).map((o) =>
     `<li><div>${esc(o.point)}<div class="evidence">${esc(o.evidence || "")}</div></div></li>`).join("");
+  const qs = F.questions_for_the_coach || [];
+  if (qs.length) {
+    $("ai-questions-wrap").hidden = false;
+    $("ai-questions").innerHTML = qs.map((q) => `<li><div>${esc(q)}</div></li>`).join("");
+  }
+  $("ai-model").textContent = "Written by " + (F.model || "a language model") + " from the numbers on this page. "
+    + "It reads the measurements; it did not watch the session.";
 })();
 
 // ---------- tiles

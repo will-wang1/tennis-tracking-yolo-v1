@@ -15,7 +15,8 @@ ones) picks up where it stopped. --force redoes everything.
        pose         -> outputs/<name>/poses.pkl           ~5 min per 2 min of video (tells people from objects)
        players      -> outputs/<name>/players.json
     4. report       -> outputs/<name>/session_report.json
-    5. feedback     -> outputs/<name>/session_feedback.json (or .prompt.txt without an API key)
+    5. feedback     -> outputs/<name>/session_feedback.json, written by Qwen on this computer through
+                       Ollama (or .prompt.txt when Ollama or the model is not installed)
     6. coach page   -> outputs/<name>/coach_report.html
     7. video        -> outputs/<name>/annotated.mp4
 
@@ -163,8 +164,9 @@ def main() -> None:
          report_cmd + ["--players", str(players), "--swings", str(swings)], force=True)
 
     if not args.no_feedback:
-        step("AI feedback", feedback, [PY, s("session_feedback.py"), "--report", str(report),
-             "--out", str(feedback)], args.force)
+        # Always rewritten: the report it reads was just rebuilt.
+        step("AI feedback (Qwen on this computer)", feedback, [PY, s("session_feedback.py"), "--report", str(report),
+             "--out", str(feedback)], force=True)
     page_cmd = [PY, s("render_coach_report.py"), "--report", str(report), "--feedback", str(feedback),
                 "--out", str(out / "coach_report.html")]
     if args.title:
