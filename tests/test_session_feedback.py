@@ -165,3 +165,15 @@ class MlxQwenTest(unittest.TestCase):
         self.assertEqual(calls, [2, 4])  # the retry sees its own bad reply and the complaint
         with self.assertRaises(RuntimeError):
             request_feedback_mlx(REPORT, generate_fn=lambda m: "never json")
+
+
+class EnforceBasisTest(unittest.TestCase):
+    def test_measured_is_corrected_unless_a_measured_metric_is_named(self):
+        from src.session.feedback import enforce_basis
+
+        report = {"metrics": {"ball_in_play": {"basis": "estimated"}, "movement_near_court": {"basis": "measured"}}}
+        fb = {"observations": [{"evidence": "Ball in play was 78% (measured)."},
+                               {"evidence": "movement_near_court 242 m (measured)."}]}
+        out = enforce_basis(fb, report)
+        self.assertEqual(out["observations"][0]["evidence"], "Ball in play was 78% (estimated).")
+        self.assertIn("(measured)", out["observations"][1]["evidence"])

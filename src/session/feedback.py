@@ -85,6 +85,15 @@ infer them. Where an activity number raises a question only the coach can answer
 example, a low ball-in-play share could be deliberate teaching time), ask it in \
 `questions_for_the_coach` instead of judging.
 
+Stay exactly on what each number shows:
+- Only call a number "measured" if its basis says "measured"; otherwise say "about", \
+"roughly" or "estimated". Most numbers here are estimated.
+- Waiting, time at the net and ground covered are what they are - do not turn them into \
+"engagement", "effort" or "attitude". How many balls each player hit is \
+players[].shots_per_minute.
+- `summary.coach_player` is the player the system takes to be the coach (guessed unless \
+`summary.coach_source` is "set"); the coach is left out of player comparisons.
+
 Write for a working coach: short, concrete, no jargon from the report's field names \
 unless you quote them as evidence. Prefer three well-supported observations to eight \
 thin ones."""
@@ -114,7 +123,14 @@ def compact_report(report: dict) -> dict:
     ]
     feeding = {k: v for k, v in (report.get("feeding") or {}).items() if k != "rally_list"}
     summary = {k: v for k, v in (report.get("summary") or {}).items() if k not in ("targets",)}
+    measured = sorted(k for k, m in metrics.items() if m.get("basis") == "measured")
     return {
+        "read_this_first": {
+            "measured_metrics": measured,
+            "everything_else": "estimated or a lower bound - say 'about', never 'measured'",
+            "coach": (report.get("summary") or {}).get("coach_player"),
+            "player_numbers_are_estimated": "distance, waiting, net time and balls hit per player are all estimates",
+        },
         "clip": {k: clip.get(k) for k in ("name", "duration_s", "analysed_s", "cutaways_s") if k in clip},
         "summary": summary,
         "themes": report.get("themes") or [],
@@ -152,7 +168,7 @@ def request_feedback_local(report: dict, model: str = LOCAL_MODEL, host: str = O
     if missing:
         raise RuntimeError(f"{model} left out {missing}")
     feedback["model"] = f"{model} (on this computer, via Ollama)"
-    return feedback
+    return enforce_basis(feedback, report)
 
 
 def _post_json(url: str, payload: dict, timeout: float) -> dict:
@@ -209,6 +225,24 @@ def request_feedback_mlx(report: dict, model_id: str = MLX_MODEL, generate_fn=No
         except (ValueError, json.JSONDecodeError) as error2:
             raise RuntimeError(f"{model_id} did not return usable JSON: {error2}; reply began {reply[:200]!r}")
     feedback["model"] = "Qwen3 8B (on this computer, via MLX)"
+    return enforce_basis(feedback, report)
+
+
+def enforce_basis(feedback: dict, report: dict) -> dict:
+    """A local model is loose with "(measured)". Unless the report has a
+    measured metric, every "(measured)" in the evidence becomes
+    "(estimated)" - the rule the whole report rests on is not left to the
+    model. With one or more measured metrics it is kept only in evidence
+    that names one of them."""
+    import re
+
+    measured = [k for k, m in (report.get("metrics") or {}).items() if m.get("basis") == "measured"]
+    words = {k: [w for w in k.split("_") if len(w) > 3] for k in measured}
+    for o in feedback.get("observations", []):
+        ev = o.get("evidence", "")
+        names_measured = any(k in ev or all(w in ev.lower() for w in ws) for k, ws in words.items() if ws)
+        if not names_measured:
+            o["evidence"] = re.sub(r"\(measured\)", "(estimated)", ev)
     return feedback
 
 
