@@ -164,3 +164,74 @@ def feeding_summary(swings: list[dict], fps: float, coach: Optional[int]) -> dic
             "they were.",
         ] + ([] if coach is not None else ["No coach identified, so every rally counts as live."]),
     }
+
+
+# ---- session structure: stretches of fed and live play --------------------
+
+WINDOW_S = 10.0  # drill time is judged in windows this long
+MIXED_SHARE = 0.3  # both kinds starting at least this share of a window's rallies: mixed
+CARRY_S = 20.0  # a window with no rally starts continues the stretch before it, up to this long
+MIN_RALLIES = 2  # a fed or mixed stretch needs at least this many rallies
+
+
+def play_segments(rally_list: list[dict], drills: list[dict]) -> list[dict]:
+    """Cut each drill (report segments of kind "drill") into stretches of
+    fed, live or mixed play. Each WINDOW_S window of the drill is labelled
+    by who started the rallies in it - the coach (fed) or a player (live);
+    both kinds (e.g. one pair rallying while the coach feeds another) is
+    mixed. A window with no rally starts carries on the stretch before it
+    for up to CARRY_S; runs of one label are merged."""
+    out: list[dict] = []
+    for d in drills:
+        a, b = d["start_s"], d["end_s"]
+        labels = []
+        t = a
+        quiet = 0.0
+        while t < b:
+            e = min(b, t + WINDOW_S)
+            starts = [r for r in rally_list if t <= r["start_s"] < e]
+            if starts:
+                fed = sum(1 for r in starts if r["fed"]) / len(starts)
+                label = "mixed" if MIXED_SHARE <= fed <= 1 - MIXED_SHARE else ("fed" if fed > 0.5 else "live")
+                quiet = 0.0
+            else:
+                quiet += e - t
+                label = labels[-1][2] if labels and quiet <= CARRY_S and labels[-1][2] != "none" else "none"
+            labels.append((t, e, label))
+            t = e
+        for s, e, label in labels:
+            if out and out[-1]["kind"] == label and abs(out[-1]["end_s"] - s) < 1e-6:
+                out[-1]["end_s"] = round(e, 1)
+            else:
+                out.append({"kind": label, "start_s": round(s, 1), "end_s": round(e, 1)})
+    def count(seg):
+        inside = [r for r in rally_list if seg["start_s"] <= r["start_s"] < seg["end_s"]]
+        seg["rallies"] = len(inside)
+        seg["shots"] = sum(r["shots"] for r in inside)
+
+    for seg in out:
+        count(seg)
+    # One rally is not a stretch of feeding: on Dingles a single coach
+    # gesture made 10s "fed" in the middle of live play. A fed or mixed
+    # stretch of fewer than MIN_RALLIES takes the kind of the play around it.
+    for i, seg in enumerate(out):
+        if seg["kind"] in ("fed", "mixed") and seg["rallies"] < MIN_RALLIES:
+            prev = out[i - 1]["kind"] if i > 0 else None
+            nxt = out[i + 1]["kind"] if i + 1 < len(out) else None
+            seg["kind"] = prev if prev not in (None, "none") else (nxt if nxt not in (None, "none") else seg["kind"])
+    merged: list[dict] = []
+    for seg in out:
+        if merged and merged[-1]["kind"] == seg["kind"] and abs(merged[-1]["end_s"] - seg["start_s"]) < 1e-6:
+            merged[-1]["end_s"] = seg["end_s"]
+        else:
+            merged.append(dict(seg))
+    for seg in merged:
+        count(seg)
+    return [s for s in merged if s["kind"] != "none"]
+
+
+def play_time(segments: list[dict]) -> dict:
+    """Seconds and shares of fed, live and mixed play."""
+    secs = {k: round(sum(s["end_s"] - s["start_s"] for s in segments if s["kind"] == k), 1) for k in ("fed", "live", "mixed")}
+    total = sum(secs.values())
+    return {"seconds": secs, "shares": {k: round(v / total, 3) if total else None for k, v in secs.items()}}

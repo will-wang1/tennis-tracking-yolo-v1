@@ -406,6 +406,12 @@ def main() -> None:
         from src.session.feeding import feeding_summary
 
         feeding = report["feeding"] = feeding_summary(swings, fps, report["summary"]["coach_player"])
+        # Session structure, split into stretches of fed and live play.
+        from src.session.feeding import play_segments, play_time
+
+        drills = [seg for seg in report.get("segments", []) if seg["kind"] == "drill"]
+        report["play_segments"] = play_segments(feeding["rally_list"], drills)
+        feeding["play_time"] = play_time(report["play_segments"])
         caveats = feeding["caveats"]
         live_share = feeding["live_rallies"] / feeding["rallies"] if feeding["rallies"] else None
         report["metrics"]["live_rally_share"] = {

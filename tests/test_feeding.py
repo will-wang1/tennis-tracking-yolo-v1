@@ -42,3 +42,33 @@ class PlayNoteTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PlaySegmentsTest(unittest.TestCase):
+    def rally(self, t, fed, shots=3):
+        return {"start_s": t, "end_s": t + 2, "fed": fed, "shots": shots}
+
+    def test_a_fed_block_then_live_rallying(self):
+        from src.session.feeding import play_segments, play_time
+
+        rallies = [self.rally(t, True, 2) for t in range(0, 40, 4)] + [self.rally(t, False, 6) for t in range(40, 80, 5)]
+        segs = play_segments(rallies, [{"start_s": 0, "end_s": 80}])
+        self.assertEqual([(s["kind"], s["start_s"], s["end_s"]) for s in segs], [("fed", 0, 40.0), ("live", 40.0, 80)])
+        self.assertEqual(segs[0]["rallies"], 10)
+        self.assertEqual(play_time(segs)["shares"]["fed"], 0.5)
+
+    def test_one_coach_swing_in_live_play_is_not_a_fed_stretch(self):
+        from src.session.feeding import play_segments
+
+        rallies = [self.rally(t, False) for t in range(0, 30, 3)] + [self.rally(35, True)] + [self.rally(t, False) for t in range(40, 60, 3)]
+        self.assertEqual([s["kind"] for s in play_segments(rallies, [{"start_s": 0, "end_s": 60}])], ["live"])
+
+    def test_both_at_once_is_mixed_and_long_silence_is_not_play(self):
+        from src.session.feeding import play_segments
+
+        rallies = []
+        for t in range(0, 20, 2):
+            rallies.append(self.rally(t, t % 4 == 0))
+        segs = play_segments(rallies, [{"start_s": 0, "end_s": 60}])
+        self.assertEqual(segs[0]["kind"], "mixed")
+        self.assertLess(segs[-1]["end_s"], 60)  # nothing started after 20s: not counted as play past the carry

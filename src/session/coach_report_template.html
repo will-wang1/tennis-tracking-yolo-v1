@@ -11,7 +11,7 @@
     --good:#2C6B46; --good-soft:#DDEEE3;
     --look:#A2551C; --look-soft:#F7E8DA;
     --court:#DCE6F2; --court-line:#FFFFFF; --court-edge:#9FB3C8; --net:#74847F;
-    --s-bounce:#2a78d6; --s-contact:#eb6834; --s-unknown:#B9C2C0; --s-play:#2a78d6; --s-idle:#E4EBE9;
+    --s-bounce:#2a78d6; --s-contact:#eb6834; --s-unknown:#B9C2C0; --s-play:#2a78d6; --s-idle:#E4EBE9; --s-live:#2C9A5B; --s-fed:#8A5CD6;
     --heat-lo:#cde2fb; --heat-hi:#0d366b;
     --hatch:#9AA6A3;
     --display:'IBM Plex Sans','Helvetica Neue',Arial,sans-serif;
@@ -27,7 +27,7 @@
       --good:#6FC08D; --good-soft:#0F241A;
       --look:#DE9A5E; --look-soft:#2A1C10;
       --court:#1B2A3A; --court-line:#8FA3B8; --court-edge:#3A5068; --net:#A3B6B1;
-      --s-bounce:#3987e5; --s-contact:#d95926; --s-unknown:#4A5856; --s-play:#3987e5; --s-idle:#1F2E2B;
+      --s-bounce:#3987e5; --s-contact:#d95926; --s-unknown:#4A5856; --s-play:#3987e5; --s-idle:#1F2E2B; --s-live:#4FC07F; --s-fed:#A889F0;
       --heat-lo:#184f95; --heat-hi:#cde2fb;
       --hatch:#5A6966;
     }
@@ -40,7 +40,7 @@
     --good:#6FC08D; --good-soft:#0F241A;
     --look:#DE9A5E; --look-soft:#2A1C10;
     --court:#1B2A3A; --court-line:#8FA3B8; --court-edge:#3A5068; --net:#A3B6B1;
-    --s-bounce:#3987e5; --s-contact:#d95926; --s-unknown:#4A5856; --s-play:#3987e5; --s-idle:#1F2E2B;
+    --s-bounce:#3987e5; --s-contact:#d95926; --s-unknown:#4A5856; --s-play:#3987e5; --s-idle:#1F2E2B; --s-live:#4FC07F; --s-fed:#A889F0;
     --heat-lo:#184f95; --heat-hi:#cde2fb;
     --hatch:#5A6966;
   }
@@ -107,7 +107,11 @@
   .c-measured { background:var(--good-soft); color:var(--good); }
   .c-estimated { background:var(--surface-2); color:var(--ink-2); }
   .c-lower_bound { background:var(--look-soft); color:var(--look); }
-  .evidence { font-family:var(--mono); font-size:12px; color:var(--ink-3); margin-top:3px; }
+  .evidence { font-size:13.5px; color:var(--ink-2); margin-top:3px; line-height:1.5; }
+  .obs li strong { font-family:var(--display); font-size:15px; font-weight:600; }
+  .ai-sub { font-family:var(--display); font-size:13px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-3); margin:20px 0 8px; }
+  .plain { margin:0; padding-left:20px; font-size:14px; color:var(--ink-2); }
+  .plain li { margin-bottom:6px; }
   .two { display:grid; grid-template-columns:1fr 1fr; gap:18px; margin-top:18px; }
   @media (max-width:700px) { .two { grid-template-columns:1fr; } }
   .two ul { margin:0; padding-left:18px; }
@@ -173,7 +177,8 @@
     <h2>AI commentary</h2>
     <div class="panel">
       <p class="headline" id="ai-headline"></p><ul class="obs" id="observations"></ul>
-      <div id="ai-questions-wrap" hidden><h3>Questions for the coach</h3><ul class="obs" id="ai-questions"></ul></div>
+      <div id="ai-questions-wrap" hidden><h3 class="ai-sub">Questions for the coach</h3><ul class="plain" id="ai-questions"></ul></div>
+      <div id="ai-limits-wrap" hidden><h3 class="ai-sub">What the data can't show</h3><ul class="plain" id="ai-limits"></ul></div>
       <p class="note" id="ai-model"></p>
     </div>
   </section>
@@ -208,6 +213,9 @@
         <span><i style="background:var(--s-idle);border:1px solid var(--rule-2)"></i>no ball in play</span>
         <span><i style="background:var(--accent)"></i>drill</span>
         <span id="break-legend" hidden><i style="background:var(--look)"></i>break</span>
+        <span id="live-legend" hidden><i style="background:var(--s-live)"></i>live play (players start the points)</span>
+        <span id="fed-legend" hidden><i style="background:var(--s-fed)"></i>feeding (the coach starts them)</span>
+        <span id="mixed-legend" hidden><i style="background:repeating-linear-gradient(90deg,var(--s-live) 0 4px,var(--s-fed) 4px 8px)"></i>both at once</span>
         <span id="cut-legend"><i style="background:repeating-linear-gradient(45deg,var(--hatch) 0 2px,transparent 2px 5px);border:1px solid var(--rule-2)"></i>camera cutaway, not analysed</span>
       </div>
     </div>
@@ -389,13 +397,19 @@ $("meta").innerHTML = `<span><b>${clip.analysed_s.toFixed(0)}s</b> analysed of $
   if (!F || F._provenance || !F.headline) return;
   $("ai-section").hidden = false;
   $("ai-headline").textContent = F.headline;
-  $("observations").innerHTML = (F.observations || []).map((o) =>
-    `<li><div>${esc(o.point)}<div class="evidence">${esc(o.evidence || "")}</div></div></li>`).join("");
-  const qs = F.questions_for_the_coach || [];
-  if (qs.length) {
-    $("ai-questions-wrap").hidden = false;
-    $("ai-questions").innerHTML = qs.map((q) => `<li><div>${esc(q)}</div></li>`).join("");
-  }
+  const kindLabel = { strength: "Strength", worth_a_look: "Worth a look", neutral: "Note" };
+  $("observations").innerHTML = (F.observations || []).map((o) => {
+    const kind = kindLabel[o.kind] ? o.kind : "neutral";
+    return `<li><span class="chip c-${kind}">${kindLabel[kind]}</span>`
+      + `<div><strong>${esc(o.point)}</strong><div class="evidence">${esc(o.evidence || "")}</div></div></li>`;
+  }).join("");
+  const list = (items, wrap, el) => {
+    if (!items || !items.length) return;
+    $(wrap).hidden = false;
+    $(el).innerHTML = items.map((q) => `<li>${esc(q)}</li>`).join("");
+  };
+  list(F.questions_for_the_coach, "ai-questions-wrap", "ai-questions");
+  list(F.data_limits, "ai-limits-wrap", "ai-limits");
   $("ai-model").textContent = "Written by " + (F.model || "a language model") + " from the numbers on this page. "
     + "It reads the measurements; it did not watch the session.";
 })();
@@ -424,7 +438,9 @@ $("tiles").innerHTML = tiles.filter(([k]) => M[k]).map(([k, f, label]) => {
 
 // ---------- timeline
 (function () {
-  const W = 900, H = 84, L = 10, R_ = 10, top = 12, h = 34;
+  const PS = R.play_segments || [];
+  const band = PS.length ? 14 : 0;  // room for the fed/live band under the ball-in-play bar
+  const W = 900, H = 84 + band, L = 10, R_ = 10, top = 12, h = 34;
   const x = (t) => L + (t / dur) * (W - L - R_);
   const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Ball in play over time" });
   const pat = el("pattern", { id: "hatch", width: 6, height: 6, patternUnits: "userSpaceOnUse", patternTransform: "rotate(45)" }, el("defs", {}, svg));
@@ -443,10 +459,22 @@ $("tiles").innerHTML = tiles.filter(([k]) => M[k]).map(([k, f, label]) => {
       "data-tip": `${seg.kind} ${seg.start_s}–${seg.end_s}s` + (isBreak && seg.players_gathered ? "\nplayers gathered together" : "")
         + (seg.ball_in_play_share != null && !isBreak ? `\nball in play ${Math.round(100 * seg.ball_in_play_share)}%` : "") }, svg);
   });
+  if (PS.length) {
+    const mix = el("pattern", { id: "mixed", width: 8, height: 8, patternUnits: "userSpaceOnUse" }, svg.querySelector("defs"));
+    el("rect", { width: 4, height: 8, fill: "var(--s-live)" }, mix);
+    el("rect", { x: 4, width: 4, height: 8, fill: "var(--s-fed)" }, mix);
+    const name = { live: "live play", fed: "feeding", mixed: "feeding and live play at once" };
+    PS.forEach((seg) => {
+      $(seg.kind + "-legend").hidden = false;
+      el("rect", { x: x(seg.start_s), y: top + h + 4, width: Math.max(2, x(seg.end_s) - x(seg.start_s) - 1), height: 9, rx: 2,
+        fill: seg.kind === "mixed" ? "url(#mixed)" : `var(--s-${seg.kind})`,
+        "data-tip": `${name[seg.kind]} ${seg.start_s}–${seg.end_s}s\n${seg.rallies} rall${seg.rallies === 1 ? "y" : "ies"}, ${seg.shots} shots` }, svg);
+    });
+  }
   const step = dur > 600 ? 120 : dur > 200 ? 60 : 20;
   for (let t = 0; t <= dur; t += step) {
-    el("line", { x1: x(t), x2: x(t), y1: top + h + 6, y2: top + h + 10, stroke: "var(--rule-2)" }, svg);
-    el("text", { x: x(t), y: top + h + 24, "text-anchor": t === 0 ? "start" : "middle" }, svg).textContent = t + "s";
+    el("line", { x1: x(t), x2: x(t), y1: top + h + 6 + band, y2: top + h + 10 + band, stroke: "var(--rule-2)" }, svg);
+    el("text", { x: x(t), y: top + h + 24 + band, "text-anchor": t === 0 ? "start" : "middle" }, svg).textContent = t + "s";
   }
   $("timeline").appendChild(svg); bindTips($("timeline"));
 })();
@@ -536,7 +564,15 @@ function drawHeat(svg, cov, sharedMax) {
   $("seg-summary").textContent = `${drills.length} drill${drills.length === 1 ? "" : "s"}`
     + (breaks.length ? `, ${breaks.length} break${breaks.length === 1 ? "" : "s"} of 15s or more`
        + (gathered ? ` (${gathered} with players gathered together)` : "") : ", no breaks of 15s or more")
-    + ` · ball in play ${pct(M.ball_in_play.value)} of analysed time`;
+    + ` · ball in play ${pct(M.ball_in_play.value)} of analysed time`
+    + (() => {
+      const pt = R.feeding && R.feeding.play_time;
+      if (!pt || !R.play_segments || !R.play_segments.length) return "";
+      const mins = (x) => x >= 90 ? `${(x / 60).toFixed(1)} min` : `${Math.round(x)}s`;
+      const parts = [["live", "live play"], ["fed", "feeding"], ["mixed", "both at once"]]
+        .filter(([k]) => pt.seconds[k] > 0).map(([k, n]) => `${n} ${mins(pt.seconds[k])} (${pct(pt.shares[k])})`);
+      return ` · ${parts.join(", ")}`;
+    })();
 })();
 
 // ---------- per-player heatmaps
