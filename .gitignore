@@ -5,6 +5,8 @@ venv/
 
 # datasets (large, fetched separately)
 data/raw/
+# stroke training windows (scripts/build_stroke_data_*.py), rebuilt from footage
+data/strokes/
 data/raw_*/
 data/*.zip
 data/*.cache
