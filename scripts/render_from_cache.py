@@ -147,8 +147,27 @@ def _draw_swing(frame, swing: dict, frame_idx: int, box: tuple[int, int, int, in
     if not text:
         return
     y = max(20, y1 - 30)
-    cv2.putText(frame, "SWING", (x1, y), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 5)
-    cv2.putText(frame, "SWING", (x1, y), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
+    # "confirmed": the ball turned round beside them, or E2E-Spot saw a swing there too
+    label = "SWING" + (" (confirmed)" if swing.get("confirmed_by") else "")
+    cv2.putText(frame, label, (x1, y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 5)
+    cv2.putText(frame, label, (x1, y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+
+
+_CONTACT_COLOR = (255, 120, 40)  # blue
+
+
+def _draw_contact(frame, contact: dict, age: int) -> None:
+    """Where the ball was hit: a marker on the ball at the contact frame,
+    fading over about half a second."""
+    x, y = (int(round(v)) for v in contact["ball_px"])
+    fade = max(0.35, 1.0 - age / 14.0)
+    c = tuple(int(v * fade) for v in _CONTACT_COLOR)
+    cv2.circle(frame, (x, y), 14, c, 3)
+    cv2.line(frame, (x - 20, y), (x - 8, y), c, 2)
+    cv2.line(frame, (x + 8, y), (x + 20, y), c, 2)
+    text = "CONTACT" + (f" P{contact['player']}" if contact.get("player") is not None else "")
+    cv2.putText(frame, text, (x + 22, y + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 4)
+    cv2.putText(frame, text, (x + 22, y + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.55, c, 2)
 _STROKE_COLORS = {"forehand": (60, 200, 255), "backhand": (255, 170, 60), "serve": (120, 255, 120),
                   "net": (230, 120, 255)}
 
@@ -348,6 +367,7 @@ def render(args) -> None:
         print(f"Strokes: {len(hits)} hits from {args.strokes}")
 
     swings_at: dict[int, list[dict]] = {}
+    contacts_at: dict[int, list[tuple[dict, int]]] = {}
     swing_frames: dict[int, list[int]] = {}  # player (or tracklet) -> swing frames, for a running count
     if args.swings:
         # scripts/detect_swings.py output: "SWING" over the player around
@@ -361,6 +381,23 @@ def render(args) -> None:
             key = sw["player"] if sw["player"] is not None else -sw["tracklet"]
             swing_frames.setdefault(key, []).append(sw["frame"])
         print(f"Swings: {len(swings)} from {args.swings}")
+        # Contacts: where the ball turned round beside the player (swings
+        # confirmed by the ball), on the ball detection nearest them then.
+        contacts_at: dict[int, list[tuple[dict, int]]] = {}
+        for sw in swings:
+            if "ball" not in (sw.get("confirmed_by") or []) or "contact_frame" not in sw:
+                continue
+            f0 = sw["contact_frame"]
+            box = next((r[1:5] for r in (people[f0] if people is not None and f0 < len(people) else []) if r[0] == sw["tracklet"]), None)
+            balls = [(t.detections[f0].x, t.detections[f0].y) for t in tracks if f0 in t.detections]
+            if box is None or not balls:
+                continue
+            cx, cy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
+            bx, by = min(balls, key=lambda b: np.hypot(b[0] - cx, b[1] - cy))
+            contact = {"ball_px": (bx, by), "player": sw.get("player")}
+            for f in range(f0, f0 + 14):
+                contacts_at.setdefault(f, []).append((contact, f - f0))
+        print(f"Contacts: {len({id(c) for v in contacts_at.values() for c, _ in v})} where the ball was seen turning round")
 
     event_log: list[tuple[int, tuple, str]] = []  # (frame, colour, text) for the comparison panel
     e2e_bounces: dict[int, list[int]] = {}  # frame -> E2E bounce frames to ring around then
@@ -506,6 +543,8 @@ def render(args) -> None:
         if not in_cutaway:
             for b, age in report_bounces.get(frame_idx, []):
                 _draw_report_bounce(frame, b, age)
+            for c, age in contacts_at.get(frame_idx, []):
+                _draw_contact(frame, c, age)
         if args.events and not in_cutaway:
             for f0 in e2e_bounces.get(frame_idx, []):
                 # E2E-Spot says when, not where: ring the ball it most likely means.
