@@ -296,6 +296,7 @@ def main() -> None:
     parser.add_argument("--second-opinion", help="scripts/tennisproject_bounces.py cache, to mark agreed bounces")
     parser.add_argument("--name", help="Clip name (default: the cache's folder)")
     parser.add_argument("--players", help="scripts/assign_players.py players.json - per-player section")
+    parser.add_argument("--no-refine", action="store_true", help="Skip tightening the court fit onto the painted lines")
     parser.add_argument("--e2e", help="scripts/e2e_spot_events.py output - use its bounces (placed with the ball)")
     parser.add_argument("--theme", help="What the session was on, comma-separated: netplay, consistency, "
                         "adjustment, around_backhand. Judged start vs end of the session.")
@@ -314,8 +315,20 @@ def main() -> None:
     }
     static, cutaways, shots = fit_court(args.video, per_frame, num_frames, fps,
                                          cuts_cache=Path(args.out).parent / "scene_cuts.json")
-    calibrations = {f: static for f in range(num_frames)}
     skip = {f for a, b in cutaways for f in range(a, b)}
+    refinement = None
+    if args.video and not args.no_refine:
+        # Tighten the fit onto the painted lines (src/analysis/court_refine.py),
+        # on a median of court-view frames so players and balls drop out.
+        from src.analysis.court_refine import median_court_frame, refine_calibration
+
+        frames = [int(f) for f in np.linspace(0, num_frames - 1, 80) if int(f) not in skip][:40]
+        median = median_court_frame(args.video, frames)
+        if median is not None:
+            static, refinement = refine_calibration(median, static)
+            print(f"  court refined onto the painted lines: line score {refinement['score_before']} -> "
+                  f"{refinement['score_after']}" + ("" if refinement["refined"] else " (kept the original)"))
+    calibrations = {f: static for f in range(num_frames)}
 
     people_cache = None
     if args.people:
@@ -437,7 +450,8 @@ def main() -> None:
 
     # The court this report was measured on, so everything downstream (the
     # rendered video) uses the same one rather than re-deriving its own.
-    report["court"] = {"homography": np.asarray(static.homography).tolist(), "shots": shots}
+    report["court"] = {"homography": np.asarray(static.homography).tolist(), "shots": shots,
+                       "refinement": refinement}
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(report, indent=1))

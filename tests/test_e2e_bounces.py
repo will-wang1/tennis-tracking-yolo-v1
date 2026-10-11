@@ -34,3 +34,45 @@ class E2EBouncesTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _bounce_path(true_t, lost=0, hit_back=False, seed=0, noise=0.5):
+    """Image path of a near-end bounce at (600, 900) at time true_t; `lost`
+    frames missing around it; `hit_back` turns it round across the court
+    after the gap (a hit, not a bounce)."""
+    rng = np.random.default_rng(seed)
+    path = {}
+    for f in range(36, 65):
+        if 0 < f - true_t + lost / 2 < lost:
+            continue
+        dt = f - true_t
+        x = 600 + 6 * dt if dt < 0 or not hit_back else 600 - 6 * dt
+        y = 900 + 14 * dt - 0.2 * dt * dt if dt < 0 else 900 - 9 * dt + 0.4 * dt * dt
+        path[f] = (x + rng.normal(0, noise), y + rng.normal(0, noise))
+    return path
+
+
+class BetweenFramesTest(unittest.TestCase):
+    def test_a_bounce_between_frames_is_placed_within_a_few_pixels(self):
+        from src.analysis.e2e_bounces import bounce_between_frames
+
+        for true_t in (50.0, 50.3, 50.7):
+            x, y, t, how = bounce_between_frames(_bounce_path(true_t), 50)
+            self.assertEqual(how, "path fit")
+            self.assertLess(np.hypot(x - 600, y - 900), 5)
+            self.assertAlmostEqual(t, true_t, delta=0.3)
+
+    def test_the_ball_lost_across_the_bounce_is_bridged(self):
+        from src.analysis.e2e_bounces import bounce_between_frames
+
+        x, y, _, how = bounce_between_frames(_bounce_path(50.4, lost=7), 50)
+        self.assertEqual(how, "path fit")
+        self.assertLess(np.hypot(x - 600, y - 900), 15)
+
+    def test_hit_back_after_the_gap_uses_the_incoming_path_at_the_call(self):
+        from src.analysis.e2e_bounces import bounce_between_frames
+
+        x, y, t, how = bounce_between_frames(_bounce_path(50.0, lost=7, hit_back=True), 50)
+        self.assertEqual(how, "incoming path at the call")
+        self.assertEqual(t, 50.0)
+        self.assertLess(np.hypot(x - 600, y - 900), 10)
