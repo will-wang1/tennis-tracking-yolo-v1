@@ -137,6 +137,7 @@ def compact_report(report: dict) -> dict:
         "metrics": metrics,
         "players": players,
         "feeding": feeding or None,
+        "contacts_per_player": (report.get("contacts") or {}).get("per_player"),
         "segments": report.get("segments") or [],
     }
 

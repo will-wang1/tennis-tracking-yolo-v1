@@ -441,6 +441,17 @@ def main() -> None:
         if note:
             report["summary"]["notes"].insert(0, note)
 
+    if swings and people_cache:
+        # Where players hit the ball, and where their shots landed.
+        from src.session.contacts import contacts_section
+
+        ball_at: dict[int, list] = {}
+        for t in ball_tracks:
+            for f, d in t.detections.items():
+                ball_at.setdefault(f, []).append((d.x, d.y))
+        report["contacts"] = contacts_section(swings, people_cache["people"], ball_at, static, fps,
+                                              report["raw"].get("bounces", []), report["summary"]["coach_player"])
+
     if args.theme:
         # What the session was ON, judged start vs end (src/session/themes.py).
         from src.session.themes import evaluate
