@@ -187,6 +187,23 @@ def calibrations_from_cache(cache: dict) -> dict[int, CourtCalibration]:
 
 
 _E2E_COLOR = (200, 80, 255)  # pink: E2E-Spot's calls
+_PLACED_COLORS = {"path fit": (80, 220, 80), "incoming path at the call": (40, 220, 240), "lowest point": (180, 180, 180)}
+
+
+def _draw_report_bounce(frame, bounce: dict, age: int) -> None:
+    """A report bounce where it was placed, labelled with its call and how
+    it was placed, fading over a second."""
+    x, y = (int(round(v)) for v in bounce["ball_px"])
+    color = _PLACED_COLORS.get(bounce.get("placed_by"), (255, 255, 255))
+    fade = max(0.35, 1.0 - age / 25.0)
+    c = tuple(int(v * fade) for v in color)
+    cv2.circle(frame, (x, y), 18, c, 3)
+    cv2.drawMarker(frame, (x, y), c, cv2.MARKER_CROSS, 12, 2)
+    depth = bounce.get("depth") or ""
+    bounds = "OUT" if bounce.get("bounds") == "out" else "in"
+    for i, text in enumerate((f"BOUNCE {bounds}, {depth}", bounce.get("placed_by", ""))):
+        cv2.putText(frame, text, (x + 24, y - 6 + 20 * i), cv2.FONT_HERSHEY_SIMPLEX, 0.55 - 0.1 * i, (0, 0, 0), 4)
+        cv2.putText(frame, text, (x + 24, y - 6 + 20 * i), cv2.FONT_HERSHEY_SIMPLEX, 0.55 - 0.1 * i, c, 1 + (i == 0))
 _OURS_COLOR = (60, 230, 255)  # yellow: ours
 _EVENT_PANEL_S = 3.0
 
@@ -371,6 +388,18 @@ def render(args) -> None:
         event_log.sort(key=lambda e: e[0])
         print(f"Events: {len(event_log)} for the comparison panel")
 
+    report_bounces: dict[int, list[tuple[dict, int]]] = {}
+    if args.report_bounces and args.report:
+        # The report's own bounces (E2E-Spot, placed on the court), drawn
+        # where they were placed from the bounce's own (sub-frame) time.
+        for b in report["raw"].get("bounces", []):
+            if not b.get("ball_px"):
+                continue
+            f0 = int(round(b.get("bounce_frame", b["frame"])))
+            for f in range(f0, f0 + 25):
+                report_bounces.setdefault(f, []).append((b, f - f0))
+        print(f"Bounces: {len(report['raw'].get('bounces', []))} from the report")
+
     other_bounces = None
     if args.bounces_from:
         other_bounces = load_other_bounces(args.bounces_from, fps, width / 1280.0)
@@ -474,6 +503,9 @@ def render(args) -> None:
             frame = impact_drawer.draw(
                 frame, frame_idx, impacts_by_frame, calibrations.get(frame_idx)
             )
+        if not in_cutaway:
+            for b, age in report_bounces.get(frame_idx, []):
+                _draw_report_bounce(frame, b, age)
         if args.events and not in_cutaway:
             for f0 in e2e_bounces.get(frame_idx, []):
                 # E2E-Spot says when, not where: ring the ball it most likely means.
@@ -514,6 +546,8 @@ def main() -> None:
     )
     parser.add_argument("--bounces-label", default="CatBoost")
     parser.add_argument("--players", help="scripts/assign_players.py players.json - label people as stable players")
+    parser.add_argument("--report-bounces", action="store_true",
+                        help="With --report: draw the report's bounces where they were placed, and how")
     parser.add_argument("--no-ours", dest="ours", action="store_false",
                         help="With --events: show only E2E-Spot's calls, not our swings and bounces")
     parser.add_argument("--events", help="scripts/e2e_spot_events.py output - compare its calls with ours on screen")
