@@ -93,7 +93,7 @@ def netplay(report: dict, swings: list[dict], coach: Optional[int]) -> dict:
     return out
 
 
-def consistency(feeding: Optional[dict], bounces: Optional[list] = None) -> dict:
+def consistency(feeding: Optional[dict], bounces: Optional[list] = None, outcomes: Optional[list] = None) -> dict:
     out = {"theme": "consistency", "name": THEMES["consistency"], "measures": [], "caveats": [
         "A rally ending is not always an error: a winner, or the coach stopping play, ends one too. "
         "The tool cannot tell which.",
@@ -126,6 +126,16 @@ def consistency(feeding: Optional[dict], bounces: Optional[list] = None) -> dict
         db = sum(b["depth"] == "deep" for b in inside[h:]) / (len(inside) - h)
         out["measures"].append({"name": "bounces landing deep", "early": round(da, 3), "late": round(db, 3),
                                 "detail": f"{_pct(da)} of in-court bounces landed deep in the first half, {_pct(db)} in the second."})
+    # Errors, when rally endings are known (src/session/outcomes.py): of the
+    # rallies whose ending was seen, the share ended by an error.
+    known = sorted((o for o in outcomes or [] if o["outcome"] != "unclear"), key=lambda o: o["end_s"])
+    if len(known) >= 2 * 4:
+        h = len(known) // 2
+        ea = sum(o["error_by"] is not None for o in known[:h]) / h
+        eb = sum(o["error_by"] is not None for o in known[h:]) / (len(known) - h)
+        out["measures"].append({"name": "rallies ended by an error", "early": round(ea, 3), "late": round(eb, 3),
+                                "detail": f"Of rallies whose ending was seen, {_pct(ea)} ended in an error (out or "
+                                          f"into the net) in the first half and {_pct(eb)} in the second."})
     out["verdict"] = _verdict(sa - sb, SHORT_SHARE_CHANGE)  # fewer short rallies is better
     lead = {"improved": "Rallies lasted longer as the session went on",
             "dropped": "Rallies got shorter as the session went on",
@@ -149,7 +159,8 @@ def evaluate(themes: list[str], report: dict, swings: list[dict], coach: Optiona
         if key == "netplay":
             out.append(netplay(report, swings, coach))
         elif key == "consistency":
-            out.append(consistency(report.get("feeding"), report.get("raw", {}).get("bounces")))
+            out.append(consistency(report.get("feeding"), report.get("raw", {}).get("bounces"),
+                                   (report.get("outcomes") or {}).get("rallies")))
         else:
             out.append(not_measured(key))
     return out

@@ -154,6 +154,23 @@ def _draw_swing(frame, swing: dict, frame_idx: int, box: tuple[int, int, int, in
 
 
 _CONTACT_COLOR = (255, 120, 40)  # blue
+_OUTCOME_COLORS = {"out": (60, 60, 240), "net": (40, 140, 255), "not returned": (80, 220, 80), "unclear": (170, 170, 170)}
+
+
+def _draw_outcome(frame, o: dict, age: int) -> None:
+    """How a rally ended, as a banner at the top of the picture for ~2s."""
+    who = ("the coach" if o.get("last_hitter") == o.get("_coach") and o.get("_coach") is not None
+           else f"Player {o['last_hitter']}" if o.get("last_hitter") is not None else "unknown player")
+    text = {"out": f"RALLY OVER: OUT - {who}'s error (ball {o['ball_number']})" if who != "the coach" else "coach's ball went out",
+            "net": f"RALLY OVER: INTO THE NET - {who}'s error (ball {o['ball_number']})" if who != "the coach" else "coach's ball into the net",
+            "not returned": f"RALLY OVER: NOT RETURNED - {who}'s shot (ball {o['ball_number']})",
+            "unclear": f"rally over after {o['ball_number']} ball{'s' if o['ball_number'] != 1 else ''} - how is unclear"}[o["outcome"]]
+    color = _OUTCOME_COLORS[o["outcome"]]
+    scale = 0.9 if o["outcome"] != "unclear" else 0.6
+    (w, h), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, 2)
+    x, y = (frame.shape[1] - w) // 2, 120 + 44 * o.get("_row", 0)
+    cv2.rectangle(frame, (x - 12, y - h - 12), (x + w + 12, y + 12), (0, 0, 0), -1)
+    cv2.putText(frame, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, scale, color, 2)
 
 
 def _draw_contact(frame, contact: dict, age: int) -> None:
@@ -437,6 +454,15 @@ def render(args) -> None:
                 report_bounces.setdefault(f, []).append((b, f - f0))
         print(f"Bounces: {len(report['raw'].get('bounces', []))} from the report")
 
+    outcomes_at: dict[int, list[tuple[dict, int]]] = {}
+    if args.outcomes and args.report:
+        # How each rally ended (report "outcomes"), shown for 2s after its last shot's bounce.
+        for o in (report.get("outcomes") or {}).get("rallies", []):
+            f0 = o["frame"] + int(0.6 * fps)
+            for f in range(f0, f0 + int(2 * fps)):
+                outcomes_at.setdefault(f, []).append((o, f - f0))
+        print(f"Rally endings: {sum(1 for _ in (report.get('outcomes') or {}).get('rallies', []))} from the report")
+
     other_bounces = None
     if args.bounces_from:
         other_bounces = load_other_bounces(args.bounces_from, fps, width / 1280.0)
@@ -545,6 +571,8 @@ def render(args) -> None:
                 _draw_report_bounce(frame, b, age)
             for c, age in contacts_at.get(frame_idx, []):
                 _draw_contact(frame, c, age)
+            for row, (o, age) in enumerate(outcomes_at.get(frame_idx, [])[:3]):
+                _draw_outcome(frame, dict(o, _row=row, _coach=coach_player), age)
         if args.events and not in_cutaway:
             for f0 in e2e_bounces.get(frame_idx, []):
                 # E2E-Spot says when, not where: ring the ball it most likely means.
@@ -585,6 +613,8 @@ def main() -> None:
     )
     parser.add_argument("--bounces-label", default="CatBoost")
     parser.add_argument("--players", help="scripts/assign_players.py players.json - label people as stable players")
+    parser.add_argument("--outcomes", action="store_true",
+                        help="With --report: show how each rally ended (out, net, not returned) and whose error")
     parser.add_argument("--report-bounces", action="store_true",
                         help="With --report: draw the report's bounces where they were placed, and how")
     parser.add_argument("--no-ours", dest="ours", action="store_false",

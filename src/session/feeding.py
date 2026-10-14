@@ -52,6 +52,7 @@ class Rally:
     starter: Optional[int]  # player number of the first swing
     shots: int
     coach_shots: int
+    swing_frames: tuple = ()  # the swings in it, in order (their wrist-peak frames)
 
     def fed(self, coach: Optional[int]) -> bool:
         return coach is not None and self.starter == coach
@@ -103,6 +104,7 @@ def rallies(swings: list[dict], fps: float, coach: Optional[int], gap_s: float =
         out.append(Rally(
             start=members[0]["frame"], end=members[-1]["frame"], starter=members[0]["player"], shots=len(members),
             coach_shots=sum(1 for m in members if coach is not None and m["player"] == coach),
+            swing_frames=tuple(m["frame"] for m in members),
         ))
     return sorted(out, key=lambda r: r.start)
 
@@ -116,6 +118,7 @@ def _rallies_by_time(ordered: list[dict], fps: float, coach: Optional[int], gap_
             out.append(Rally(
                 start=current[0]["frame"], end=current[-1]["frame"], starter=current[0]["player"],
                 shots=len(current), coach_shots=sum(1 for s in current if coach is not None and s["player"] == coach),
+                swing_frames=tuple(s["frame"] for s in current),
             ))
 
     for s in ordered:
@@ -151,7 +154,7 @@ def feeding_summary(swings: list[dict], fps: float, coach: Optional[int]) -> dic
         "longest_rally_shots": max((r.shots for r in rs), default=0),
         "rally_list": [
             {"start_s": round(r.start / fps, 2), "end_s": round(r.end / fps, 2), "started_by": r.starter,
-             "fed": r.fed(coach), "shots": r.shots}
+             "fed": r.fed(coach), "shots": r.shots, "swing_frames": list(r.swing_frames)}
             for r in rs
         ],
         "method": f"A rally is a chain of replies - the next swing from the other end within {RALLY_GAP_S:g}s, "

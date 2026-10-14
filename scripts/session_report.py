@@ -184,6 +184,7 @@ def add_e2e_bounces(report: dict, events: list, ball_tracks, court, fps: float, 
     placed = [b for b in found if b["position_m"]]
     report["raw"]["bounces_trajectory"] = report["raw"]["bounces"]
     report["raw"]["bounces"] = placed
+    report["raw"]["bounce_calls"] = found  # placed or not: "which half" is enough to tell a ball into the net
 
     def deep_share(half=None):
         inside = [b for b in placed if b["bounds"] != "out" and (half is None or b["half"] == half)]
@@ -451,6 +452,13 @@ def main() -> None:
                 ball_at.setdefault(f, []).append((d.x, d.y))
         report["contacts"] = contacts_section(swings, people_cache["people"], ball_at, static, fps,
                                               report["raw"].get("bounces", []), report["summary"]["coach_player"])
+        if report.get("feeding"):
+            # How each rally ended, and who made the errors (src/session/outcomes.py).
+            from src.session.outcomes import outcomes_section
+
+            report["outcomes"] = outcomes_section(report["feeding"]["rally_list"], swings, report["contacts"]["points"],
+                                                  report["raw"].get("bounce_calls", report["raw"].get("bounces", [])),
+                                                  fps, report["summary"]["coach_player"])
 
     if args.theme:
         # What the session was ON, judged start vs end (src/session/themes.py).

@@ -220,6 +220,16 @@
     </div>
   </section>
 
+  <section id="outcomes-section" hidden>
+    <h2>How rallies ended</h2>
+    <div class="panel">
+      <div class="stack" id="ending-bar" style="width:100%;height:22px;margin:4px 0 8px"></div>
+      <div class="legend" id="ending-legend"></div>
+      <div style="overflow-x:auto;margin-top:14px"><table class="ctab" id="error-table"></table></div>
+      <p class="note" id="outcome-note"></p>
+    </div>
+  </section>
+
   <section>
     <details class="more">
       <summary>Session detail and charts</summary>
@@ -642,6 +652,29 @@ function drawHeat(svg, cov, sharedMax) {
   $("contact-note").textContent = "Shots deep: of their shots that landed in, how many landed past the service line. "
     + "Shots out: of their shots whose bounce was seen. " + C.caveats.join(" ");
   draw();
+})();
+
+
+// ---------- how rallies ended, and who made the errors
+(function () {
+  const O = R.outcomes;
+  if (!O || !O.rallies || !O.rallies.length) return;
+  $("outcomes-section").hidden = false;
+  const KINDS = [["out", "out", "#D55E00"], ["net", "into the net", "#E69F00"], ["not returned", "not returned", "#009E73"], ["unclear", "unclear", "var(--rule-2)"]];
+  const total = O.rallies.length;
+  $("ending-bar").innerHTML = KINDS.map(([k, name, c]) => O.endings[k]
+    ? `<span style="width:${100 * O.endings[k] / total}%;background:${c}" title="${name}: ${O.endings[k]} of ${total} rallies"></span>` : "").join("");
+  $("ending-legend").innerHTML = KINDS.map(([k, name, c]) => `<span><i style="background:${c}"></i>${name} ${O.endings[k]}</span>`).join("");
+  const players = Object.keys(O.per_player).map(Number).sort((a, b) => a - b);
+  $("error-table").innerHTML = `<tr><th>Player</th><th>Shots</th><th>Errors</th><th>Out · net</th><th>On the 1st or 2nd ball</th>`
+    + `<th>Not returned</th></tr>` + players.map((p) => {
+      const v = O.per_player[p];
+      return `<tr><td style="white-space:nowrap">Player ${p}</td><td class="n">${v.shots}</td>`
+        + `<td class="n">${v.errors} of ${v.shots}</td><td class="n">${v.errors_out} · ${v.errors_net}</td>`
+        + `<td class="n">${v.errors_first_two_balls}</td><td class="n">${v.not_returned}</td></tr>`;
+    }).join("");
+  $("outcome-note").textContent = `${total} rallies. An error is the last shot of a rally going out or into the net; `
+    + `"not returned" is a shot that landed in with no reply seen. ` + O.caveats.join(" ");
 })();
 
 // ---------- structure summary
