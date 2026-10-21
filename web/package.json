@@ -1,0 +1,26 @@
+{
+  "name": "web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "demo:seed": "node scripts/seed-demo.mjs",
+    "demo:clear": "node -e \"fetch((process.env.APP_URL||'http://localhost:3000')+'/api/demo',{method:'DELETE',headers:{Authorization:'Bearer '+(process.env.IMPORT_TOKEN||'dev-import-token')}}).then(r=>r.json()).then(console.log)\""
+  },
+  "dependencies": {
+    "next": "16.4.2",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.4.2",
+    "typescript": "^5"
+  }
+}

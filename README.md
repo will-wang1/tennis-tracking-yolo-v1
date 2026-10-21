@@ -35,7 +35,14 @@ video on an M2 MacBook.
 | 10. full report | `session_report.py` | `session_report.json` |
 | 11. AI feedback (Qwen3 8B through MLX, on this machine) | `session_feedback.py` | `session_feedback.json` |
 | 12. coach page | `render_coach_report.py` | `coach_report.html` |
-| 13. annotated video | `render_from_cache.py` | `annotated.mp4` |
+| 13. annotated video (H.264) | `render_from_cache.py` | `annotated.mp4` |
+
+## Web app
+
+`web/` is the head coach's app: coaches compared against a benchmark learned
+from exemplary sessions, per coach and per session, with the video. Sessions
+go in with `scripts/publish_session.py` after `run_session.py`. See
+`web/README.md`.
 
 ## What the report contains
 

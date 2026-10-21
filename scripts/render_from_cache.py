@@ -302,7 +302,10 @@ def render(args) -> None:
 
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    writer = cv2.VideoWriter(str(out_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
+    # H.264 so browsers (the web app) can play it; mp4v where H.264 is unavailable.
+    writer = cv2.VideoWriter(str(out_path), cv2.VideoWriter_fourcc(*"avc1"), fps, (width, height))
+    if not writer.isOpened():
+        writer = cv2.VideoWriter(str(out_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
     if not writer.isOpened():
         raise SystemExit(f"Could not open {out_path} for writing")
 
