@@ -5,7 +5,6 @@ caches - no model runs here, so it takes seconds.
         --ball-cache outputs/dingles_serve_volley/replay_cache.pkl \\
         --people outputs/dingles_serve_volley/person_tracks.pkl \\
         --video data/videos/dingles_serve_volley.mp4 \\
-        --second-opinion outputs/dingles_serve_volley/tennisproject_ball_track.pkl \\
         --out outputs/dingles_serve_volley/session_report.json
 
 CUTAWAYS ARE FOUND, NOT TYPED IN. With --video, camera cuts are detected
@@ -294,7 +293,6 @@ def main() -> None:
     parser.add_argument("--ball-cache", required=True)
     parser.add_argument("--people", help="scripts/track_people.py cache")
     parser.add_argument("--video", help="Source video, to detect camera cutaways")
-    parser.add_argument("--second-opinion", help="scripts/tennisproject_bounces.py cache, to mark agreed bounces")
     parser.add_argument("--name", help="Clip name (default: the cache's folder)")
     parser.add_argument("--players", help="scripts/assign_players.py players.json - per-player section")
     parser.add_argument("--no-refine", action="store_true", help="Skip tightening the court fit onto the painted lines")
@@ -356,12 +354,6 @@ def main() -> None:
         credited, _unattributed = attribute_contacts(contacts, people_cache["people"])
         people = [replace(p, confirmed_contacts=credited.get(p.track_id, 0)) for p in people]
 
-    second = None
-    if args.second_opinion:
-        with open(args.second_opinion, "rb") as handle:
-            other = pickle.load(handle)
-        second = {int(round(f / other["fps"] * fps)) for f in other.get("bounces", [])}
-
     report = build_session_report(
         clip_name=args.name or Path(args.ball_cache).parent.name,
         fps=fps,
@@ -372,7 +364,6 @@ def main() -> None:
         people=people,
         coverage=coverage,
         cutaways=cutaways,
-        second_opinion_bounce_frames=second,
         people_tracked=people_cache is not None,
     )
     if args.e2e:

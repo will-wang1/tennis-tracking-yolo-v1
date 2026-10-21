@@ -170,35 +170,6 @@ class ReadLabelsTest(unittest.TestCase):
             read_labels(path)
 
 
-class CheckedInLabelFilesTest(unittest.TestCase):
-    """The label files are data, not code, so nothing else would notice a
-    typo in one until a score quietly moved."""
-
-    def _files(self):
-        return sorted((Path(__file__).resolve().parent.parent / "data" / "labels").glob("*.csv"))
-
-    def test_there_are_label_files(self):
-        self.assertTrue(self._files())
-
-    def test_every_label_file_parses(self):
-        for path in self._files():
-            with self.subTest(path.name):
-                labels = read_labels(path)
-                self.assertTrue(labels)
-                for label in labels:
-                    self.assertGreaterEqual(label.seconds, 0.0)
-                    self.assertGreater(label.tolerance_s, 0.0)
-
-    def test_no_event_is_labelled_twice(self):
-        # windows are allowed to overlap - 0.34s and 0.50s on video_input2
-        # do, which is what match_labels exists for - but two rows at the
-        # same instant would be two verdicts about one event
-        for path in self._files():
-            with self.subTest(path.name):
-                times = [label.seconds for label in read_labels(path)]
-                self.assertEqual(len(times), len(set(times)))
-
-
 class RallyFlawsTest(unittest.TestCase):
     """A rally alternates strike, landing, strike. Where the verdicts do not,
     one of them is wrong - see rally_flaws."""

@@ -20,9 +20,6 @@ ones) picks up where it stopped. --force redoes everything.
     6. coach page   -> outputs/<name>/coach_report.html
     7. video        -> outputs/<name>/annotated.mp4
 
---second-opinion adds TennisProject's bounce method (a 720p/30fps copy and
-a TrackNet pass - ~40 minutes on an M2), which marks each bounce on the
-landing map as confirmed by both methods or not.
 """
 
 import argparse
@@ -72,7 +69,6 @@ def main() -> None:
     parser.add_argument("--name", required=True, help="Short name for this session, used for all output paths")
     parser.add_argument("--start", type=float, default=0.0, help="seconds into the video")
     parser.add_argument("--end", type=float, help="seconds into the video (default: the end)")
-    parser.add_argument("--second-opinion", action="store_true", help="Also run TennisProject's bounce method (slow)")
     parser.add_argument("--no-feedback", action="store_true")
     parser.add_argument("--no-video", action="store_true")
     parser.add_argument("--force", action="store_true", help="Redo steps even if their output exists")
@@ -131,20 +127,6 @@ def main() -> None:
                   "--video", str(video), "--name", args.name, "--out", str(report), "--e2e", str(e2e)]
     if args.theme:
         report_cmd += ["--theme", args.theme]
-    tp_cache = out / "tennisproject_ball_track.pkl"
-    if args.second_opinion:
-        video_720 = REPO_ROOT / "data" / "videos" / f"{args.name}_720p30.mp4"
-        step("720p/30fps copy for TennisProject", video_720, [PY, s("normalise_clip.py"), "--input", str(source),
-             "--start", str(args.start), "--end", str(end), "--fps", "29.97", "--width", "1280", "--height", "720",
-             "--output", str(video_720)], args.force)
-        step("TennisProject bounce method", tp_cache, [PY, s("tennisproject_bounces.py"),
-             "--input", str(video_720), "--cache", str(tp_cache)], args.force)
-    # A second opinion computed on an earlier run is used whether or not it
-    # was asked for this time - only RUNNING it (slow) needs the flag.
-    # Otherwise re-running without the flag would quietly drop the
-    # "found by both methods" marks from a report that had them.
-    if tp_cache.exists():
-        report_cmd += ["--second-opinion", str(tp_cache)]
     # The report is cheap and depends on every cache above, so it is always rebuilt.
     step("session report (court, cutaways)", report, report_cmd, force=True)
     players = out / "players.json"
