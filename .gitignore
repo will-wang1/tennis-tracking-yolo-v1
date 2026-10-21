@@ -46,3 +46,6 @@ data/labels/skeletons/*_thumbs/
 # Instructions that ship inside the laptop-transfer zips and land at the
 # repo root on unzip - not project source.
 TRANSFER_README.txt
+
+# clips uploaded through the web app, downloaded by scripts/worker.py
+data/uploads/

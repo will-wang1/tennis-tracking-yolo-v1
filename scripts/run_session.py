@@ -15,8 +15,8 @@ ones) picks up where it stopped. --force redoes everything.
        pose         -> outputs/<name>/poses.pkl           ~5 min per 2 min of video (tells people from objects)
        players      -> outputs/<name>/players.json
     4. report       -> outputs/<name>/session_report.json
-    5. feedback     -> outputs/<name>/session_feedback.json, written by Qwen on this computer through
-                       Ollama (or .prompt.txt when Ollama or the model is not installed)
+    5. feedback     -> outputs/<name>/session_feedback.json, written by Qwen on this computer
+                       through MLX (Apple silicon; --no-feedback elsewhere)
     6. coach page   -> outputs/<name>/coach_report.html
     7. video        -> outputs/<name>/annotated.mp4
 

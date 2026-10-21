@@ -1,16 +1,28 @@
 // The app's data: coaches, courts, sessions and their reports.
 //
 // Locally this is a SQLite file (Node's built-in node:sqlite - nothing to
-// install or compile). Every query lives in this module and is plain SQL,
-// so moving to Postgres for the cloud means changing this file only.
+// install or compile). Every query is plain SQL in src/lib (this file,
+// users.ts, uploads.ts), so moving to Postgres for the cloud means changing
+// those only.
 
 import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 
-export const APP_ROOT = process.cwd(); // web/
+// turbopackIgnore: these are runtime data paths, not files to bundle.
+export const APP_ROOT = /* turbopackIgnore: true */ process.cwd(); // web/
 export const REPO_ROOT = path.resolve(APP_ROOT, "..");
 const DB_PATH = process.env.APP_DB ?? path.join(APP_ROOT, "data", "app.db");
+// Files the app stores itself (uploaded clips, processed videos). Paths in
+// the database under "media/" are relative to this; anything else is
+// relative to the repository (sessions published from outputs/).
+export const MEDIA_DIR = process.env.APP_MEDIA ?? path.join(APP_ROOT, "data", "media");
+
+export function resolveMedia(stored: string): string {
+  if (path.isAbsolute(stored)) return stored;
+  if (stored.startsWith("media/")) return path.join(/* turbopackIgnore: true */ MEDIA_DIR, stored.slice("media/".length));
+  return path.join(/* turbopackIgnore: true */ REPO_ROOT, stored);
+}
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS coaches (
@@ -41,6 +53,43 @@ CREATE TABLE IF NOT EXISTS sessions (
   imported_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS sessions_coach ON sessions(coach_id, date);
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY,
+  email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  name TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  role TEXT NOT NULL,                 -- 'head_coach' | 'coach'
+  coach_id INTEGER REFERENCES coaches(id),  -- a coach account sees this coach's sessions
+  must_change_password INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS logins (
+  token_hash TEXT PRIMARY KEY,        -- sha256 of the cookie's token; the token itself is never stored
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  expires_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS uploads (
+  id INTEGER PRIMARY KEY,
+  created_by INTEGER REFERENCES users(id),
+  coach_id INTEGER NOT NULL REFERENCES coaches(id),
+  title TEXT NOT NULL,
+  date TEXT NOT NULL,
+  court TEXT,
+  session_type TEXT NOT NULL,
+  themes TEXT NOT NULL DEFAULT '',
+  original_name TEXT,
+  file_path TEXT,                     -- the clip, under media/
+  size_bytes INTEGER,
+  status TEXT NOT NULL DEFAULT 'uploading',  -- uploading | queued | processing | done | failed
+  step TEXT,                          -- the backend step running now
+  steps_done INTEGER NOT NULL DEFAULT 0,
+  error TEXT,
+  worker TEXT,
+  session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  started_at TEXT,
+  finished_at TEXT
+);
 `;
 
 let db: DatabaseSync | null = null;
@@ -123,6 +172,10 @@ export function listCoaches(): Coach[] {
 
 export function getCoach(id: number): Coach | null {
   return (getDb().prepare("SELECT id, name, is_demo FROM coaches WHERE id = ?").get(id) as unknown as Coach) ?? null;
+}
+
+export function coachIdByName(name: string, isDemo = false): number {
+  return idFor("coaches", name, isDemo);
 }
 
 export function listSessions(filter: { coachId?: number; type?: SessionType; exemplary?: boolean } = {}): SessionRow[] {

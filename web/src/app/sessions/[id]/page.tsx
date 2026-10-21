@@ -7,6 +7,7 @@ import { METRICS } from "@/lib/metrics";
 import { MetricCard } from "@/components/Bullet";
 import { ExemplaryToggle } from "@/components/ExemplaryToggle";
 import { SessionVideo, type VideoEvent } from "@/components/SessionVideo";
+import { requireUser, canSeeCoach, isHead } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -27,8 +28,9 @@ function rallyEvents(report: J): VideoEvent[] {
 }
 
 export default async function SessionPage({ params }: { params: Promise<{ id: string }> }) {
+  const user = await requireUser();
   const s = getSession(Number((await params).id));
-  if (!s) notFound();
+  if (!s || !canSeeCoach(user, s.coach_id)) notFound();
   const r = s.report as J;
   const bench = benchmarkFor(s.session_type);
   const score = onBenchmark([s], bench);
@@ -53,7 +55,7 @@ export default async function SessionPage({ params }: { params: Promise<{ id: st
             {score.share != null && <span>On benchmark <b>{Math.round(100 * score.share)}%</b> ({score.met} of {score.judged})</span>}
           </div>
         </div>
-        <ExemplaryToggle id={s.id} exemplary={s.exemplary} />
+        {isHead(user) ? <ExemplaryToggle id={s.id} exemplary={s.exemplary} /> : s.exemplary ? <span className="chip ex">exemplary</span> : null}
       </div>
 
       {summary.headline && <p className="lede" style={{ fontSize: 17, color: "var(--ink)", marginBottom: 22 }}>{summary.headline}</p>}

@@ -5,6 +5,7 @@ import { coachLines, flags, averages, JUDGED, typeLabel } from "@/lib/compare";
 import { Value } from "@/components/Bullet";
 import { TypeTabs, parseType } from "@/components/TypeTabs";
 import { DemoBanner } from "@/components/DemoBanner";
+import { requireHeadCoach } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -13,6 +14,7 @@ function pct(x: number | null) {
 }
 
 export default async function CoachesPage({ searchParams }: { searchParams: Promise<{ type?: string }> }) {
+  await requireHeadCoach();
   const type = parseType((await searchParams).type);
   const all = listSessions();
   const bench = benchmarkFor(type);

@@ -5,10 +5,13 @@ import { typeLabel } from "@/lib/compare";
 import { METRICS } from "@/lib/metrics";
 import { SessionTable } from "@/components/SessionTable";
 import { TypeTabs, parseType } from "@/components/TypeTabs";
+import { requireUser, isHead } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
 export default async function BenchmarksPage({ searchParams }: { searchParams: Promise<{ type?: string }> }) {
+  const user = await requireUser();
+  const head = isHead(user);
   const type = parseType((await searchParams).type);
   const bench = benchmarkFor(type);
   const benches = allBenchmarks();
@@ -20,7 +23,7 @@ export default async function BenchmarksPage({ searchParams }: { searchParams: P
           <p className="eyebrow">{typeLabel(type)}</p>
           <h1>Benchmark</h1>
           <p className="lede">
-            What a well-run {type === "squad" ? "squad session" : "private lesson"} looks like here, learned from the sessions you mark as exemplary:
+            What a well-run {type === "squad" ? "squad session" : "private lesson"} looks like here, learned from the sessions {head ? "you mark" : "the head coach marks"} as exemplary:
             a band around their typical value, as wide as they vary but never narrower than a set tolerance per measure. Marking or unmarking a session updates it at once.
           </p>
         </div>
@@ -28,7 +31,7 @@ export default async function BenchmarksPage({ searchParams }: { searchParams: P
       </div>
 
       {bench.sessions.length === 0 && (
-        <div className="banner info">No sessions are marked exemplary yet, so the default targets are used where there is one. Mark sessions below.</div>
+        <div className="banner info">No sessions are marked exemplary yet, so the default targets are used where there is one.{head && " Mark sessions below."}</div>
       )}
 
       <div className="table-wrap">
@@ -51,6 +54,7 @@ export default async function BenchmarksPage({ searchParams }: { searchParams: P
         </table>
       </div>
 
+      {head && <>
       <section className="section">
         <h2>Exemplary sessions ({bench.sessions.length})</h2>
         {bench.sessions.length ? <SessionTable sessions={bench.sessions} benches={benches} showToggle showType={false} /> : <p className="muted">None yet.</p>}
@@ -61,6 +65,7 @@ export default async function BenchmarksPage({ searchParams }: { searchParams: P
         <p className="muted">Mark the ones that show how sessions should be run. Watch them first - <Link href="/sessions">all sessions</Link>.</p>
         {candidates.length ? <SessionTable sessions={candidates} benches={benches} showToggle showType={false} /> : <p className="muted">None.</p>}
       </section>
+      </>}
     </>
   );
 }

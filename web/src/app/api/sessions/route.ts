@@ -4,11 +4,11 @@
 
 import { insertSession, SESSION_TYPES, type SessionType } from "@/lib/db";
 import { extractMetrics } from "@/lib/metrics";
-
-const TOKEN = process.env.IMPORT_TOKEN ?? "dev-import-token";
+import { workerAuthorised } from "@/lib/auth";
+import { getUpload, markDone } from "@/lib/uploads";
 
 export async function POST(req: Request) {
-  if (req.headers.get("authorization") !== `Bearer ${TOKEN}`) {
+  if (!workerAuthorised(req)) {
     return Response.json({ error: "bad or missing import token" }, { status: 401 });
   }
   const body = await req.json().catch(() => null);
@@ -35,5 +35,7 @@ export async function POST(req: Request) {
     exemplary: Boolean(body.exemplary),
     is_demo: Boolean(body.is_demo),
   });
+  // From the processing worker: the upload this session came from is done.
+  if (body.upload_id != null && getUpload(Number(body.upload_id))) markDone(Number(body.upload_id), id);
   return Response.json({ id }, { status: 201 });
 }

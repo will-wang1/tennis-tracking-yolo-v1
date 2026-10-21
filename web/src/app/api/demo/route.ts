@@ -2,12 +2,11 @@
 // real sessions are in.
 
 import { deleteDemoData } from "@/lib/db";
-
-const TOKEN = process.env.IMPORT_TOKEN ?? "dev-import-token";
+import { apiUser, workerAuthorised } from "@/lib/auth";
 
 export async function DELETE(req: Request) {
-  if (req.headers.get("authorization") !== `Bearer ${TOKEN}`) {
-    return Response.json({ error: "bad or missing import token" }, { status: 401 });
+  if (!workerAuthorised(req) && (await apiUser())?.role !== "head_coach") {
+    return Response.json({ error: "head coach or worker token only" }, { status: 401 });
   }
   deleteDemoData();
   return Response.json({ deleted: true });

@@ -8,12 +8,14 @@ import { MetricCard } from "@/components/Bullet";
 import { Trend } from "@/components/Trend";
 import { SessionTable } from "@/components/SessionTable";
 import { TypeTabs, parseType } from "@/components/TypeTabs";
+import { requireUser, canSeeCoach, isHead } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
 export default async function CoachPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ type?: string }> }) {
+  const user = await requireUser();
   const coach = getCoach(Number((await params).id));
-  if (!coach) notFound();
+  if (!coach || !canSeeCoach(user, coach.id)) notFound();
   const mine = listSessions({ coachId: coach.id });
   const sp = (await searchParams).type;
   // Default to the type this coach runs most.
@@ -31,7 +33,7 @@ export default async function CoachPage({ params, searchParams }: { params: Prom
     <>
       <div className="head">
         <div>
-          <p className="eyebrow"><Link href={`/coaches?type=${type}`}>Coaches</Link> · {typeLabel(type)}</p>
+          <p className="eyebrow">{isHead(user) ? <Link href={`/coaches?type=${type}`}>Coaches</Link> : "My coaching"} · {typeLabel(type)}</p>
           <h1>{coach.name} {coach.is_demo ? <span className="chip demo">demo</span> : null}</h1>
           <div className="meta">
             <span><b>{sessions.length}</b> {typeLabel(type).toLowerCase()}</span>

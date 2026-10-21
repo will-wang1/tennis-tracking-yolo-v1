@@ -39,10 +39,11 @@ video on an M2 MacBook.
 
 ## Web app
 
-`web/` is the head coach's app: coaches compared against a benchmark learned
-from exemplary sessions, per coach and per session, with the video. Sessions
-go in with `scripts/publish_session.py` after `run_session.py`. See
-`web/README.md`.
+`web/` is the app: the head coach compares coaches against a benchmark
+learned from exemplary sessions, coaches see their own sessions. Session
+videos are uploaded in the app and analysed by `scripts/worker.py` (which
+runs `run_session.py` on any computer that can reach the app); sessions
+analysed by hand go in with `scripts/publish_session.py`. See `web/README.md`.
 
 ## What the report contains
 
