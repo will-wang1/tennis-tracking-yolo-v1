@@ -13,5 +13,5 @@ PyYAML>=6.0
 tqdm>=4.66.0
 certifi
 timm>=1.0  # E2E-Spot (src/third_party/e2e_spot)
-mlx-lm>=0.20  # local Qwen feedback on Apple silicon (src/session/feedback.py)
+mlx-lm>=0.20; sys_platform == "darwin"  # local Qwen feedback on a Mac; Ollama elsewhere (src/session/feedback.py)
 anthropic>=1.0  # optional: --provider claude for feedback

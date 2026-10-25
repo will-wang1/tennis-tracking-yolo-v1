@@ -1,7 +1,8 @@
 """Analyse the clips uploaded to the web app, one after another.
 
-Runs on the analysis computer (this Mac, or the GPU laptop) and talks to the
-app over HTTP, so it doesn't need to be the machine the app runs on:
+Runs on the analysis computer (the Acer server, beside the app, or a Mac
+for testing) and talks to the app over HTTP, so it doesn't need to be the
+machine the app runs on:
 
     python scripts/worker.py                         # keep going, check every 30s
     python scripts/worker.py --once                  # one clip, then stop
@@ -12,6 +13,12 @@ For each queued upload it downloads the clip, runs run_session.py on it
 back, and publishes the report - which marks the upload done and links it
 to its session. A failure is reported with the end of the log and the
 worker moves on; the head coach can retry from the Uploads page.
+
+Once a session is published its working files here - the downloaded clip,
+the normalised copy and outputs/upload_<id>/ - are deleted (--keep-files
+keeps them): the app holds the report and video, and footage of students
+should not pile up on the analysis computer. A failed clip's files stay so
+a retry can reuse them.
 """
 
 from __future__ import annotations
@@ -27,6 +34,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from publish_session import DEFAULT_TOKEN, DEFAULT_URL, ROOT, AppError, call, session_body  # noqa: E402
+
+sys.path.insert(0, str(ROOT))
+from src.session.feedback import default_backend, default_model, feedback_status  # noqa: E402
 
 PY = sys.executable
 
@@ -101,6 +111,25 @@ def analyse(job: dict, args: argparse.Namespace) -> None:
         "video_path": video_path,
     })
     print(f"  done: {args.url.rstrip('/')}/sessions/{created['id']}", flush=True)
+    if not args.keep_files:
+        clip.unlink(missing_ok=True)
+        (ROOT / "data" / "videos" / f"{name}.mp4").unlink(missing_ok=True)
+        shutil.rmtree(out_dir, ignore_errors=True)
+
+
+def check_feedback() -> None:
+    """Stop at start-up if Qwen can't run, rather than publish every session
+    without feedback and only say so in a log nobody reads."""
+    backend = default_backend()
+    model = default_model(backend)
+    status = feedback_status(backend, model)
+    if status in ("ready", "not downloaded"):  # MLX downloads on first use
+        print(f"Feedback: {model} via {backend}", flush=True)
+        return
+    hints = {"no mlx": "MLX is not installed (Apple silicon only) - set FEEDBACK_BACKEND=ollama",
+             "no server": "Ollama is not running - start it (systemctl status ollama)",
+             "not pulled": f"the model is not downloaded - ollama pull {model}"}
+    raise SystemExit(f"Can't write feedback: {hints.get(status, status)}. Fix that, or run with --no-feedback.")
 
 
 def main() -> None:
@@ -109,12 +138,15 @@ def main() -> None:
     parser.add_argument("--token", default=DEFAULT_TOKEN)
     parser.add_argument("--once", action="store_true", help="process at most one clip, then stop")
     parser.add_argument("--poll", type=float, default=30, help="seconds between checks when the queue is empty")
-    parser.add_argument("--no-feedback", action="store_true", help="skip the AI feedback (Qwen needs Apple silicon)")
+    parser.add_argument("--no-feedback", action="store_true", help="skip the AI feedback")
+    parser.add_argument("--keep-files", action="store_true", help="keep each clip's working files after publishing")
     parser.add_argument("--name", default=socket.gethostname(), help="this worker's name, shown in the app")
     parser.add_argument("--verbose", action="store_true", help="print run_session's full output")
     args = parser.parse_args()
 
     print(f"Worker '{args.name}' on {args.url}", flush=True)
+    if not args.no_feedback:
+        check_feedback()
     while True:
         try:
             job = call(args.url, args.token, "/api/worker/claim", {"worker": args.name})

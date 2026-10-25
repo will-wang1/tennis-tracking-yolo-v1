@@ -1,10 +1,11 @@
 """Write coaching feedback for a session report by asking a language model to
 read it (src/session/feedback.py).
 
-By default the model is Qwen3 8B running on this computer, so nothing
-leaves the machine - through Apple's MLX (pip install mlx-lm; the model,
-~4.6GB, downloads from Hugging Face on first use), or through Ollama with
---backend ollama:
+By default the model is Qwen3 running on this computer, so nothing leaves
+the machine - through Apple's MLX on a Mac (pip install mlx-lm; the model,
+~4.6GB, downloads from Hugging Face on first use), or through Ollama
+anywhere else (the Acer server: FEEDBACK_MODEL=qwen3:4b, which fits its
+4GB GPU). FEEDBACK_BACKEND / FEEDBACK_MODEL, or --backend / --model, choose:
 
     python scripts/session_feedback.py \\
         --report outputs/dingles_serve_volley/session_report.json \\
@@ -26,7 +27,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from src.session.feedback import (  # noqa: E402
-    LOCAL_MODEL, MLX_MODEL, OLLAMA, FeedbackRefused, compact_report, local_model_status, mlx_status, offline_prompt,
+    OLLAMA, FeedbackRefused, compact_report, default_backend, default_model, feedback_status, offline_prompt,
     request_feedback, request_feedback_local, request_feedback_mlx,
 )
 
@@ -36,9 +37,9 @@ def main() -> None:
     parser.add_argument("--report", required=True)
     parser.add_argument("--out", required=True)
     parser.add_argument("--provider", default="qwen", choices=["qwen", "claude"])
-    parser.add_argument("--backend", default="mlx", choices=["mlx", "ollama"], help="How to run Qwen here")
-    parser.add_argument("--model", default=None,
-                        help=f"Model to run (default {MLX_MODEL} with mlx, {LOCAL_MODEL} with ollama)")
+    parser.add_argument("--backend", default=None, choices=["mlx", "ollama"],
+                        help="How to run Qwen here (default: FEEDBACK_BACKEND, else mlx on a Mac, ollama elsewhere)")
+    parser.add_argument("--model", default=None, help="Model to run (default: FEEDBACK_MODEL, else per backend)")
     parser.add_argument("--host", default=OLLAMA, help="Where Ollama is listening")
     parser.add_argument("--effort", default="high", choices=["low", "medium", "high", "xhigh", "max"],
                         help="With --provider claude")
@@ -51,16 +52,15 @@ def main() -> None:
     prompt_path = out.with_suffix(".prompt.txt")
 
     if args.provider == "qwen":
-        model = args.model or (MLX_MODEL if args.backend == "mlx" else LOCAL_MODEL)
+        backend = args.backend or default_backend()
+        model = args.model or default_model(backend)
         if args.offline:
             status = "offline"
-        elif args.backend == "mlx":
-            status = mlx_status(model)
+        else:
+            status = feedback_status(backend, model, args.host)
             if status == "not downloaded":
                 print(f"Downloading {model} (~4.6GB, once)...", flush=True)
-                status = "ready"  # load() fetches it
-        else:
-            status = local_model_status(model, args.host)
+                status = "ready"  # MLX's load() fetches it
         if status != "ready":
             prompt_path.write_text(offline_prompt(compact_report(report)))
             print(f"Wrote the prompt to {prompt_path} instead of calling {model}:")
@@ -72,7 +72,7 @@ def main() -> None:
             return
         print(f"Asking {model} on this computer - a minute or two...", flush=True)
         try:
-            if args.backend == "mlx":
+            if backend == "mlx":
                 feedback = request_feedback_mlx(report, model_id=model)
             else:
                 feedback = request_feedback_local(report, model=model, host=args.host)

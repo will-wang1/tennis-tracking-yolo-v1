@@ -27,14 +27,17 @@ once, to change at first sign-in.
 
    ```bash
    python scripts/worker.py                 # from the repo root; keeps checking every 30s
-   python scripts/worker.py --no-feedback   # on a computer without Apple silicon (no Qwen)
-   APP_URL=https://<app> IMPORT_TOKEN=<token> python scripts/worker.py   # the GPU laptop, remotely
+   python scripts/worker.py --no-feedback   # skip the AI feedback (Qwen)
+   APP_URL=https://<app> IMPORT_TOKEN=<token> python scripts/worker.py   # against another machine's app
    ```
 
    It downloads the clip, runs `scripts/run_session.py`, reports each step
    (the **Uploads** page shows it), sends the annotated video back and
    publishes the report. A failure shows the end of the log on **Uploads**,
-   with **Retry**.
+   with **Retry**. Qwen runs through MLX on a Mac and Ollama elsewhere
+   (`FEEDBACK_BACKEND`, `FEEDBACK_MODEL`); the worker stops at start-up if
+   it can't run. Once published, the original clip and the worker's working
+   files are deleted; a worker restarted mid-clip picks that clip up again.
 3. About 8 minutes of processing per minute of video on the M2 Mac.
 
 Sessions analysed by hand still go in with
@@ -55,8 +58,10 @@ Demo data (made-up coaches built from the Dingles report, all marked demo):
 Sign-in: scrypt-hashed passwords, a random token in an httpOnly cookie (only
 its hash stored), 30-day sign-ins, 5 wrong passwords lock an email for 15
 minutes, changing a password signs out other browsers. The worker and the
-publish script use the `IMPORT_TOKEN` bearer token instead -
-**set a long random one in production** (the default is for local use).
+publish script use the `IMPORT_TOKEN` bearer token instead. In production
+(`NODE_ENV=production`) the server won't start without a real `IMPORT_TOKEN`
+(32+ characters), and first-run setup asks for `SETUP_TOKEN` - see
+`../deploy/README.md`.
 
 ## Pages
 
@@ -94,13 +99,20 @@ publish script use the `IMPORT_TOKEN` bearer token instead -
 | `src/app/api/sessions` | import (bearer token `IMPORT_TOKEN`), exemplary toggle, video streaming |
 | `scripts/seed-demo.mjs` | demo data |
 
-## Not done yet (before it goes in the cloud)
+## Running it for real
 
-- **Hosting**: Postgres instead of the SQLite file (only `src/lib/*.ts`
-  change), video in object storage with signed links, HTTPS.
+The Acer server runs the app, the worker, Qwen and a nightly backup
+(`scripts/maintenance.mjs`: database backup, expired videos deleted after
+`VIDEO_RETENTION_DAYS`), reached over Tailscale. Setup and upkeep:
+`../deploy/README.md`.
+
+## Not done yet
+
+- **Public hosting** (beyond Tailscale): Postgres instead of the SQLite file
+  (only `src/lib/*.ts` change), video in object storage with signed links.
 - **School sign-in** (Microsoft 365) instead of passwords, if the school wants it.
 - **Resumable uploads** for very large files over poor connections (today one
   dropped connection means uploading again).
-- **Privacy**: footage of students - consent, who may see which video, how
-  long clips are kept (nothing is deleted automatically yet).
+- **Privacy**: footage of students - consent, who may see which video, and
+  the retention period, to agree with the school (the default is 120 days).
 - **Players' view** of their own stats.

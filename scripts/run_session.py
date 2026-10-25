@@ -16,7 +16,7 @@ ones) picks up where it stopped. --force redoes everything.
        players      -> outputs/<name>/players.json
     4. report       -> outputs/<name>/session_report.json
     5. feedback     -> outputs/<name>/session_feedback.json, written by Qwen on this computer
-                       through MLX (Apple silicon; --no-feedback elsewhere)
+                       (MLX on a Mac, Ollama elsewhere - see scripts/session_feedback.py)
     6. coach page   -> outputs/<name>/coach_report.html
     7. video        -> outputs/<name>/annotated.mp4
 

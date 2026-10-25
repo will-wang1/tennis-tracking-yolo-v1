@@ -44,6 +44,7 @@ learned from exemplary sessions, coaches see their own sessions. Session
 videos are uploaded in the app and analysed by `scripts/worker.py` (which
 runs `run_session.py` on any computer that can reach the app); sessions
 analysed by hand go in with `scripts/publish_session.py`. See `web/README.md`.
+The real system runs on the Acer server - setup in `deploy/README.md`.
 
 ## What the report contains
 

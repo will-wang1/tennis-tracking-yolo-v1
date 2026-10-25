@@ -1,0 +1,15 @@
+[Unit]
+Description=Coaching review web app
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=@USER@
+WorkingDirectory=@REPO@/web
+EnvironmentFile=@REPO@/deploy/coaching.env
+ExecStart=/usr/bin/node node_modules/next/dist/bin/next start --hostname 127.0.0.1
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

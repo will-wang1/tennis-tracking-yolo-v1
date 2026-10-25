@@ -1,7 +1,8 @@
 // Uploaded clips and their way through the processing worker:
 // uploading -> queued -> processing -> done (a session) | failed.
 
-import { getDb, type SessionType } from "./db";
+import fs from "node:fs";
+import { getDb, resolveMedia, type SessionType } from "./db";
 
 export type UploadStatus = "uploading" | "queued" | "processing" | "done" | "failed";
 
@@ -73,8 +74,11 @@ export function fileReceived(id: number, filePath: string, size: number): void {
 }
 
 /** The oldest queued upload, now marked as this worker's - atomically, so
- * two workers never take the same clip. */
+ * two workers never take the same clip. A worker asking for work is doing
+ * none, so anything still "processing" under its name was cut off (a
+ * restart, an update, a power cut) and goes back to the front of the queue. */
 export function claimNext(worker: string): Upload | null {
+  getDb().prepare("UPDATE uploads SET status = 'queued', step = NULL, steps_done = 0 WHERE status = 'processing' AND worker = ?").run(worker);
   const r = getDb().prepare(`UPDATE uploads SET status = 'processing', worker = ?, started_at = datetime('now'),
       step = NULL, steps_done = 0, error = NULL
     WHERE id = (SELECT id FROM uploads WHERE status = 'queued' ORDER BY id LIMIT 1) RETURNING id`).get(worker) as { id: number } | undefined;
@@ -89,8 +93,14 @@ export function markFailed(id: number, error: string): void {
   getDb().prepare("UPDATE uploads SET status = 'failed', error = ?, finished_at = datetime('now') WHERE id = ?").run(error.slice(-4000), id);
 }
 
+/** The clip became a session. The original is deleted: the session keeps
+ * the annotated video, and raw footage of students is not kept longer
+ * than it is needed. */
 export function markDone(id: number, sessionId: number): void {
-  getDb().prepare("UPDATE uploads SET status = 'done', session_id = ?, step = NULL, finished_at = datetime('now') WHERE id = ?").run(sessionId, id);
+  const file = getUpload(id)?.file_path;
+  if (file) fs.rmSync(resolveMedia(file), { force: true });
+  getDb().prepare(`UPDATE uploads SET status = 'done', session_id = ?, step = NULL, file_path = NULL,
+    finished_at = datetime('now') WHERE id = ?`).run(sessionId, id);
 }
 
 export function requeue(id: number): void {

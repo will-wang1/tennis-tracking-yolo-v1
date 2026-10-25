@@ -7,6 +7,7 @@ import {
   countUsers, createUser, emailTaken, endLogin, passwordProblem, startLogin, verifyLogin,
 } from "@/lib/users";
 import { coachIdByName } from "@/lib/db";
+import { PRODUCTION, sameSecret, setupToken } from "@/lib/config";
 
 export interface FormState { error?: string }
 
@@ -27,6 +28,9 @@ export async function login(_: FormState, form: FormData): Promise<FormState> {
 /** First run only: the head coach's account, while there are no accounts. */
 export async function setup(_: FormState, form: FormData): Promise<FormState> {
   if (countUsers() > 0) redirect("/login");
+  const code = setupToken();
+  if (PRODUCTION && !code) return { error: "Setup is turned off: set SETUP_TOKEN in the server's settings file." };
+  if (code && !sameSecret(String(form.get("setup_token") ?? "").trim(), code)) return { error: "That setup code is wrong." };
   const name = String(form.get("name") ?? "").trim();
   const email = String(form.get("email") ?? "").trim();
   const password = String(form.get("password") ?? "");

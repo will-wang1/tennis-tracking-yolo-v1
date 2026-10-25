@@ -10,6 +10,7 @@ import { cache } from "react";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { userForToken, type User } from "./users";
+import { importToken, sameSecret } from "./config";
 
 export const COOKIE = "cr_login";
 
@@ -49,6 +50,6 @@ export async function apiUser(): Promise<User | null> {
 }
 
 export function workerAuthorised(req: Request): boolean {
-  const token = process.env.IMPORT_TOKEN ?? "dev-import-token";
-  return req.headers.get("authorization") === `Bearer ${token}`;
+  const token = importToken();
+  return token != null && sameSecret(req.headers.get("authorization") ?? "", `Bearer ${token}`);
 }

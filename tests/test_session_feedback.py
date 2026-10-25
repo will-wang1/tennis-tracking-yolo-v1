@@ -127,8 +127,23 @@ class LocalQwenTest(unittest.TestCase):
         self.assertEqual(seen["url"], "http://h:1/api/chat")
         self.assertEqual(seen["payload"]["format"], FEEDBACK_SCHEMA)
         self.assertFalse(seen["payload"]["think"])
+        self.assertEqual(seen["payload"]["keep_alive"], 0)  # frees the small GPU for the next clip
         self.assertEqual(out["headline"], GOOD["headline"])
         self.assertIn("qwen3:8b", out["model"])
+
+    def test_backend_and_model_follow_the_environment(self):
+        from unittest import mock
+
+        from src.session.feedback import LOCAL_MODEL, MLX_MODEL, default_backend, default_model
+
+        with mock.patch.dict("os.environ", {"FEEDBACK_BACKEND": "ollama", "FEEDBACK_MODEL": "qwen3:4b"}):
+            self.assertEqual(default_backend(), "ollama")
+            self.assertEqual(default_model("ollama"), "qwen3:4b")
+        with mock.patch.dict("os.environ", {}, clear=True):
+            self.assertEqual(default_model("ollama"), LOCAL_MODEL)
+            self.assertEqual(default_model("mlx"), MLX_MODEL)
+            with mock.patch.dict("sys.modules", {"mlx_lm": None}):  # no MLX: not a Mac
+                self.assertEqual(default_backend(), "ollama")
 
     def test_bad_json_or_missing_fields_fail_loudly(self):
         from src.session.feedback import request_feedback_local

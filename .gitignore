@@ -49,3 +49,6 @@ TRANSFER_README.txt
 
 # clips uploaded through the web app, downloaded by scripts/worker.py
 data/uploads/
+
+# the Acer server's settings and secrets (deploy/setup.sh writes it)
+deploy/coaching.env

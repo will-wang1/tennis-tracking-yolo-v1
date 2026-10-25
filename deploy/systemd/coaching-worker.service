@@ -1,0 +1,18 @@
+[Unit]
+Description=Coaching review worker: analyses uploaded clips
+After=coaching-web.service ollama.service
+Wants=coaching-web.service ollama.service
+
+[Service]
+User=@USER@
+WorkingDirectory=@REPO@
+EnvironmentFile=@REPO@/deploy/coaching.env
+ExecStart=@REPO@/.venv/bin/python -u scripts/worker.py --name acer
+# Stopping (an update, a restart) cuts off the clip in progress; the worker
+# picks it up again when it next asks for work.
+Restart=always
+RestartSec=60
+Nice=5
+
+[Install]
+WantedBy=multi-user.target

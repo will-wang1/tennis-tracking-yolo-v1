@@ -1,7 +1,8 @@
 """Turn a session report (report.py) into written feedback for a coach, by
-asking a language model to interpret it: Qwen3 8B running on this computer
-(through Apple's MLX by default - a Python library, nothing to install
-beyond pip - or through Ollama), or Claude through the Anthropic API.
+asking a language model to interpret it: Qwen3 running on this computer
+(through Apple's MLX on a Mac - a Python library, nothing to install beyond
+pip - or through Ollama elsewhere, e.g. the Acer server with its NVIDIA
+GPU), or Claude through the Anthropic API.
 
 The report does the measuring; this does the reading. The model is given
 the whole report and told the one rule the report is built around: a value
@@ -18,6 +19,7 @@ Feedback that implies otherwise is inventing, however fluent it reads.
 """
 
 import json
+import os
 from typing import Any
 
 MODEL = "claude-opus-5"
@@ -101,9 +103,34 @@ thin ones."""
 
 # ---- local Qwen through Ollama --------------------------------------------
 
-LOCAL_MODEL = "qwen3:8b"  # ~5GB; runs on a 16GB M2 alongside the rest
+LOCAL_MODEL = "qwen3:8b"  # ~5GB; the Acer's 4GB RTX 2050 runs qwen3:4b (FEEDBACK_MODEL)
 OLLAMA = "http://localhost:11434"
 LOCAL_CONTEXT = 16384  # tokens; the compact report is a few thousand
+
+
+def default_backend() -> str:
+    """How to run Qwen here: FEEDBACK_BACKEND if set, otherwise MLX where it
+    is installed (Apple silicon) and Ollama everywhere else."""
+    chosen = os.environ.get("FEEDBACK_BACKEND", "auto")
+    if chosen != "auto":
+        return chosen
+    try:
+        import mlx_lm  # noqa: F401
+    except ImportError:
+        return "ollama"
+    return "mlx"
+
+
+def default_model(backend: str) -> str:
+    return os.environ.get("FEEDBACK_MODEL") or (MLX_MODEL if backend == "mlx" else LOCAL_MODEL)
+
+
+def feedback_status(backend: str | None = None, model: str | None = None, host: str = OLLAMA) -> str:
+    """'ready', or why Qwen can't run here: 'no mlx', 'not downloaded',
+    'no server' or 'not pulled'."""
+    backend = backend or default_backend()
+    model = model or default_model(backend)
+    return mlx_status(model) if backend == "mlx" else local_model_status(model, host)
 
 
 def compact_report(report: dict) -> dict:
@@ -152,6 +179,7 @@ def request_feedback_local(report: dict, model: str = LOCAL_MODEL, host: str = O
         "model": model,
         "stream": False,
         "think": False,  # Qwen3's reasoning mode: slow on a laptop, and the schema does the structuring
+        "keep_alive": 0,  # free the GPU at once: the next clip's detectors need all of a small card
         "format": FEEDBACK_SCHEMA,
         "options": {"num_ctx": LOCAL_CONTEXT, "temperature": 0.3},
         "messages": [

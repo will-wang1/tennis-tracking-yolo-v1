@@ -1,0 +1,8 @@
+[Unit]
+Description=Coaching review nightly backup and clean-up
+
+[Service]
+Type=oneshot
+User=@USER@
+EnvironmentFile=@REPO@/deploy/coaching.env
+ExecStart=/usr/bin/bash @REPO@/deploy/backup.sh
