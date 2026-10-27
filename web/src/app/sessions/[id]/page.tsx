@@ -7,6 +7,7 @@ import { METRICS } from "@/lib/metrics";
 import { MetricCard } from "@/components/Bullet";
 import { ExemplaryToggle } from "@/components/ExemplaryToggle";
 import { SessionVideo, type VideoEvent } from "@/components/SessionVideo";
+import { ReportFrame } from "@/components/ReportFrame";
 import { requireUser, canSeeCoach, isHead } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
@@ -37,8 +38,6 @@ export default async function SessionPage({ params }: { params: Promise<{ id: st
   const club = averages(listSessions({ type: s.session_type }));
   const summary = r.summary ?? {};
   const fb = s.feedback as J | null;
-  const coachPlayer = summary.coach_player;
-  const players: J[] = (summary.players ?? []).filter((p: J) => p.role !== "coach");
 
   return (
     <>
@@ -106,20 +105,6 @@ export default async function SessionPage({ params }: { params: Promise<{ id: st
         </section>
       )}
 
-      {players.length > 0 && (
-        <section className="section">
-          <h2>Players</h2>
-          <div className="table-wrap">
-            <table>
-              <thead><tr><th>Player</th><th>Summary</th></tr></thead>
-              <tbody>
-                {players.map((p) => <tr key={p.player}><td className="n">Player {p.player}</td><td>{p.line}</td></tr>)}
-              </tbody>
-            </table>
-          </div>
-          {coachPlayer != null && <p className="muted" style={{ fontSize: 13, marginTop: 8 }}>Player {coachPlayer} is taken to be the coach and left out.</p>}
-        </section>
-      )}
 
       {fb && (
         <section className="section">
@@ -137,6 +122,15 @@ export default async function SessionPage({ params }: { params: Promise<{ id: st
           </div>
         </section>
       )}
+
+      <section className="section">
+        <h2>Full analysis</h2>
+        <p className="muted" style={{ fontSize: 13.5, marginBottom: 10 }}>
+          Each player, where the ball landed and where people were, heatmaps, how rallies ended and the session timeline.{" "}
+          <a href={`/api/sessions/${s.id}/report`} target="_blank" rel="noopener">Open on its own page</a>
+        </p>
+        <ReportFrame src={`/api/sessions/${s.id}/report?embed=1`} title={`Full analysis: ${s.title}`} />
+      </section>
     </>
   );
 }

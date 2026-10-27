@@ -53,6 +53,27 @@ def download(url: str, token: str, upload_id: int, dest: Path) -> None:
     partial.rename(dest)
 
 
+def browser_video(video: Path) -> Path:
+    """The annotated video as H.264 with its index at the front, so browsers
+    play it and can seek before it has all arrived. OpenCV's pip build
+    writes H.264 on a Mac but not on Linux, where it falls back to mp4v -
+    which no browser plays - so ffmpeg re-encodes it wherever it is
+    installed (deploy/setup.sh installs it on the Acer)."""
+    if shutil.which("ffmpeg"):
+        out = video.with_name(video.stem + "_web.mp4")
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(video), "-c:v", "libx264", "-preset", "veryfast",
+                        "-crf", "23", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-an", str(out)], check=True)
+        return out
+    import cv2
+
+    capture = cv2.VideoCapture(str(video))
+    codec = int(capture.get(cv2.CAP_PROP_FOURCC)).to_bytes(4, "little").decode(errors="replace").lower()
+    capture.release()
+    if codec not in ("avc1", "h264"):
+        raise AppError(f"The annotated video is {codec}, which browsers can't play - install ffmpeg (sudo apt install ffmpeg)")
+    return video
+
+
 def analyse(job: dict, args: argparse.Namespace) -> None:
     upload_id = job["id"]
     name = f"upload_{upload_id}"
@@ -93,6 +114,8 @@ def analyse(job: dict, args: argparse.Namespace) -> None:
     video_path = None
     video = out_dir / "annotated.mp4"
     if video.exists():
+        call(args.url, args.token, f"/api/worker/{upload_id}/progress", {"step": "preparing the video", "steps_done": done})
+        video = browser_video(video)
         call(args.url, args.token, f"/api/worker/{upload_id}/progress", {"step": "sending the video", "steps_done": done})
         with open(video, "rb") as handle:
             sent = call(args.url, args.token, f"/api/worker/{upload_id}/video", method="PUT",

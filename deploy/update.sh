@@ -12,6 +12,8 @@ export PATH="$HOME/.local/bin:$PATH"
 cd "$REPO"
 
 git pull --ff-only
+# System packages added since setup (installing again is a no-op).
+sudo apt-get install -y -q ffmpeg >/dev/null
 uv pip install -q --python .venv/bin/python -r requirements.txt
 
 set -a; . deploy/coaching.env; set +a

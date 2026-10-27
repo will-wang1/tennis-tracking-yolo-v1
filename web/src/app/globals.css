@@ -120,6 +120,7 @@ tbody tr:hover td { background: color-mix(in srgb, var(--surface-2) 45%, transpa
 /* ---- session page ---- */
 .session-grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 18px; align-items: start; }
 @media (max-width: 980px) { .session-grid { grid-template-columns: 1fr; } }
+.report-frame { display: block; width: 100%; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); }
 video { width: 100%; border-radius: 8px; background: #000; display: block; }
 .events { max-height: 300px; overflow-y: auto; margin-top: 10px; }
 .events button { display: flex; gap: 10px; width: 100%; text-align: left; background: none; border: 0; border-bottom: 1px solid var(--rule); padding: 7px 4px; font: 13.5px var(--body); color: var(--ink); cursor: pointer; }

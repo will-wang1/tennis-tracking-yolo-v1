@@ -15,7 +15,7 @@ step() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 
 step "System packages"
 sudo apt-get update -q
-sudo apt-get install -y -q git curl ca-certificates build-essential libgl1 libglib2.0-0 rsync openssl
+sudo apt-get install -y -q git curl ca-certificates build-essential libgl1 libglib2.0-0 rsync openssl ffmpeg
 
 step "GPU"
 if ! nvidia-smi >/dev/null 2>&1; then
