@@ -11,7 +11,13 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 export PATH="$HOME/.local/bin:$PATH"
 cd "$REPO"
 
-git pull --ff-only
+# Pull first, then run the NEW copy of this script: bash reads a script as
+# it goes, so carrying on in the old one would skip new steps (or worse).
+if [ "${1:-}" != "--pulled" ]; then
+  git pull --ff-only
+  exec bash "$REPO/deploy/update.sh" --pulled
+fi
+
 # System packages added since setup (installing again is a no-op).
 sudo apt-get install -y -q ffmpeg >/dev/null
 uv pip install -q --python .venv/bin/python -r requirements.txt
