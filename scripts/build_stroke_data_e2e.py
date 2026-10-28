@@ -40,7 +40,6 @@ LABELS = REPO_ROOT / "data" / "external" / "e2e_spot_tennis"
 NET_Y, LENGTH, WIDTH = 23.77 / 2, 23.77, 10.97
 PAD_S = 1.5  # read this much either side of the point, for windows at its edges
 CROP_HEIGHT, PAD = 384, 0.25
-BATCH = 16
 
 
 def pick_player(people_px, feet_m, far: bool, last=None):
@@ -88,6 +87,8 @@ def main() -> None:
     parser.add_argument("--matches", nargs="*", help="Only these matches (default: all 9)")
     parser.add_argument("--max-points", type=int, default=None, help="Per match, for a quick test")
     parser.add_argument("--device", default=None)
+    parser.add_argument("--batch", type=int, default=16,
+                        help="Frames per person-detector call; 4 for a 4GB GPU")
     parser.add_argument("--preview", type=int, default=12,
                         help="Save a strip of this many labelled strokes per match (the hitter at the stroke, with "
                              "its label) to check the video lines up with the labels; 0 for none")
@@ -165,8 +166,8 @@ def main() -> None:
             order = sorted(frames)
             player_box = {False: {}, True: {}}
             def detections():
-                for i in range(0, len(order), BATCH):  # in chunks: a whole point at once needs >10GB
-                    yield from person_model.predict([frames[f] for f in order[i:i + BATCH]], imgsz=1280,
+                for i in range(0, len(order), args.batch):  # in chunks: a whole point at once needs >10GB
+                    yield from person_model.predict([frames[f] for f in order[i:i + args.batch]], imgsz=1280,
                                                     classes=[0], conf=0.2, device=device, verbose=False)
             last = {False: None, True: None}
             for f, r in zip(order, detections()):
