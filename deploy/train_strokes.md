@@ -31,15 +31,11 @@ You need about **40 GB free** (the 9 full matches are a few GB each).
 ## 3. Download the 9 matches
 
 ```
-mkdir -p ~/tennis_videos
-tail -n +2 data/external/e2e_spot_tennis/videos.csv | while IFS=, read -r name res fps id; do
-  .venv/bin/yt-dlp -f "bv*[height=1080][fps<=30][vcodec^=avc1]/bv*[height=1080][fps<=30]" \
-    -o "$HOME/tennis_videos/$name.%(ext)s" "https://www.youtube.com/watch?v=$id"
-done
-ls -lh ~/tennis_videos
+bash deploy/download_matches.sh
 ```
 
-If one match is no longer on YouTube, carry on without it. If yt-dlp says
+They go into `~/tennis_videos`. Running it again fetches only the ones still
+missing. If one match is no longer on YouTube, carry on without it. If yt-dlp says
 "Sign in to confirm you're not a bot" or that the format is not available,
 send Claude the message.
 
