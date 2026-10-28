@@ -7,6 +7,8 @@ model) and `out_channels` (256-way per-pixel heatmap classes for the ball,
 load onto this one class.
 """
 
+import os
+
 import torch
 import torch.nn as nn
 
@@ -107,3 +109,10 @@ def resolve_device(device: str | None) -> str:
     if device.isdigit():
         return f"cuda:{device}"
     return device
+
+
+def half_precision(device: str) -> bool:
+    """Run the models in 16-bit on an NVIDIA GPU: its tensor cores do that
+    much faster, and detections barely move. Off on MPS and CPU, where it
+    gains little. TENNIS_FP32=1 turns it off, to check a clip both ways."""
+    return str(device).startswith("cuda") and os.environ.get("TENNIS_FP32") != "1"

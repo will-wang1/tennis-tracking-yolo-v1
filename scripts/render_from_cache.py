@@ -62,6 +62,7 @@ from src.analysis.court_calibration import (  # noqa: E402
 )
 from src.analysis.impact_pipeline import analyze_impacts  # noqa: E402
 from src.tracking.candidate_tracker import track_ball_paths, track_candidates  # noqa: E402
+from src.video.io import BrowserVideoWriter, h264_encoder  # noqa: E402
 from src.visualize.draw import CourtOverlayDrawer, ImpactMarkerDrawer  # noqa: E402
 
 # Distinguishable at a glance on a blue court, in BGR. Track 0 is the
@@ -302,8 +303,13 @@ def render(args) -> None:
 
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    # H.264 so browsers (the web app) can play it; mp4v where H.264 is unavailable.
-    writer = cv2.VideoWriter(str(out_path), cv2.VideoWriter_fourcc(*"avc1"), fps, (width, height))
+    # H.264 so browsers (the web app) can play it: through ffmpeg where it is
+    # installed (the GPU's encoder if it has one), else OpenCV's own; mp4v
+    # where neither can.
+    if h264_encoder():
+        writer = BrowserVideoWriter(out_path, fps, width, height)
+    else:
+        writer = cv2.VideoWriter(str(out_path), cv2.VideoWriter_fourcc(*"avc1"), fps, (width, height))
     if not writer.isOpened():
         writer = cv2.VideoWriter(str(out_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
     if not writer.isOpened():

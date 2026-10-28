@@ -48,7 +48,7 @@ import cv2
 import numpy as np
 import torch
 
-from ._tracknet_arch import resolve_device
+from ._tracknet_arch import half_precision, resolve_device
 from ._wasb_hrnet import HRNet
 from .ball_detector import Detection
 
@@ -151,6 +151,7 @@ class WASBBallDetector:
         self.model.load_state_dict(checkpoint["model_state_dict"])
         self.model.to(self.device)
         self.model.eval()
+        self.half = half_precision(self.device)
 
         self._frame_buffer: deque[np.ndarray] = deque(maxlen=FRAMES_IN)
 
@@ -179,9 +180,9 @@ class WASBBallDetector:
         stacked = np.concatenate(list(self._frame_buffer), axis=0)  # oldest..newest, matches training order
         inp = torch.from_numpy(stacked).unsqueeze(0).float().to(self.device)
 
-        with torch.no_grad():
+        with torch.no_grad(), torch.autocast("cuda", dtype=torch.float16, enabled=self.half):
             out = self.model(inp)[0]  # scale 0 (the only one WASB tennis uses)
-        heatmap = torch.sigmoid(out[0, FRAMES_IN - 1]).cpu().numpy()  # newest frame's channel
+        heatmap = torch.sigmoid(out[0, FRAMES_IN - 1].float()).cpu().numpy()  # newest frame's channel
 
         trans_inv = _get_affine_transform(center, scale, (MODEL_WIDTH, MODEL_HEIGHT), inv=True)
         return [

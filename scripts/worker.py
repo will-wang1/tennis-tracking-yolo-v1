@@ -37,6 +37,7 @@ from publish_session import DEFAULT_TOKEN, DEFAULT_URL, ROOT, AppError, call, se
 
 sys.path.insert(0, str(ROOT))
 from src.session.feedback import default_backend, default_model, feedback_status  # noqa: E402
+from src.video.io import is_browser_ready  # noqa: E402
 
 PY = sys.executable
 
@@ -58,7 +59,10 @@ def browser_video(video: Path) -> Path:
     play it and can seek before it has all arrived. OpenCV's pip build
     writes H.264 on a Mac but not on Linux, where it falls back to mp4v -
     which no browser plays - so ffmpeg re-encodes it wherever it is
-    installed (deploy/setup.sh installs it on the Acer)."""
+    installed (deploy/setup.sh installs it on the Acer). Where ffmpeg was
+    there for the render too, the video is already right and is sent as it is."""
+    if is_browser_ready(video):
+        return video
     if shutil.which("ffmpeg"):
         out = video.with_name(video.stem + "_web.mp4")
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(video), "-c:v", "libx264", "-preset", "veryfast",

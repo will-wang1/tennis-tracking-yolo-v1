@@ -36,7 +36,7 @@ import numpy as np
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from src.detection._tracknet_arch import resolve_device  # noqa: E402
+from src.detection._tracknet_arch import half_precision, resolve_device  # noqa: E402
 
 CROP_HEIGHT = 384
 PAD = 0.25
@@ -95,7 +95,7 @@ def main() -> None:
         frame_poses = {}
         if crops:
             for (track_id, cx1, cy1, scale), result in zip(
-                meta, model.predict(crops, imgsz=CROP_HEIGHT, device=device, verbose=False)
+                meta, model.predict(crops, imgsz=CROP_HEIGHT, device=device, half=half_precision(device), verbose=False)
             ):
                 if result.keypoints is None or len(result.boxes) == 0:
                     continue

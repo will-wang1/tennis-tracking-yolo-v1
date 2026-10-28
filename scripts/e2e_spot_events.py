@@ -69,6 +69,7 @@ def main() -> None:
     import cv2
     import torch
 
+    from src.detection._tracknet_arch import half_precision
     from src.third_party.e2e_spot.model import load
 
     device = args.device or ("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
@@ -101,7 +102,7 @@ def main() -> None:
         clip = np.stack(frames[s:s + CLIP_LEN]).astype(np.float32) / 255.0
         clip = (clip - IMAGENET_MEAN) / IMAGENET_STD
         x = torch.from_numpy(clip).permute(0, 3, 1, 2).unsqueeze(0).to(device)
-        with torch.no_grad():
+        with torch.no_grad(), torch.autocast("cuda", dtype=torch.float16, enabled=half_precision(device)):
             pred = model(x)
             prob = torch.softmax(pred, dim=2)[0].float().cpu().numpy()
         scores[s:s + len(prob)] += prob

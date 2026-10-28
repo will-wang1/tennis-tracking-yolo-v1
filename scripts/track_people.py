@@ -45,7 +45,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from src.detection._tracknet_arch import resolve_device  # noqa: E402
+from src.detection._tracknet_arch import half_precision, resolve_device  # noqa: E402
 
 _COCO_PERSON = 0
 
@@ -80,6 +80,7 @@ def track(args) -> dict:
             conf=args.conf,
             tracker=args.tracker,
             device=device,
+            half=half_precision(device),
             verbose=False,
         )
     ):
