@@ -53,32 +53,32 @@ mkdir -p ~/coaching/data/strokes/ours
 ## 5. Quick check on one match (~5 min)
 
 ```
-.venv/bin/python scripts/build_stroke_data_e2e.py --videos ~/tennis_videos --out data/strokes/e2e_check \
-  --matches wimbledon_2019_womens_final_halep_williams --max-points 20 --batch 4
-xdg-open data/strokes/e2e_check/wimbledon_2019_womens_final_halep_williams_preview.jpg
+bash deploy/train_strokes.sh check
 ```
+
+It opens a picture when it finishes.
 
 - **Good:** each picture shows a player at the moment of the stroke named above it.
 - **Bad:** crowd shots, replays, players standing around. The video and the
   labels don't line up: stop and tell Claude.
 
+If it says it did not work, it prints a `tail -30 ...` command: run that and
+send Claude what it shows.
+
 ## 6. Build the training data (a few hours)
 
+```
+bash deploy/train_strokes.sh build
+```
+
 Ctrl+C stops it; run the same command again to carry on (finished matches
-are skipped).
-
-```
-.venv/bin/python scripts/build_stroke_data_e2e.py --videos ~/tennis_videos --out data/strokes/e2e --batch 4
-```
-
-If it fails with "CUDA out of memory", run it again with `--batch 2`.
+are skipped). If it fails with "CUDA out of memory", run
+`bash deploy/train_strokes.sh build 2`.
 
 ## 7. Train (10–30 min)
 
 ```
-.venv/bin/python scripts/train_stroke_tcn.py --train "data/strokes/e2e/*.npz" \
-  --val-match wimbledon_2019_womens_final_halep_williams \
-  --test data/strokes/ours/dingles_serve_volley.npz --out weights/stroke_tcn.pt
+bash deploy/train_strokes.sh train
 ```
 
 Each round prints an accuracy on the held-out match; it should climb over
