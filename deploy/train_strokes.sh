@@ -47,6 +47,7 @@ case "$step" in
       match=$(ls "$VIDEOS" | grep -v '\.part$' | head -1 | sed 's/\.[^.]*$//')
       echo "$CHECK_MATCH is not downloaded - checking $match instead"
     fi
+    rm -rf data/strokes/e2e_check  # a check is always made afresh
     "$PY" -u scripts/build_stroke_data_e2e.py --videos "$VIDEOS" --out data/strokes/e2e_check \
       --matches "$match" --max-points 20 --batch "$batch" 2>&1 | tee "$log"
     status=${PIPESTATUS[0]}
