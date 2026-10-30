@@ -94,7 +94,8 @@ rm -rf ~/tennis_videos      # optional: frees the space
 
 ## Afterwards
 
-Send Claude the Dingles scores from the end of step 7. Every upload now also
+Send Claude the Dingles scores from the end of step 7. If there are none (the file
+wasn't copied in time), copy it now and run `bash deploy/train_strokes.sh score`. Every upload now also
 writes the model's stroke types to `strokes_tcn.json`, kept beside the report
 and not shown in it yet. If the model beats the current stroke classifier on
 those 73 swings, the report switches to it.

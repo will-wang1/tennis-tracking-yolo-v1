@@ -4,6 +4,7 @@
 #   bash deploy/train_strokes.sh check    # 5. quick check on one match (~5 min), opens the picture
 #   bash deploy/train_strokes.sh build    # 6. training data from all matches (a few hours; run again to carry on)
 #   bash deploy/train_strokes.sh train    # 7. train, and score on the Dingles labels (10-30 min)
+#   bash deploy/train_strokes.sh score    # score the trained model on the Dingles labels again (seconds)
 #
 # Add a batch size to check/build if the GPU runs out of memory:
 #   bash deploy/train_strokes.sh build 2
@@ -23,7 +24,7 @@ step="${1:-}"
 batch="${2:-4}"
 log="outputs/train_strokes_${step:-none}.log"
 
-if systemctl is-active -q coaching-worker 2>/dev/null; then
+if [ "$step" != score ] && systemctl is-active -q coaching-worker 2>/dev/null; then
   echo "The worker is running and would share the GPU. Stop it first: sudo systemctl stop coaching-worker"
   exit 1
 fi
@@ -82,9 +83,23 @@ case "$step" in
       "${test[@]}" --out weights/stroke_tcn.pt 2>&1 | tee "$log"
     [ "${PIPESTATUS[0]}" = 0 ] && echo "Done. Send Claude the scores above, then: sudo systemctl start coaching-worker" \
       || echo "It did not work. Show the end of it with: tail -30 $REPO/$log"
+    [ -f "$DINGLES" ] || echo "No Dingles score: copy the file (step 4), then: bash deploy/train_strokes.sh score"
+    ;;
+  score)
+    if [ ! -f weights/stroke_tcn.pt ]; then
+      echo "No trained model yet - run: bash deploy/train_strokes.sh train"
+      exit 1
+    fi
+    if [ ! -f "$DINGLES" ]; then
+      echo "No Dingles test file at $DINGLES - copy it from the Mac by USB (step 4 of deploy/train_strokes.md)."
+      exit 1
+    fi
+    "$PY" -u scripts/train_stroke_tcn.py --init weights/stroke_tcn.pt --epochs 0 --test "$DINGLES" 2>&1 | tee "$log"
+    [ "${PIPESTATUS[0]}" = 0 ] && echo "Send Claude the scores above." \
+      || echo "It did not work. Show the end of it with: tail -30 $REPO/$log"
     ;;
   *)
-    sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
     exit 1
     ;;
 esac
